@@ -1,13 +1,31 @@
 [workspace]
 members = [
-  "crates/*"
+  "core",
+  "ruraft",
+  "storage",
+  "traits",
+  "transport",
+  "types",
 ]
-
+resolver = "2"
 
 [workspace.package]
 version = "0.0.0"
 edition = "2021"
-repository = "https://github.com/al8n/crates"
-homepage = "https://github.com/al8n/crates"
-license = "Apache-2.0/MIT"
+repository = "https://github.com/al8n/ruraft"
+homepage = "https://github.com/al8n/ruraft"
+license = "MPL-2.0"
 
+[workspace.package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[workspace.dependencies]
+agnostic = { path = "../agnostic/agnostic" }
+async-channel = "1.9"
+async-lock = "2.8"
+async-trait = "0.1"
+bytes = "1.5"
+futures = { version = "0.3" }
+serde = { version = "1", features = ["derive"] }
+viewit = { version = "0.1.5" }
