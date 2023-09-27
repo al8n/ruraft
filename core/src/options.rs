@@ -11,10 +11,11 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 /// the protocol to use when _speaking_ to other servers. Note that depending on
 /// the protocol version being spoken, some otherwise understood RPC messages
 /// may be refused. See dispositionRPC for details of this logic.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum ProtocolVersion {
   /// The current version of the protocol.
+  #[default]
   V1 = 1,
 }
 
@@ -39,8 +40,12 @@ impl SnapshotVersion {
 }
 
 /// Provides any necessary configuration for the Raft server.
-#[viewit::viewit]
-#[derive(Serialize, Deserialize)]
+#[viewit::viewit(
+  vis_all = "pub(crate)",
+  getters(vis_all = "pub"),
+  setters(vis_all = "pub")
+)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Options {
   /// Allows a Raft server to inter-operate with older
   /// Raft servers running an older version of the code. This is used to
@@ -119,3 +124,359 @@ pub struct Options {
   /// raft's configuration and index values.
   no_snapshot_restore_on_start: bool,
 }
+
+impl Default for Options {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+const MILLISECONDS: u64 = Duration::from_millis(1).as_millis() as u64;
+
+impl Options {
+  /// Returns an [`Options`] with usable defaults.
+  #[inline]
+  pub const fn new() -> Self {
+    Self {
+      protocol_version: ProtocolVersion::V1,
+      heartbeat_timeout: Duration::from_millis(1000),
+      election_timeout: Duration::from_millis(1000),
+      commit_timeout: Duration::from_millis(50),
+      max_append_entries: 64,
+      batch_apply: false,
+      shutdown_on_remove: true,
+      trailing_logs: 10240,
+      snapshot_interval: Duration::from_secs(120),
+      snapshot_threshold: 8192,
+      leader_lease_timeout: Duration::from_millis(500),
+      no_snapshot_restore_on_start: false,
+    }
+  }
+
+  /// Used to validate a sane configuration
+  pub const fn validate(&self) -> Result<(), OptionsError> {
+    let commit_timout_millis = self.commit_timeout.as_millis() as u64;
+
+    if commit_timout_millis < MILLISECONDS {
+      return Err(OptionsError::CommitTimeoutTooShort(self.commit_timeout));
+    }
+
+    if self.max_append_entries == 0 || self.max_append_entries > 1024 {
+      return Err(OptionsError::BadMaxAppendEntries(self.max_append_entries));
+    }
+
+    ReloadableOptions::from_options(self).validate(self.leader_lease_timeout)
+  }
+}
+
+#[derive(bytemuck::NoUninit, PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
+#[repr(transparent)]
+pub(crate) struct DurationNoUninit(u64);
+
+impl DurationNoUninit {
+  pub(crate) const fn from_std(d: Duration) -> Self {
+    Self(d.as_millis() as u64)
+  }
+
+  pub(crate) const fn to_std(self) -> Duration {
+    Duration::from_millis(self.0)
+  }
+}
+
+impl Serialize for DurationNoUninit {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    humantime_serde::serialize(&self.to_std(), serializer)
+  }
+}
+
+impl<'de> Deserialize<'de> for DurationNoUninit {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    humantime_serde::deserialize(deserializer).map(DurationNoUninit::from_std)
+  }
+}
+
+/// The subset of [`Options`] that may be reconfigured during
+/// runtime using [`Raft::reload_options`]. We choose to duplicate fields over embedding
+/// or accepting a [`Options`] but only using specific fields to keep the API clear.
+/// Reconfiguring some fields is potentially dangerous so we should only
+/// selectively enable it for fields where that is allowed.
+#[derive(bytemuck::NoUninit, Clone, Copy, Serialize, Deserialize)]
+#[repr(C)]
+pub struct ReloadableOptions {
+  /// Controls how many logs we leave after a snapshot. This is used
+  /// so that we can quickly replay logs on a follower instead of being forced to
+  /// send an entire snapshot. The value passed here updates the setting at runtime
+  /// which will take effect as soon as the next snapshot completes and truncation
+  /// occurs.
+  trailing_logs: u64,
+
+  /// Controls how many outstanding logs there must be before
+  /// we perform a snapshot. This is to prevent excessive snapshots when we can
+  /// just replay a small set of logs.
+  snapshot_threshold: u64,
+
+  /// Controls how often we check if we should perform a snapshot.
+  /// We randomly stagger between this value and 2x this value to avoid the entire
+  /// cluster from performing a snapshot at once.
+  snapshot_interval: DurationNoUninit,
+
+  /// Specifies the time in follower state without
+  /// a leader before we attempt an election.
+  heartbeat_timeout: DurationNoUninit,
+
+  /// Specifies the time in candidate state without
+  /// a leader before we attempt an election.
+  election_timeout: DurationNoUninit,
+}
+
+impl Default for ReloadableOptions {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl ReloadableOptions {
+  /// Create a new `ReloadableOptions` with default values
+  #[inline]
+  pub const fn new() -> Self {
+    Self::from_options(&Options::new())
+  }
+
+  /// Create a new [`ReloadableOptions`] according to the given [`Options`].
+  #[inline]
+  pub const fn from_options(options: &Options) -> Self {
+    Self {
+      trailing_logs: options.trailing_logs,
+      snapshot_threshold: options.snapshot_threshold,
+      snapshot_interval: DurationNoUninit::from_std(options.snapshot_interval),
+      heartbeat_timeout: DurationNoUninit::from_std(options.heartbeat_timeout),
+      election_timeout: DurationNoUninit::from_std(options.election_timeout),
+    }
+  }
+
+  /// Used to validate a sane configuration
+  const fn validate(&self, leader_lease_timeout: Duration) -> Result<(), OptionsError> {
+    let election_timeout = self.election_timeout();
+    let election_timeout_millis = election_timeout.as_millis() as u64;
+    let heartbeat_timeout = self.heartbeat_timeout();
+    let heartbeat_timeout_millis = heartbeat_timeout.as_millis() as u64;
+    let leader_lease_timeout_millis = leader_lease_timeout.as_millis() as u64;
+    let snapshot_interval = self.snapshot_interval();
+    let snapshot_interval_millis = snapshot_interval.as_millis() as u64;
+
+    if snapshot_interval_millis < 5 * MILLISECONDS {
+      return Err(OptionsError::SnapshotIntervalTooShort(snapshot_interval));
+    }
+
+    if heartbeat_timeout_millis < 5 * MILLISECONDS {
+      return Err(OptionsError::HeartbeatTimeoutTooShort(heartbeat_timeout));
+    }
+
+    if election_timeout_millis < 5 * MILLISECONDS {
+      return Err(OptionsError::ElectionTimeoutTooShort(election_timeout));
+    }
+
+    if leader_lease_timeout_millis < 5 * MILLISECONDS {
+      return Err(OptionsError::LeaderLeaseTimeoutTooShort(
+        leader_lease_timeout,
+      ));
+    }
+
+    if leader_lease_timeout_millis > heartbeat_timeout_millis {
+      return Err(OptionsError::BadLeaderLeaseTimeout {
+        leader_lease_timeout,
+        heartbeat_timeout,
+      });
+    }
+
+    if election_timeout_millis < heartbeat_timeout_millis {
+      return Err(OptionsError::BadElectionTimeout {
+        election_timeout,
+        heartbeat_timeout,
+      });
+    }
+
+    Ok(())
+  }
+
+  /// Get how many logs we leave after a snapshot.
+  #[inline]
+  pub const fn trailing_logs(&self) -> u64 {
+    self.trailing_logs
+  }
+
+  /// Set how many logs we leave after a snapshot.
+  #[inline]
+  pub const fn with_trailing_logs(mut self, val: u64) -> Self {
+    self.trailing_logs = val;
+    self
+  }
+
+  /// Get how many how many outstanding logs there must be before
+  /// we perform a snapshot.
+  #[inline]
+  pub const fn snapshot_threshold(&self) -> u64 {
+    self.snapshot_threshold
+  }
+
+  /// Set how many how many outstanding logs there must be before
+  /// we perform a snapshot.
+  #[inline]
+  pub const fn with_snapshot_threshold(mut self, val: u64) -> Self {
+    self.snapshot_threshold = val;
+    self
+  }
+
+  /// Get how often we check if we should perform a snapshot.
+  #[inline]
+  pub const fn snapshot_interval(&self) -> Duration {
+    self.snapshot_interval.to_std()
+  }
+
+  /// Set how often we check if we should perform a snapshot.
+  #[inline]
+  pub const fn with_snapshot_interval(mut self, val: Duration) -> Self {
+    self.snapshot_interval = DurationNoUninit::from_std(val);
+    self
+  }
+
+  /// Get the time in follower state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub const fn heartbeat_timeout(&self) -> Duration {
+    self.heartbeat_timeout.to_std()
+  }
+
+  /// Set the time in follower state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub const fn with_heartbeat_timeout(mut self, val: Duration) -> Self {
+    self.heartbeat_timeout = DurationNoUninit::from_std(val);
+    self
+  }
+
+  /// Get the time in candidate state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub const fn election_timeout(&self) -> Duration {
+    self.election_timeout.to_std()
+  }
+
+  /// Set the time in candidate state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub const fn with_election_timeout(mut self, val: Duration) -> Self {
+    self.election_timeout = DurationNoUninit::from_std(val);
+    self
+  }
+}
+
+#[derive(Debug)]
+pub enum OptionsError {
+  /// Returned when max_append_entries is zero, or larger than 1024
+  BadMaxAppendEntries(usize),
+  /// Returned when leader_lease_timeout larger than heartbeat_timeout
+  BadLeaderLeaseTimeout {
+    leader_lease_timeout: Duration,
+    heartbeat_timeout: Duration,
+  },
+  /// Returns when election timeout less than heartbeat_timeout
+  BadElectionTimeout {
+    election_timeout: Duration,
+    heartbeat_timeout: Duration,
+  },
+  /// Returned when commit_timeout is less than 5ms
+  CommitTimeoutTooShort(Duration),
+  /// Returned when eleection_timeout is less than 5ms
+  ElectionTimeoutTooShort(Duration),
+  /// Returned when heartbeat_timeout is less than 5ms
+  HeartbeatTimeoutTooShort(Duration),
+  /// Returned when leader_lease_timeout less than 5ms
+  LeaderLeaseTimeoutTooShort(Duration),
+  /// Returned when snapshot_interval less than 5ms
+  SnapshotIntervalTooShort(Duration),
+}
+
+impl core::fmt::Display for OptionsError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    use humantime::Duration as HumanDuration;
+
+    match self {
+      Self::BadMaxAppendEntries(val) => {
+        if *val == 0 {
+          write!(f, "max_append_entries must be larger than 0")
+        } else {
+          write!(
+            f,
+            "max_append_entries is too large, maximum 1024, but got {val}"
+          )
+        }
+      }
+      Self::BadLeaderLeaseTimeout {
+        leader_lease_timeout,
+        heartbeat_timeout,
+      } => {
+        write!(
+          f,
+          "leader_lease_timeout ({}) cannot be larger than heartbeat_timeout ({})",
+          HumanDuration::from(*leader_lease_timeout),
+          HumanDuration::from(*heartbeat_timeout)
+        )
+      }
+      Self::BadElectionTimeout {
+        election_timeout,
+        heartbeat_timeout,
+      } => {
+        write!(
+          f,
+          "election_timeout ({}) must be equal or greater than heartbeat_timeout ({})",
+          HumanDuration::from(*election_timeout),
+          HumanDuration::from(*heartbeat_timeout)
+        )
+      }
+      Self::CommitTimeoutTooShort(d) => {
+        write!(
+          f,
+          "commit_timeout ({}) is too short, at least 1ms",
+          HumanDuration::from(*d)
+        )
+      }
+      Self::ElectionTimeoutTooShort(d) => {
+        write!(
+          f,
+          "election_timeout ({}) is too short, at least 5ms",
+          HumanDuration::from(*d)
+        )
+      }
+      Self::HeartbeatTimeoutTooShort(d) => {
+        write!(
+          f,
+          "heartbeat_timeout ({}) is too short, at least 5ms",
+          HumanDuration::from(*d)
+        )
+      }
+      Self::LeaderLeaseTimeoutTooShort(d) => {
+        write!(
+          f,
+          "leader_lease_timeout ({}) is too short, at least 5ms",
+          HumanDuration::from(*d)
+        )
+      }
+      Self::SnapshotIntervalTooShort(d) => {
+        write!(
+          f,
+          "snapshot_interval ({}) is too short, at least 5ms",
+          HumanDuration::from(*d)
+        )
+      }
+    }
+  }
+}
+
+impl std::error::Error for OptionsError {}

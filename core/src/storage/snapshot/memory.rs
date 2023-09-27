@@ -21,20 +21,22 @@ pub struct MemorySnapshotStorage {
   has_snapshot: AtomicBool,
 }
 
-impl MemorySnapshotStorage {
-  pub fn new() -> Self {
-    Self {
-      latest: Arc::new(RwLock::new(Default::default())),
-      has_snapshot: AtomicBool::new(false),
-    }
-  }
-}
-
 #[async_trait::async_trait]
 impl SnapshotStorage for MemorySnapshotStorage {
   type Error = io::Error;
   type Sink = MemorySnapshotSink;
   type Source = MemorySnapshotSource;
+  type Options = ();
+
+  async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
+  where
+    Self: Sized,
+  {
+    Ok(Self {
+      latest: Arc::new(RwLock::new(Default::default())),
+      has_snapshot: AtomicBool::new(false),
+    })
+  }
 
   async fn create(
     &self,
@@ -116,11 +118,7 @@ pub struct MemorySnapshotSink {
 }
 
 impl AsyncWrite for MemorySnapshotSink {
-  fn poll_write(
-    self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &[u8],
-  ) -> Poll<io::Result<usize>> {
+  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     let mut snap = futures::ready!(self.snap.write().poll_unpin(cx));
     snap.contents.extend_from_slice(buf);
     snap.meta.size += buf.len() as u64;
@@ -179,7 +177,7 @@ pub(super) mod tests {
   use super::*;
 
   pub async fn test_memory_snapshot_storage_create() {
-    let snap = MemorySnapshotStorage::new();
+    let snap = MemorySnapshotStorage::new(()).await.unwrap();
 
     // check no snapshots
     let snaps = snap.list().await.unwrap();
@@ -223,7 +221,7 @@ pub(super) mod tests {
   }
 
   pub async fn test_memory_snapshot_storage_open_snapshot_twice() {
-    let snap = MemorySnapshotStorage::new();
+    let snap = MemorySnapshotStorage::new(()).await.unwrap();
 
     // create a new sink
     let mut sink = snap

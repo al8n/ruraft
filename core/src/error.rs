@@ -1,4 +1,6 @@
-use crate::{fsm::FinateStateMachine, storage::Storage, transport::Transport};
+use crate::{
+  fsm::FinateStateMachine, options::OptionsError, storage::Storage, transport::Transport,
+};
 
 /// Raft errors.
 #[derive(Debug, thiserror::Error)]
@@ -69,6 +71,9 @@ where
   /// Raft errors.
   #[error("ruraft: {0}")]
   Raft(#[from] RaftError),
+
+  #[error("ruraft: invalid options: {0}")]
+  InvalidOptions(#[from] OptionsError),
 
   /// Returned when the finate state machine reports an error.
   #[error("ruraft: {0}")]

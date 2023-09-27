@@ -66,6 +66,11 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Error: std::error::Error;
   type Sink: SnapshotSink;
   type Source: SnapshotSource;
+  type Options;
+
+  async fn new(opts: Self::Options) -> Result<Self, Self::Error>
+  where
+    Self: Sized;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls

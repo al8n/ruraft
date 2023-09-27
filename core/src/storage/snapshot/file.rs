@@ -67,6 +67,38 @@ pub enum FileSnapshotStorageError {
   IO(#[from] io::Error),
 }
 
+/// Options use to create a [`FileSnapshotStorage`].
+#[viewit::viewit(
+  vis_all = "pub(crate)",
+  getters(vis_all = "pub"),
+  setters(vis_all = "pub", prefix = "with")
+)]
+#[derive(Debug, Clone)]
+pub struct FileSnapshotStorageOptions {
+  /// The base directory to store snapshots in.
+  #[viewit(
+    getter(const, style = "ref", attrs(doc = "Get the base directory")),
+    setter(attrs(doc = "Set the base directory"))
+  )]
+  base: PathBuf,
+  /// The `retain` controls how many
+  /// snapshots are retained. Must be at least 1.
+  #[viewit(
+    getter(const, attrs(doc = "Get the number of snapshots should be retained")),
+    setter(attrs(doc = "Set the number of snapshots should be retained"))
+  )]
+  retain: usize,
+}
+
+impl FileSnapshotStorageOptions {
+  pub fn new<P: AsRef<Path>>(base: P, retain: usize) -> Self {
+    Self {
+      base: base.as_ref().to_path_buf(),
+      retain,
+    }
+  }
+}
+
 /// Implements the [`SnapshotStorage`] trait and allows
 /// snapshots to be made on the local disk.
 #[derive(Clone)]
@@ -80,29 +112,22 @@ pub struct FileSnapshotStorage {
 }
 
 impl FileSnapshotStorage {
-  /// Creates a new [`FileSnapshotStorage`] based
-  /// on a base directory. The `retain` parameter controls how many
-  /// snapshots are retained. Must be at least 1.
-  pub fn new<P: AsRef<Path>>(base: &P, retain: usize) -> Result<Self, FileSnapshotStorageError> {
-    if retain < 1 {
-      return Err(FileSnapshotStorageError::InvalidRetain);
+  /// Reaps any snapshots beyond the retain count.
+  pub fn reap_snapshots(&self) -> io::Result<()> {
+    let snapshots = self.get_snapshots().map_err(|e| {
+      tracing::error!(target = "ruraft", err = %e, "failed to get snapshots");
+      e
+    })?;
+
+    for snap in snapshots.iter().skip(self.retain) {
+      let path = self.path.join(snap.id.name());
+      tracing::info!(target = "ruraft", path = %path.display(), "reaping snapshot");
+      fs::remove_dir_all(&path).map_err(|e| {
+        tracing::error!(target = "ruraft", path = %path.display(), err = %e, "failed to reap snapshot");
+        e
+      })?;
     }
-
-    // Ensure our path exists
-    let path = base.as_ref().join(SNAPSHOT_PATH);
-    make_dir_all(&path, 0o755).map_err(FileSnapshotStorageError::PathNotAccessible)?;
-
-    // Setup the store
-    let this = Self {
-      path: Arc::new(path),
-      retain,
-      no_sync: false,
-    };
-
-    this
-      .check_permissions()
-      .map(|_| this)
-      .map_err(FileSnapshotStorageError::NoPermissions)
+    Ok(())
   }
 
   fn check_permissions(&self) -> io::Result<()> {
@@ -178,24 +203,6 @@ impl FileSnapshotStorage {
     // Read the meta data
     serde_json::from_reader(&mut fh).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
-
-  /// Reaps any snapshots beyond the retain count.
-  pub fn reap_snapshots(&self) -> io::Result<()> {
-    let snapshots = self.get_snapshots().map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to get snapshots");
-      e
-    })?;
-
-    for snap in snapshots.iter().skip(self.retain) {
-      let path = self.path.join(snap.id.name());
-      tracing::info!(target = "ruraft", path = %path.display(), "reaping snapshot");
-      fs::remove_dir_all(&path).map_err(|e| {
-        tracing::error!(target = "ruraft", path = %path.display(), err = %e, "failed to reap snapshot");
-        e
-      })?;
-    }
-    Ok(())
-  }
 }
 
 #[async_trait::async_trait]
@@ -203,6 +210,33 @@ impl SnapshotStorage for FileSnapshotStorage {
   type Error = FileSnapshotStorageError;
   type Sink = FileSnapshotSink;
   type Source = FileSnapshotSource;
+  type Options = FileSnapshotStorageOptions;
+
+  async fn new(opts: Self::Options) -> Result<Self, Self::Error>
+  where
+    Self: Sized,
+  {
+    let FileSnapshotStorageOptions { base, retain } = opts;
+    if retain < 1 {
+      return Err(FileSnapshotStorageError::InvalidRetain);
+    }
+
+    // Ensure our path exists
+    let path = base.join(SNAPSHOT_PATH);
+    make_dir_all(&path, 0o755).map_err(FileSnapshotStorageError::PathNotAccessible)?;
+
+    // Setup the store
+    let this = Self {
+      path: Arc::new(path),
+      retain,
+      no_sync: false,
+    };
+
+    this
+      .check_permissions()
+      .map(|_| this)
+      .map_err(FileSnapshotStorageError::NoPermissions)
+  }
 
   async fn create(
     &self,
@@ -514,7 +548,9 @@ pub(crate) mod tests {
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let snap = FileSnapshotStorage::new(&dir, 3).unwrap();
+    let snap = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+      .await
+      .unwrap();
 
     snap
       .create(SnapshotVersion::V1, 10, 3, Membership::default(), 0)
@@ -531,7 +567,9 @@ pub(crate) mod tests {
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
-    let snap = FileSnapshotStorage::new(&dir, 3).unwrap();
+    let snap = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+      .await
+      .unwrap();
 
     // check no snapshots
     assert_eq!(snap.list().await.unwrap().len(), 0);
@@ -584,7 +622,9 @@ pub(crate) mod tests {
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let storage = FileSnapshotStorage::new(&dir, 3).unwrap();
+    let storage = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+      .await
+      .unwrap();
 
     let mut snap = storage
       .create(SnapshotVersion::V1, 10, 2, Membership::default(), 0)
@@ -608,7 +648,9 @@ pub(crate) mod tests {
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage = FileSnapshotStorage::new(&dir, 2).unwrap();
+    let storage = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 2))
+      .await
+      .unwrap();
 
     for i in 10..15 {
       let mut sink = storage
@@ -645,7 +687,7 @@ pub(crate) mod tests {
     perm.set_mode(0o000);
     fs::set_permissions(&dir2, perm).unwrap();
 
-    let Err(err) = FileSnapshotStorage::new(&dir2, 3) else {
+    let Err(err) = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir2, 3)).await else {
       panic!("should fail to use dir with bad perms");
     };
     assert!(matches!(
@@ -666,7 +708,9 @@ pub(crate) mod tests {
     let dir2 = dir.join("raft");
     drop(parent);
 
-    FileSnapshotStorage::new(&dir2, 3).expect("should not fail when using non existing parent");
+    FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir2, 3))
+      .await
+      .expect("should not fail when using non existing parent");
   }
 
   /// Test [`FileSnapshotStorage`].
@@ -679,7 +723,9 @@ pub(crate) mod tests {
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage = FileSnapshotStorage::new(&dir, 3).unwrap();
+    let storage = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+      .await
+      .unwrap();
 
     let mut sink = storage
       .create(SnapshotVersion::V1, 130350, 5, Membership::default(), 0)

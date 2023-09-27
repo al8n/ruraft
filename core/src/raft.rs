@@ -5,6 +5,8 @@ use agnostic::Runtime;
 use crate::{fsm::FinateStateMachine, storage::Storage, transport::Transport};
 
 mod fsm;
+mod state;
+pub use state::*;
 
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
