@@ -18,7 +18,7 @@ use super::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStor
 
 /// Implements the [`SnapshotStorage`] trait in memory and
 /// retains only the most recent snapshot
-/// 
+///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Default)]
 pub struct MemorySnapshotStorage<R: Runtime> {
@@ -122,7 +122,7 @@ struct MemorySnapshot {
 }
 
 /// Implements [`SnapshotSink`] in memory
-/// 
+///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Default, Clone)]
 pub struct MemorySnapshotSink<R: Runtime> {
@@ -162,7 +162,7 @@ impl<R: Runtime> SnapshotSink for MemorySnapshotSink<R> {
 }
 
 /// Implements [`SnapshotSource`] in memory
-/// 
+///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
 pub struct MemorySnapshotSource<R: Runtime> {

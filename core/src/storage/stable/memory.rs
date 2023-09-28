@@ -1,10 +1,9 @@
-use std::{collections::HashMap, sync::Arc, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use agnostic::Runtime;
 use async_lock::Mutex;
 
 use super::*;
-
 
 #[derive(Default)]
 struct Inner {
@@ -13,12 +12,12 @@ struct Inner {
 }
 
 /// Implements the [`StableStorage`] trait.
-/// 
+///
 /// **N.B.** It should NOT EVER be used for production. It is used only for
 /// unit tests.
 pub struct MemoryStableStorage<R: Runtime> {
   store: Arc<Mutex<Inner>>,
-  _runtime: core::marker::PhantomData<R> 
+  _runtime: core::marker::PhantomData<R>,
 }
 
 impl<R: Runtime> Default for MemoryStableStorage<R> {
@@ -68,7 +67,7 @@ impl<R: Runtime> StableStorage for MemoryStableStorage<R> {
   /// Insert a key-`u64` pair into the storage.
   async fn insert_u64(&self, key: Bytes, val: u64) -> Result<(), Self::Error> {
     self.store.lock().await.kvu64s.insert(key, val);
-    Ok(()) 
+    Ok(())
   }
 
   /// Returns the `u64` for key, or `None` if key was not found.

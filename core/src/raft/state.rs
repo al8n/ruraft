@@ -84,7 +84,7 @@ pub(crate) struct State {
 
 impl State {
   pub(crate) fn role(&self) -> Role {
-    self.role.load(Ordering::Acquire)
+    self.role.load(Ordering::SeqCst)
   }
 
   pub(crate) fn set_role(&self, role: Role) {

@@ -1,10 +1,9 @@
-use std::{collections::HashMap, sync::Arc, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use agnostic::Runtime;
 use async_lock::Mutex;
 
 use super::*;
-
 
 #[derive(Default)]
 struct Inner {
@@ -14,12 +13,12 @@ struct Inner {
 }
 
 /// Implements the [`LogStorage`] trait.
-/// 
+///
 /// **N.B.** It should NOT EVER be used for production. It is used only for
 /// unit tests.
 pub struct MemoryLogStorage<R: Runtime> {
   store: Arc<Mutex<Inner>>,
-  _runtime: core::marker::PhantomData<R> 
+  _runtime: core::marker::PhantomData<R>,
 }
 
 impl<R: Runtime> Default for MemoryLogStorage<R> {
@@ -79,7 +78,7 @@ impl<R: Runtime> LogStorage for MemoryLogStorage<R> {
     }
     Ok(())
   }
- 
+
   async fn store_logs(&self, logs: &[Log]) -> Result<(), Self::Error> {
     let mut store = self.store.lock().await;
     for l in logs {

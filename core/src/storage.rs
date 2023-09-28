@@ -39,9 +39,9 @@ pub trait Storage: Send + Sync + 'static {
 pub(super) mod tests {
   pub(crate) mod snapshot {
     pub use crate::storage::{
-      snapshot::tests::*,
       log::tests::*,
       // stable::tests::*,
+      snapshot::tests::*,
     };
   }
 }

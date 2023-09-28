@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use smol_str::SmolStr;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum ServerSuffrage {
   Voter,
@@ -241,7 +241,7 @@ impl MembershipChangeCommand {
 /// votes. This should include the local server, if it's a member of the cluster.
 /// The servers are listed no particular order, but each should only appear once.
 /// These entries are appended to the log during membership changes.
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
   servers: IndexMap<ServerId, (SocketAddr, ServerSuffrage)>,
 }

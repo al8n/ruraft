@@ -1,8 +1,9 @@
-use std::{ops::{Range, RangeBounds}, time::Duration};
+use std::{ops::RangeBounds, time::Duration};
 
 use async_channel::Receiver;
 use bytes::Bytes;
 use futures::FutureExt;
+use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::utils::now_timestamp;
@@ -48,14 +49,14 @@ impl LogKind {
 
 /// Log entries are replicated to all members of the Raft cluster
 /// and form the heart of the replicated state machine.
-/// 
+///
 /// The `clone` on `Log` is cheap and not require deep copy and allocation.
 #[viewit::viewit(
   vis_all = "pub(crate)",
   getters(vis_all = "pub"),
   setters(vis_all = "pub")
 )]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Log {
   /// Holds the index of the log entry.
   #[viewit(
@@ -110,27 +111,34 @@ pub struct Log {
   extension: Bytes,
 
   /// Stores the time (timestamp in milliseconds) the leader first appended this log to it's
-	/// [`LogStorage`]. Followers will observe the leader's time. It is not used for
-	/// coordination or as part of the replication protocol at all. It exists only
-	/// to provide operational information for example how many seconds worth of
-	/// logs are present on the leader which might impact follower's ability to
-	/// catch up after restoring a large snapshot. We should never rely on this
-	/// being in the past when appending on a follower or reading a log back since
-	/// the clock skew can mean a follower could see a log with a future timestamp.
-	/// In general too the leader is not required to persist the log before
-	/// delivering to followers although the current implementation happens to do
-	/// this.
+  /// [`LogStorage`]. Followers will observe the leader's time. It is not used for
+  /// coordination or as part of the replication protocol at all. It exists only
+  /// to provide operational information for example how many seconds worth of
+  /// logs are present on the leader which might impact follower's ability to
+  /// catch up after restoring a large snapshot. We should never rely on this
+  /// being in the past when appending on a follower or reading a log back since
+  /// the clock skew can mean a follower could see a log with a future timestamp.
+  /// In general too the leader is not required to persist the log before
+  /// delivering to followers although the current implementation happens to do
+  /// this.
   #[viewit(
-    getter(const, attrs(doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
-    [`LogStorage`].")),
-    setter(attrs(doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
-    [`LogStorage`]."))
+    getter(
+      const,
+      attrs(
+        doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
+    [`LogStorage`]."
+      )
+    ),
+    setter(attrs(
+      doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
+    [`LogStorage`]."
+    ))
   )]
   appended_at: u64,
 }
 
 impl Log {
-  /// Create an empty [`Log`] 
+  /// Create an empty [`Log`]
   #[inline]
   pub const fn new(term: u64, index: u64, kind: LogKind) -> Self {
     Self {
@@ -146,7 +154,7 @@ impl Log {
 
 /// Used to provide an trait for storing
 /// and retrieving logs in a durable fashion.
-/// 
+///
 /// **N.B.** The implementation of [`LogStorage`] must be thread-safe.
 #[async_trait::async_trait]
 pub trait LogStorage: Clone + Send + Sync + 'static {
@@ -187,7 +195,6 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   }
 }
 
-
 #[cfg(feature = "metrics")]
 pub(crate) enum LogStorageExtError<E: std::error::Error> {
   LogStorageError(E),
@@ -199,18 +206,21 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
 pub(crate) trait LogStorageExt: LogStorage {
   async fn oldest_log(&self) -> Result<Log, LogStorageExtError<Self::Error>> {
     // We might get unlucky and have a truncate right between getting first log
-	  // index and fetching it so keep trying until we succeed or hard fail.
+    // index and fetching it so keep trying until we succeed or hard fail.
     let mut last_fail_idx = 0;
     let mut last_err: Option<Self::Error> = None;
     loop {
-      let first_idx = self.first_index().await.map_err(LogStorageExtError::LogStorageError)?;
+      let first_idx = self
+        .first_index()
+        .await
+        .map_err(LogStorageExtError::LogStorageError)?;
       if first_idx == 0 {
         return Err(LogStorageExtError::NotFound);
       }
 
       if first_idx == last_fail_idx {
         // Got same index as last time around which errored, don't bother trying
-			  // to fetch it again just return the error.
+        // to fetch it again just return the error.
         if let Some(last_err) = last_err {
           return Err(LogStorageExtError::LogStorageError(last_err));
         } else {
@@ -231,13 +241,9 @@ pub(crate) trait LogStorageExt: LogStorage {
   }
 
   #[cfg(feature = "metrics")]
-  async fn emit_metrics(
-    &self,
-    interval: Duration,
-    stop_rx: Receiver<()>,
-  )
+  async fn emit_metrics(&self, interval: Duration, stop_rx: Receiver<()>)
   where
-    <<Self::Runtime as agnostic::Runtime>::Sleep as std::future::Future>::Output: Send
+    <<Self::Runtime as agnostic::Runtime>::Sleep as std::future::Future>::Output: Send,
   {
     loop {
       futures::select! {
@@ -286,7 +292,6 @@ pub(super) mod tests {
           Log::new(1, 1234, LogKind::User),
           Log::new(1, 1235, LogKind::User),
           Log::new(2, 1236, LogKind::User),
-
         ],
         want_idx: 1234,
         want_err: false,
@@ -295,19 +300,26 @@ pub(super) mod tests {
 
     for case in cases {
       let store = MemoryLogStorage::<R>::new();
-      store.store_logs(&case.logs).await.expect("expected store logs not to fail");
+      store
+        .store_logs(&case.logs)
+        .await
+        .expect("expected store logs not to fail");
 
       let got = store.oldest_log().await;
       if case.want_err && got.is_ok() {
-        panic!("wanted error got ok");
+        panic!("{}: wanted error got ok", case.name);
       }
 
       if !case.want_err && got.is_err() {
-        panic!("wanted no error but got err");
+        panic!("{}: wanted no error but got err", case.name);
       }
 
       if let Ok(got) = got {
-        assert_eq!(got.index, case.want_idx, "got index {}, want {}", got.index, case.want_idx);
+        assert_eq!(
+          got.index, case.want_idx,
+          "{}: got index {}, want {}",
+          case.name, got.index, case.want_idx
+        );
       }
     }
   }

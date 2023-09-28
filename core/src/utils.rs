@@ -57,7 +57,8 @@ pub fn capped_exponential_backoff(
 /// Returns a unix timestamp in milliseconds.
 #[inline]
 pub fn now_timestamp() -> u64 {
-  std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
     .expect("SystemTime before UNIX EPOCH!")
     .as_millis() as u64
 }

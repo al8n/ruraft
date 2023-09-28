@@ -697,7 +697,8 @@ pub(crate) mod tests {
     perm.set_mode(0o000);
     fs::set_permissions(&dir2, perm).unwrap();
 
-    let Err(err) = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir2, 3)).await else {
+    let Err(err) = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir2, 3)).await
+    else {
       panic!("should fail to use dir with bad perms");
     };
     assert!(matches!(

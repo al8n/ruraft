@@ -4,8 +4,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 
-mod command;
-
 /// Errors implementation for the Raft.
 pub mod error;
 
