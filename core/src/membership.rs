@@ -22,6 +22,18 @@ impl ServerSuffrage {
       Self::Nonvoter => "nonvoter",
     }
   }
+
+  /// Returns `true` is the suffrage is [`ServerSuffrage::Voter`].
+  #[inline]
+  pub const fn is_voter(&self) -> bool {
+    matches!(self, Self::Voter)
+  }
+
+  /// Returns `true` is the suffrage is [`ServerSuffrage::Nonvoter`].
+  #[inline]
+  pub const fn is_nonvoter(&self) -> bool {
+    matches!(self, Self::Nonvoter)
+  }
 }
 
 /// A unique string identifying a server for all time.

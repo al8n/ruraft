@@ -1,6 +1,8 @@
 //!
 #![forbid(unsafe_code)]
 // #![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
 
 mod command;
 
@@ -18,6 +20,8 @@ pub mod storage;
 mod transport;
 /// utils functions or structs
 pub mod utils;
+
+mod commitment;
 
 /// Node id
 pub struct NodeId {}

@@ -1,13 +1,9 @@
 mod snapshot;
 pub use snapshot::*;
-
-pub trait StableStorage: Send + Sync + 'static {
-  type Error: std::error::Error;
-}
-
-pub trait LogStorage: Send + Sync + 'static {
-  type Error: std::error::Error;
-}
+mod log;
+pub use log::*;
+mod stable;
+pub use stable::*;
 
 /// Storage is a trait that must be implemented by the user to provide the persistent storage for the Raft.
 pub trait Storage: Send + Sync + 'static {
@@ -18,13 +14,16 @@ pub trait Storage: Send + Sync + 'static {
     + From<<Self::Log as LogStorage>::Error>;
 
   /// Stable storage
-  type Stable: StableStorage;
+  type Stable: StableStorage<Runtime = Self::Runtime>;
 
   /// Snapshot storage
-  type Snapshot: SnapshotStorage;
+  type Snapshot: SnapshotStorage<Runtime = Self::Runtime>;
 
   /// Log storage
-  type Log: LogStorage;
+  type Log: LogStorage<Runtime = Self::Runtime>;
+
+  /// The async runtime used by the storage.
+  type Runtime: agnostic::Runtime;
 
   /// Returns a reference to the stable storage.
   fn stable_store(&self) -> &Self::Stable;
@@ -39,6 +38,10 @@ pub trait Storage: Send + Sync + 'static {
 #[cfg(feature = "test")]
 pub(super) mod tests {
   pub(crate) mod snapshot {
-    pub use crate::storage::snapshot::tests::*;
+    pub use crate::storage::{
+      snapshot::tests::*,
+      log::tests::*,
+      // stable::tests::*,
+    };
   }
 }

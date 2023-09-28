@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 mod file;
 pub use file::*;
 
+#[cfg(any(feature = "test", test))]
 mod memory;
+#[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(feature = "test")))]
 pub use memory::*;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,9 +66,13 @@ pub struct SnapshotMeta {
 /// without streaming from the leader.
 #[async_trait::async_trait]
 pub trait SnapshotStorage: Send + Sync + 'static {
-  type Error: std::error::Error;
-  type Sink: SnapshotSink;
-  type Source: SnapshotSource;
+  /// The error type returned by the snapshot storage.
+  type Error: std::error::Error + Send + Sync + 'static;
+  /// The async runtime used by the storage.
+  type Runtime: agnostic::Runtime;
+
+  type Sink: SnapshotSink<Runtime = Self::Runtime>;
+  type Source: SnapshotSource<Runtime = Self::Runtime>;
   type Options;
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -96,6 +103,9 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 /// to the sink. On error, `cancel` will be invoked.
 #[async_trait::async_trait]
 pub trait SnapshotSink: futures::io::AsyncWrite {
+  /// The async runtime used by the storage.
+  type Runtime: agnostic::Runtime;
+
   fn id(&self) -> &SnapshotId;
 
   async fn cancel(&mut self) -> std::io::Result<()>;
@@ -104,6 +114,9 @@ pub trait SnapshotSink: futures::io::AsyncWrite {
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state
 /// from the source. On error, `cancel` will be invoked.
 pub trait SnapshotSource: futures::io::AsyncRead {
+  /// The async runtime used by the storage.
+  type Runtime: agnostic::Runtime;
+
   fn meta(&self) -> &SnapshotMeta;
 }
 
