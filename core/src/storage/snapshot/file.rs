@@ -16,6 +16,7 @@ use crate::{
 
 use super::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage};
 
+use agnostic::Runtime;
 use once_cell::sync::Lazy;
 
 const TEST_PATH: &str = "perm_test";
@@ -102,16 +103,18 @@ impl FileSnapshotStorageOptions {
 /// Implements the [`SnapshotStorage`] trait and allows
 /// snapshots to be made on the local disk.
 #[derive(Clone)]
-pub struct FileSnapshotStorage {
+pub struct FileSnapshotStorage<R: Runtime> {
   path: Arc<PathBuf>,
   retain: usize,
 
   /// `no_sync`, if true, skips crash-safe file fsync api calls.
   /// It's a private field, only used in testing
   no_sync: bool,
+
+  _runtime: std::marker::PhantomData<R>,
 }
 
-impl FileSnapshotStorage {
+impl<R: Runtime> FileSnapshotStorage<R> {
   /// Reaps any snapshots beyond the retain count.
   pub fn reap_snapshots(&self) -> io::Result<()> {
     let snapshots = self.get_snapshots().map_err(|e| {
@@ -206,10 +209,11 @@ impl FileSnapshotStorage {
 }
 
 #[async_trait::async_trait]
-impl SnapshotStorage for FileSnapshotStorage {
+impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
   type Error = FileSnapshotStorageError;
-  type Sink = FileSnapshotSink;
-  type Source = FileSnapshotSource;
+  type Sink = FileSnapshotSink<R>;
+  type Runtime = R;
+  type Source = FileSnapshotSource<R>;
   type Options = FileSnapshotStorageOptions;
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -230,6 +234,7 @@ impl SnapshotStorage for FileSnapshotStorage {
       path: Arc::new(path),
       retain,
       no_sync: false,
+      _runtime: std::marker::PhantomData,
     };
 
     this
@@ -276,7 +281,7 @@ impl SnapshotStorage for FileSnapshotStorage {
       crc: 0,
     };
 
-    FileSnapshotSink::write_meta(&path, &meta, self.no_sync).map_err(|e| {
+    FileSnapshotSink::<R>::write_meta(&path, &meta, self.no_sync).map_err(|e| {
       tracing::error!(target = "ruraft", err = %e, "failed to write metadata");
       e
     })?;
@@ -358,6 +363,7 @@ impl SnapshotStorage for FileSnapshotStorage {
     Ok(FileSnapshotSource {
       meta,
       file: BufReader::new(state_file),
+      _runtime: std::marker::PhantomData,
     })
   }
 }
@@ -371,12 +377,13 @@ struct FileSnapshotMeta {
   crc: u64,
 }
 
-pub struct FileSnapshotSource {
+pub struct FileSnapshotSource<R: Runtime> {
   meta: FileSnapshotMeta,
   file: BufReader<File>,
+  _runtime: std::marker::PhantomData<R>,
 }
 
-impl futures::io::AsyncRead for FileSnapshotSource {
+impl<R: Runtime> futures::io::AsyncRead for FileSnapshotSource<R> {
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
@@ -386,14 +393,15 @@ impl futures::io::AsyncRead for FileSnapshotSource {
   }
 }
 
-impl SnapshotSource for FileSnapshotSource {
+impl<R: Runtime> SnapshotSource for FileSnapshotSource<R> {
+  type Runtime = R;
   fn meta(&self) -> &SnapshotMeta {
     &self.meta.meta
   }
 }
 
-pub struct FileSnapshotSink {
-  store: FileSnapshotStorage,
+pub struct FileSnapshotSink<R: Runtime> {
+  store: FileSnapshotStorage<R>,
   dir: PathBuf,
 
   no_sync: bool,
@@ -403,7 +411,7 @@ pub struct FileSnapshotSink {
   closed: bool,
 }
 
-impl futures::io::AsyncWrite for FileSnapshotSink {
+impl<R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<R> {
   fn poll_write(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
@@ -435,7 +443,7 @@ impl futures::io::AsyncWrite for FileSnapshotSink {
     }
 
     // Write out the meta data
-    if let Err(e) = FileSnapshotSink::write_meta(&self.dir, &self.meta, self.store.no_sync) {
+    if let Err(e) = FileSnapshotSink::<R>::write_meta(&self.dir, &self.meta, self.store.no_sync) {
       tracing::error!(target = "ruraft", err = %e, "failed to write snapshot metadata");
       return Poll::Ready(Err(e));
     }
@@ -473,7 +481,7 @@ impl futures::io::AsyncWrite for FileSnapshotSink {
   }
 }
 
-impl FileSnapshotSink {
+impl<R: Runtime> FileSnapshotSink<R> {
   fn finalize(&mut self) -> io::Result<()> {
     // Flush any remaining data
     self.file.flush()?;
@@ -509,7 +517,9 @@ impl FileSnapshotSink {
 }
 
 #[async_trait::async_trait]
-impl SnapshotSink for FileSnapshotSink {
+impl<R: Runtime> SnapshotSink for FileSnapshotSink<R> {
+  type Runtime = R;
+
   fn id(&self) -> &SnapshotId {
     &self.meta.meta.id
   }
@@ -543,12 +553,12 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot and missing the parent dir
-  pub async fn test_file_snapshot_storage_create_snapshot_missing_parent_dir() {
+  pub async fn test_file_snapshot_storage_create_snapshot_missing_parent_dir<R: Runtime>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let snap = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+    let snap = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
       .await
       .unwrap();
 
@@ -562,12 +572,12 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot
-  pub async fn test_file_snapshot_storage_create_snapshot() {
+  pub async fn test_file_snapshot_storage_create_snapshot<R: Runtime>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
-    let snap = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+    let snap = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
       .await
       .unwrap();
 
@@ -617,12 +627,12 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot and cancel it
-  pub async fn test_file_snapshot_storage_cancel_snapshot() {
+  pub async fn test_file_snapshot_storage_cancel_snapshot<R: Runtime>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let storage = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+    let storage = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
       .await
       .unwrap();
 
@@ -642,13 +652,13 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot and retention
-  pub async fn test_file_snapshot_storage_retention() {
+  pub async fn test_file_snapshot_storage_retention<R: Runtime>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 2))
+    let storage = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 2))
       .await
       .unwrap();
 
@@ -675,7 +685,7 @@ pub(crate) mod tests {
   /// Description:
   /// - bad perm
   #[cfg(unix)]
-  pub async fn test_file_snapshot_storage_bad_perm() {
+  pub async fn test_file_snapshot_storage_bad_perm<R: Runtime>() {
     use std::os::unix::fs::PermissionsExt;
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
@@ -687,7 +697,8 @@ pub(crate) mod tests {
     perm.set_mode(0o000);
     fs::set_permissions(&dir2, perm).unwrap();
 
-    let Err(err) = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir2, 3)).await else {
+    let Err(err) = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir2, 3)).await
+    else {
       panic!("should fail to use dir with bad perms");
     };
     assert!(matches!(
@@ -700,7 +711,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - missing parent dir
-  pub async fn test_file_snapshot_storage_missing_parent_dir() {
+  pub async fn test_file_snapshot_storage_missing_parent_dir<R: Runtime>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -708,7 +719,7 @@ pub(crate) mod tests {
     let dir2 = dir.join("raft");
     drop(parent);
 
-    FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir2, 3))
+    FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
       .await
       .expect("should not fail when using non existing parent");
   }
@@ -717,13 +728,13 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - ordering
-  pub async fn test_file_snapshot_storage_ordering() {
+  pub async fn test_file_snapshot_storage_ordering<R: Runtime>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage = FileSnapshotStorage::new(FileSnapshotStorageOptions::new(&dir, 3))
+    let storage = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
       .await
       .unwrap();
 

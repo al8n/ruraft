@@ -167,6 +167,19 @@ impl Options {
 
     ReloadableOptions::from_options(self).validate(self.leader_lease_timeout)
   }
+
+  /// Apply the given [`ReloadableOptions`] into this [`Options`].
+  #[inline]
+  pub const fn apply(&self, other: ReloadableOptions) -> Self {
+    Self {
+      trailing_logs: other.trailing_logs,
+      snapshot_threshold: other.snapshot_threshold,
+      snapshot_interval: other.snapshot_interval.to_std(),
+      heartbeat_timeout: other.heartbeat_timeout.to_std(),
+      election_timeout: other.election_timeout.to_std(),
+      ..*self
+    }
+  }
 }
 
 #[derive(bytemuck::NoUninit, PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
@@ -261,7 +274,7 @@ impl ReloadableOptions {
   }
 
   /// Used to validate a sane configuration
-  const fn validate(&self, leader_lease_timeout: Duration) -> Result<(), OptionsError> {
+  pub(crate) const fn validate(&self, leader_lease_timeout: Duration) -> Result<(), OptionsError> {
     let election_timeout = self.election_timeout();
     let election_timeout_millis = election_timeout.as_millis() as u64;
     let heartbeat_timeout = self.heartbeat_timeout();

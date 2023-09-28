@@ -8,6 +8,7 @@ use std::{
   task::{Context, Poll},
 };
 
+use agnostic::Runtime;
 use async_lock::RwLock;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 
@@ -15,18 +16,24 @@ use crate::{membership::Membership, options::SnapshotVersion};
 
 use super::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage};
 
+/// Implements the [`SnapshotStorage`] trait in memory and
+/// retains only the most recent snapshot
+///
+/// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Default)]
-pub struct MemorySnapshotStorage {
+pub struct MemorySnapshotStorage<R: Runtime> {
   latest: Arc<RwLock<MemorySnapshot>>,
   has_snapshot: AtomicBool,
+  _runtime: std::marker::PhantomData<R>,
 }
 
 #[async_trait::async_trait]
-impl SnapshotStorage for MemorySnapshotStorage {
+impl<R: Runtime> SnapshotStorage for MemorySnapshotStorage<R> {
   type Error = io::Error;
-  type Sink = MemorySnapshotSink;
-  type Source = MemorySnapshotSource;
+  type Sink = MemorySnapshotSink<R>;
+  type Source = MemorySnapshotSource<R>;
   type Options = ();
+  type Runtime = R;
 
   async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
   where
@@ -35,6 +42,7 @@ impl SnapshotStorage for MemorySnapshotStorage {
     Ok(Self {
       latest: Arc::new(RwLock::new(Default::default())),
       has_snapshot: AtomicBool::new(false),
+      _runtime: std::marker::PhantomData,
     })
   }
 
@@ -72,6 +80,7 @@ impl SnapshotStorage for MemorySnapshotStorage {
     Ok(MemorySnapshotSink {
       id: lock.meta.id,
       snap: self.latest.clone(),
+      _runtime: std::marker::PhantomData,
     })
   }
 
@@ -101,6 +110,7 @@ impl SnapshotStorage for MemorySnapshotStorage {
     Ok(MemorySnapshotSource {
       meta: lock.meta.clone(),
       contents: lock.contents.clone(),
+      _runtime: std::marker::PhantomData,
     })
   }
 }
@@ -111,13 +121,17 @@ struct MemorySnapshot {
   contents: Vec<u8>,
 }
 
+/// Implements [`SnapshotSink`] in memory
+///
+/// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Default, Clone)]
-pub struct MemorySnapshotSink {
+pub struct MemorySnapshotSink<R: Runtime> {
   snap: Arc<RwLock<MemorySnapshot>>,
   id: SnapshotId,
+  _runtime: std::marker::PhantomData<R>,
 }
 
-impl AsyncWrite for MemorySnapshotSink {
+impl<R: Runtime> AsyncWrite for MemorySnapshotSink<R> {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     let mut snap = futures::ready!(self.snap.write().poll_unpin(cx));
     snap.contents.extend_from_slice(buf);
@@ -135,7 +149,9 @@ impl AsyncWrite for MemorySnapshotSink {
 }
 
 #[async_trait::async_trait]
-impl SnapshotSink for MemorySnapshotSink {
+impl<R: Runtime> SnapshotSink for MemorySnapshotSink<R> {
+  type Runtime = R;
+
   fn id(&self) -> &SnapshotId {
     &self.id
   }
@@ -145,13 +161,17 @@ impl SnapshotSink for MemorySnapshotSink {
   }
 }
 
+/// Implements [`SnapshotSource`] in memory
+///
+/// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSource {
+pub struct MemorySnapshotSource<R: Runtime> {
   meta: SnapshotMeta,
   contents: Vec<u8>,
+  _runtime: std::marker::PhantomData<R>,
 }
 
-impl AsyncRead for MemorySnapshotSource {
+impl<R: Runtime> AsyncRead for MemorySnapshotSource<R> {
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
@@ -164,7 +184,9 @@ impl AsyncRead for MemorySnapshotSource {
   }
 }
 
-impl SnapshotSource for MemorySnapshotSource {
+impl<R: Runtime> SnapshotSource for MemorySnapshotSource<R> {
+  type Runtime = R;
+
   fn meta(&self) -> &SnapshotMeta {
     &self.meta
   }
@@ -176,8 +198,8 @@ pub(super) mod tests {
 
   use super::*;
 
-  pub async fn test_memory_snapshot_storage_create() {
-    let snap = MemorySnapshotStorage::new(()).await.unwrap();
+  pub async fn test_memory_snapshot_storage_create<R: Runtime>() {
+    let snap = MemorySnapshotStorage::<R>::new(()).await.unwrap();
 
     // check no snapshots
     let snaps = snap.list().await.unwrap();
@@ -220,8 +242,8 @@ pub(super) mod tests {
     assert_eq!(buf, b"first\nsecond\n", "expected contents to match");
   }
 
-  pub async fn test_memory_snapshot_storage_open_snapshot_twice() {
-    let snap = MemorySnapshotStorage::new(()).await.unwrap();
+  pub async fn test_memory_snapshot_storage_open_snapshot_twice<R: Runtime>() {
+    let snap = MemorySnapshotStorage::<R>::new(()).await.unwrap();
 
     // create a new sink
     let mut sink = snap

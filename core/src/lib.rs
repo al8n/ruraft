@@ -1,8 +1,8 @@
 //!
 #![forbid(unsafe_code)]
 // #![deny(missing_docs)]
-
-mod command;
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
 
 /// Errors implementation for the Raft.
 pub mod error;
@@ -18,6 +18,8 @@ pub mod storage;
 mod transport;
 /// utils functions or structs
 pub mod utils;
+
+mod commitment;
 
 /// Node id
 pub struct NodeId {}
