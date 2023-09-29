@@ -17,9 +17,9 @@ mod fsm;
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;
-pub mod storage;
-/// 
+///
 pub mod sidecar;
+pub mod storage;
 mod transport;
 /// utils functions or structs
 pub mod utils;

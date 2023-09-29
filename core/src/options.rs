@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use std::time::Duration;
+use std::{mem, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -13,6 +13,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 /// may be refused. See dispositionRPC for details of this logic.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ProtocolVersion {
   /// The current version of the protocol.
   #[default]
@@ -24,6 +25,7 @@ pub enum ProtocolVersion {
 /// though this may be changed in the future to include a configurable version.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum SnapshotVersion {
   /// The current version of the protocol.
   #[default]

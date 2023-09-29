@@ -1,5 +1,6 @@
 use std::{
   future::Future,
+  io, mem,
   net::SocketAddr,
   pin::Pin,
   task::{Context, Poll},
@@ -14,6 +15,9 @@ use crate::{
   storage::Log,
 };
 
+pub(super) const HEADER_SIZE: usize =
+  mem::size_of::<ProtocolVersion>() + mem::size_of::<CommandKind>() + mem::size_of::<u32>();
+
 /// A common sub-structure used to pass along protocol version and
 /// other information about the cluster.
 #[viewit::viewit(
@@ -23,15 +27,6 @@ use crate::{
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Header {
-  /// The version of the protocol the sender is speaking
-  #[viewit(
-    getter(
-      const,
-      attrs(doc = "Get the protocol version of the request or response"),
-    ),
-    setter(attrs(doc = "Set the protocol version of the request or response"),)
-  )]
-  protocol_version: ProtocolVersion,
   /// The [`ServerId`] of the node sending the RPC Request or Response
   #[viewit(
     getter(
@@ -57,11 +52,7 @@ impl Header {
   /// Create a new [`Header`] with the given [`ServerId`] and [`SocketAddr`]
   #[inline]
   pub const fn new(id: ServerId, addr: SocketAddr) -> Self {
-    Self {
-      protocol_version: ProtocolVersion::V1,
-      id,
-      addr,
-    }
+    Self { id, addr }
   }
 }
 
@@ -71,6 +62,7 @@ impl Header {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AppendEntriesRequest {
   /// The header of the request
+  #[viewit(getter(const))]
   header: Header,
 
   /// Provide the current term and leader
@@ -95,6 +87,7 @@ pub struct AppendEntriesRequest {
 
 pub struct AppendEntriesResponse {
   /// The header of the response
+  #[viewit(getter(const))]
   header: Header,
 
   /// Newer term if leader is out of date
@@ -117,6 +110,7 @@ pub struct AppendEntriesResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VoteRequest {
   /// The header of the request
+  #[viewit(getter(const))]
   header: Header,
 
   /// The term of the candidate
@@ -140,6 +134,7 @@ pub struct VoteRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VoteResponse {
   /// The header of the response
+  #[viewit(getter(const))]
   header: Header,
 
   /// Newer term if leader is out of date.
@@ -155,6 +150,7 @@ pub struct VoteResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallSnapshotRequest {
   /// The header of the request
+  #[viewit(getter(const))]
   header: Header,
 
   /// The snapshot version
@@ -184,6 +180,7 @@ pub struct InstallSnapshotRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct InstallSnapshotResponse {
   /// The header of the response
+  #[viewit(getter(const))]
   header: Header,
 
   /// The term
@@ -199,6 +196,7 @@ pub struct InstallSnapshotResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TimeoutNowRequest {
   /// The header of the request
+  #[viewit(getter(const))]
   header: Header,
 }
 
@@ -207,45 +205,343 @@ pub struct TimeoutNowRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TimeoutNowResponse {
   /// The header of the response
+  #[viewit(getter(const))]
   header: Header,
 }
 
+/// The heartbeat command.
+#[viewit::viewit]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HeartbeatRequest {
+  /// The header of the request
+  #[viewit(getter(const))]
+  header: Header,
+
+  /// Provide the current term and leader
+  term: u64,
+}
+
+/// The response returned from an
+/// [`HeartbeatRequest`].
+#[viewit::viewit]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+
+pub struct HeartbeatResponse {
+  /// The header of the response
+  #[viewit(getter(const))]
+  header: Header,
+}
+
+/// The response returned from an
+/// [`HeartbeatRequest`].
+#[viewit::viewit]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ErrorResponse {
+  /// The header of the response
+  #[viewit(getter(const))]
+  header: Header,
+  /// The error message
+  error: String,
+}
+
+impl ProtocolVersion {
+  pub(crate) const fn header_offset(&self) -> usize {
+    match self {
+      ProtocolVersion::V1 => {
+        mem::size_of::<Self>() + mem::size_of::<CommandKind>() + mem::size_of::<u32>()
+      }
+    }
+  }
+}
+
+#[repr(u8)]
+#[non_exhaustive]
+pub(super) enum CommandKind {
+  AppendEntries = 0,
+  Vote = 1,
+  InstallSnapshot = 2,
+  TimeoutNow = 3,
+  Heartbeat = 4,
+}
+
+impl TryFrom<u8> for CommandKind {
+  type Error = io::Error;
+
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match () {
+      () if CommandKind::AppendEntries as u8 == value => Ok(Self::AppendEntries),
+      () if CommandKind::Vote as u8 == value => Ok(Self::Vote),
+      () if CommandKind::InstallSnapshot as u8 == value => Ok(Self::InstallSnapshot),
+      () if CommandKind::TimeoutNow as u8 == value => Ok(Self::TimeoutNow),
+      () if CommandKind::Heartbeat as u8 == value => Ok(Self::Heartbeat),
+      _ => Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unknown command type: {value}"),
+      )),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+#[non_exhaustive]
+pub(super) enum CommandResponseKind {
+  AppendEntries = 0,
+  Vote = 1,
+  InstallSnapshot = 2,
+  TimeoutNow = 3,
+  Heartbeat = 4,
+  Err = 5,
+}
+
+impl core::fmt::Display for CommandResponseKind {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    match self {
+      Self::AppendEntries => write!(f, "AppendEntries"),
+      Self::Vote => write!(f, "Vote"),
+      Self::InstallSnapshot => write!(f, "InstallSnapshot"),
+      Self::TimeoutNow => write!(f, "TimeoutNow"),
+      Self::Heartbeat => write!(f, "Heartbeat"),
+      Self::Err => write!(f, "Error"),
+    }
+  }
+}
+
+impl TryFrom<u8> for CommandResponseKind {
+  type Error = io::Error;
+
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match () {
+      () if Self::AppendEntries as u8 == value => Ok(Self::AppendEntries),
+      () if Self::Vote as u8 == value => Ok(Self::Vote),
+      () if Self::InstallSnapshot as u8 == value => Ok(Self::InstallSnapshot),
+      () if Self::TimeoutNow as u8 == value => Ok(Self::TimeoutNow),
+      () if Self::Heartbeat as u8 == value => Ok(Self::Heartbeat),
+      () if Self::Err as u8 == value => Ok(Self::Err),
+      _ => Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unknown command response type: {value}"),
+      )),
+    }
+  }
+}
+
+macro_rules! encode {
+  (v1::$ty:ident { $expr: expr }) => {{
+    let mut buf = Vec::with_capacity(128);
+    buf.push({ $expr });
+    buf.push(ProtocolVersion::V1 as u8);
+
+    // Reserve length for the message.
+    buf.extend_from_slice(&[0, 0, 0, 0]);
+
+    rmp_serde::encode::write(&mut buf, $ty)
+      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let encoded_len = buf.len() - OFFSET;
+    buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    Ok(buf)
+  }};
+}
+
+impl ProtocolVersion {
+  pub(super) fn from_u8(val: u8) -> io::Result<Self> {
+    match val {
+      1 => Ok(Self::V1),
+      _ => Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unknown protocol version: {val}"),
+      )),
+    }
+  }
+}
+
 /// Request to be sent to the Raft node.
-pub enum Request {
+#[non_exhaustive]
+pub enum RequestKind {
   AppendEntries(AppendEntriesRequest),
   Vote(VoteRequest),
   InstallSnapshot(InstallSnapshotRequest),
   TimeoutNow(TimeoutNowRequest),
+  Heartbeat(HeartbeatRequest),
+}
+
+pub struct Request {
+  pub(super) protocol_version: ProtocolVersion,
+  pub(super) kind: RequestKind,
 }
 
 impl Request {
-  pub fn header(&self) -> &Header {
-    match self {
-      Self::AppendEntries(req) => req.header(),
-      Self::Vote(req) => req.header(),
-      Self::InstallSnapshot(req) => req.header(),
-      Self::TimeoutNow(req) => req.header(),
+  pub(super) const fn append_entries(version: ProtocolVersion, req: AppendEntriesRequest) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::AppendEntries(req),
+    }
+  }
+
+  pub(super) const fn vote(version: ProtocolVersion, req: VoteRequest) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::Vote(req),
+    }
+  }
+
+  pub(super) const fn install_snapshot(
+    version: ProtocolVersion,
+    req: InstallSnapshotRequest,
+  ) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::InstallSnapshot(req),
+    }
+  }
+
+  pub(super) const fn timeout_now(version: ProtocolVersion, req: TimeoutNowRequest) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::TimeoutNow(req),
+    }
+  }
+
+  pub(super) const fn heartbeat(version: ProtocolVersion, req: HeartbeatRequest) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::Heartbeat(req),
+    }
+  }
+
+  pub const fn header(&self) -> &Header {
+    match &self.kind {
+      RequestKind::AppendEntries(req) => req.header(),
+      RequestKind::Vote(req) => req.header(),
+      RequestKind::InstallSnapshot(req) => req.header(),
+      RequestKind::TimeoutNow(req) => req.header(),
+      RequestKind::Heartbeat(req) => req.header(),
+    }
+  }
+
+  pub fn encode(&self) -> io::Result<Vec<u8>> {
+    match self.protocol_version {
+      ProtocolVersion::V1 => {
+        const OFFSET: usize = ProtocolVersion::V1.header_offset();
+
+        match &self.kind {
+          RequestKind::AppendEntries(req) => encode!(v1::req { CommandKind::AppendEntries as u8 }),
+          RequestKind::Vote(req) => encode!(v1::req {CommandKind::Vote as u8 }),
+          RequestKind::InstallSnapshot(req) => {
+            encode!(v1::req { CommandKind::InstallSnapshot as u8 })
+          }
+          RequestKind::TimeoutNow(req) => encode!(v1::req { CommandKind::TimeoutNow as u8 }),
+          RequestKind::Heartbeat(req) => encode!(v1::req { CommandKind::Heartbeat as u8 }),
+        }
+      }
+    }
+  }
+}
+
+pub(super) fn decode<T>(protocol_version: ProtocolVersion, src: &[u8]) -> io::Result<T>
+where
+  T: serde::de::DeserializeOwned,
+{
+  match protocol_version {
+    ProtocolVersion::V1 => {
+      rmp_serde::decode::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
   }
 }
 
 /// Response from the Raft node
-pub enum Response {
+#[non_exhaustive]
+pub enum ResponseKind {
   AppendEntries(AppendEntriesResponse),
   Vote(VoteResponse),
   InstallSnapshot(InstallSnapshotResponse),
   TimeoutNow(TimeoutNowResponse),
+  Heartbeat(HeartbeatResponse),
+  Error(ErrorResponse),
+}
+
+pub struct Response {
+  protocol_version: ProtocolVersion,
+  kind: ResponseKind,
 }
 
 impl Response {
+  const fn append_entries(version: ProtocolVersion, res: AppendEntriesResponse) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::AppendEntries(res),
+    }
+  }
+
+  const fn vote(version: ProtocolVersion, res: VoteResponse) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::Vote(res),
+    }
+  }
+
+  const fn install_snapshot(version: ProtocolVersion, res: InstallSnapshotResponse) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::InstallSnapshot(res),
+    }
+  }
+
+  const fn timeout_now(version: ProtocolVersion, res: TimeoutNowResponse) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::TimeoutNow(res),
+    }
+  }
+
+  pub(super) const fn heartbeat(version: ProtocolVersion, header: Header) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::Heartbeat(HeartbeatResponse { header }),
+    }
+  }
+
+  pub(super) const fn error(version: ProtocolVersion, header: Header, error: String) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::Error(ErrorResponse { header, error }),
+    }
+  }
+
   /// Returns the header of the response.
   #[inline]
-  pub fn header(&self) -> &Header {
-    match self {
-      Self::AppendEntries(res) => res.header(),
-      Self::Vote(res) => res.header(),
-      Self::InstallSnapshot(res) => res.header(),
-      Self::TimeoutNow(res) => res.header(),
+  pub const fn header(&self) -> &Header {
+    match &self.kind {
+      ResponseKind::AppendEntries(res) => res.header(),
+      ResponseKind::Vote(res) => res.header(),
+      ResponseKind::InstallSnapshot(res) => res.header(),
+      ResponseKind::TimeoutNow(res) => res.header(),
+      ResponseKind::Heartbeat(res) => res.header(),
+      ResponseKind::Error(res) => res.header(),
+    }
+  }
+
+  pub fn encode(&self) -> io::Result<Vec<u8>> {
+    match self.protocol_version {
+      ProtocolVersion::V1 => {
+        const OFFSET: usize =
+          mem::size_of::<CommandKind>() + mem::size_of::<ProtocolVersion>() + mem::size_of::<u32>();
+
+        match &self.kind {
+          ResponseKind::AppendEntries(res) => {
+            encode!(v1::res { CommandResponseKind::AppendEntries as u8 })
+          }
+          ResponseKind::Vote(res) => encode!(v1::res { CommandResponseKind::Vote as u8 }),
+          ResponseKind::InstallSnapshot(res) => {
+            encode!(v1::res { CommandResponseKind::InstallSnapshot as u8 })
+          }
+          ResponseKind::TimeoutNow(res) => {
+            encode!(v1::res { CommandResponseKind::TimeoutNow as u8 })
+          }
+          ResponseKind::Heartbeat(res) => encode!(v1::res { CommandResponseKind::Heartbeat as u8 }),
+          ResponseKind::Error(res) => encode!(v1::res { CommandResponseKind::Err as u8 }),
+        }
+      }
     }
   }
 }

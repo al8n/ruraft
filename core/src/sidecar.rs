@@ -22,8 +22,8 @@ pub trait Sidecar: Send + Sync + 'static {
   /// Returns a new sidecar.
   async fn new(options: Self::Options) -> Result<(), Self::Error>;
 
-  /// Runs the sidecar. 
-  /// 
+  /// Runs the sidecar.
+  ///
   /// - The `role` parameter is the current role of the Raft node.
   /// The implementor should determine whether to run the sidecar or not based on
   /// the role.

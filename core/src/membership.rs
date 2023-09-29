@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use smol_str::SmolStr;
 
+use crate::options::ProtocolVersion;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 pub enum ServerSuffrage {
@@ -69,6 +71,26 @@ impl ServerId {
     let mut rng = rand::thread_rng();
     let id: String = (0..10).map(|_| rng.gen::<char>()).collect();
     Self::new(id).unwrap()
+  }
+
+  pub(crate) fn encoded_size(&self, version: ProtocolVersion) -> usize {
+    match version {
+      ProtocolVersion::V1 => {
+        // A simple length-prefix encoding.
+        core::mem::size_of::<u32>() + self.0.len()
+      }
+    }
+  }
+
+  pub(crate) fn encode(&self, dst: &mut [u8], version: ProtocolVersion) {
+    match version {
+      ProtocolVersion::V1 => {
+        const OFFSET: usize = core::mem::size_of::<u32>();
+        let len = self.0.len();
+        dst[..OFFSET].copy_from_slice(&len.to_be_bytes());
+        dst[OFFSET..OFFSET + len].copy_from_slice(self.0.as_bytes());
+      }
+    }
   }
 }
 

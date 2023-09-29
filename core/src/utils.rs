@@ -62,3 +62,63 @@ pub fn now_timestamp() -> u64 {
     .expect("SystemTime before UNIX EPOCH!")
     .as_millis() as u64
 }
+
+/// Returns the encoded length of the value in LEB128 variable length format.
+/// The returned value will be between 1 and 10, inclusive.
+#[inline]
+pub const fn encoded_len_varint(value: u64) -> usize {
+  // Based on [VarintSize64][1].
+  // [1]: https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
+  ((((value | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as usize
+}
+
+/// Encodes an integer value into LEB128 variable length format, and writes it to the buffer.
+/// The buffer must have enough remaining space (maximum 10 bytes).
+#[inline]
+pub const fn encode_varint(mut value: u64, buf: &mut [u8]) {
+  let mut i = 0usize;
+  loop {
+    if value < 0x80 {
+      buf[i] = value as u8;
+      break;
+    } else {
+      buf[i] = ((value & 0x7F) | 0x80) as u8;
+      value >>= 7;
+    }
+    i += 1;
+  }
+}
+
+/// Decodes a value from LEB128 variable length format.
+///
+/// # Arguments
+///
+/// * `buf` - A byte slice containing the LEB128 encoded value.
+///
+/// # Returns
+///
+/// * `Option<u64>` - Returns the decoded value as `u64` if successful.
+///   Returns `None` if the buffer did not contain a valid LEB128 encoding.
+pub const fn decode_varint(buf: &[u8]) -> Option<u64> {
+  let mut result: u64 = 0;
+  let mut shift = 0;
+
+  let mut i = 0usize;
+  loop {
+    if i == 10 {
+      // It's not a valid LEB128 encoding if it exceeds 10 bytes for u64.
+      return None;
+    }
+
+    let value = (buf[i] & 0x7F) as u64;
+    result |= value << shift;
+
+    // If the high-order bit is not set, this byte is the end of the encoding.
+    if buf[i] & 0x80 == 0 {
+      return Some(result);
+    }
+
+    shift += 7;
+    i += 1;
+  }
+}

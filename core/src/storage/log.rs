@@ -58,24 +58,68 @@ impl LogKind {
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Log {
-  /// Holds the index of the log entry.
-  #[viewit(
-    getter(vis = "pub(crate)", const, attrs(doc = "Returns the log entry's index.")),
-    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's index."))
-  )]
-  index: u64,
-  /// Holds the term of the log entry.
-  #[viewit(
-    getter(vis = "pub(crate)", const, attrs(doc = "Returns the log entry's term.")),
-    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's term."))
-  )]
-  term: u64,
   /// Holds the kind of the log entry.
   #[viewit(
-    getter(vis = "pub(crate)", const, attrs(doc = "Returns the log entry's kind.")),
+    getter(
+      vis = "pub(crate)",
+      const,
+      attrs(doc = "Returns the log entry's kind.")
+    ),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
   )]
   kind: LogKind,
+
+  /// Holds the index of the log entry.
+  #[viewit(
+    getter(
+      vis = "pub(crate)",
+      const,
+      attrs(doc = "Returns the log entry's index.")
+    ),
+    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's index."))
+  )]
+  index: u64,
+
+  /// Holds the term of the log entry.
+  #[viewit(
+    getter(
+      vis = "pub(crate)",
+      const,
+      attrs(doc = "Returns the log entry's term.")
+    ),
+    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's term."))
+  )]
+  term: u64,
+
+  /// Stores the time (timestamp in milliseconds) the leader first appended this log to it's
+  /// [`LogStorage`]. Followers will observe the leader's time. It is not used for
+  /// coordination or as part of the replication protocol at all. It exists only
+  /// to provide operational information for example how many seconds worth of
+  /// logs are present on the leader which might impact follower's ability to
+  /// catch up after restoring a large snapshot. We should never rely on this
+  /// being in the past when appending on a follower or reading a log back since
+  /// the clock skew can mean a follower could see a log with a future timestamp.
+  /// In general too the leader is not required to persist the log before
+  /// delivering to followers although the current implementation happens to do
+  /// this.
+  #[viewit(
+    getter(
+      vis = "pub(crate)",
+      const,
+      attrs(
+        doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
+    [`LogStorage`]."
+      )
+    ),
+    setter(
+      vis = "pub(crate)",
+      attrs(
+        doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
+    [`LogStorage`]."
+      )
+    )
+  )]
+  appended_at: u64,
 
   /// Holds the log entry's type-specific data.
   #[viewit(
@@ -109,36 +153,6 @@ pub struct Log {
     setter(attrs(doc = "Sets the log entry's extensions."))
   )]
   extension: Bytes,
-
-  /// Stores the time (timestamp in milliseconds) the leader first appended this log to it's
-  /// [`LogStorage`]. Followers will observe the leader's time. It is not used for
-  /// coordination or as part of the replication protocol at all. It exists only
-  /// to provide operational information for example how many seconds worth of
-  /// logs are present on the leader which might impact follower's ability to
-  /// catch up after restoring a large snapshot. We should never rely on this
-  /// being in the past when appending on a follower or reading a log back since
-  /// the clock skew can mean a follower could see a log with a future timestamp.
-  /// In general too the leader is not required to persist the log before
-  /// delivering to followers although the current implementation happens to do
-  /// this.
-  #[viewit(
-    getter(
-      vis = "pub(crate)",
-      const,
-      attrs(
-        doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
-    [`LogStorage`]."
-      )
-    ),
-    setter(
-      vis = "pub(crate)",
-      attrs(
-        doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
-    [`LogStorage`]."
-      )
-    )
-  )]
-  appended_at: u64,
 }
 
 impl Log {
