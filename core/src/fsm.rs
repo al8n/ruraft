@@ -5,7 +5,11 @@ pub trait FinateStateMachineSnapshot {
   /// Errors returned by the finate state machine snapshot.
   type Error: std::error::Error;
 
+  /// The sink type used by the finate state machine snapshot.
   type Sink: SnapshotSink;
+
+  /// The async runtime used by the finate state machine snapshot.
+  type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
   async fn persist(&self, sink: &Self::Sink) -> Result<(), Self::Error>;
@@ -19,7 +23,10 @@ pub trait FinateStateMachineSnapshot {
 pub trait FinateStateMachine: Send + Sync + 'static {
   /// Errors returned by the finate state machine.
   type Error: std::error::Error;
-  type Snapshot: FinateStateMachineSnapshot;
+  /// The snapshot type used by the finate state machine.
+  type Snapshot: FinateStateMachineSnapshot<Runtime = Self::Runtime>;
+  /// The async runtime used by the finate state machine.
+  type Runtime: agnostic::Runtime;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to
   /// restore the FSM to a previous state, or to bring out-of-date followers up
