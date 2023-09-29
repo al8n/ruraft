@@ -60,20 +60,20 @@ impl LogKind {
 pub struct Log {
   /// Holds the index of the log entry.
   #[viewit(
-    getter(const, attrs(doc = "Returns the log entry's index.")),
-    setter(attrs(doc = "Sets the log entry's index."))
+    getter(vis = "pub(crate)", const, attrs(doc = "Returns the log entry's index.")),
+    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's index."))
   )]
   index: u64,
   /// Holds the term of the log entry.
   #[viewit(
-    getter(const, attrs(doc = "Returns the log entry's term.")),
-    setter(attrs(doc = "Sets the log entry's term."))
+    getter(vis = "pub(crate)", const, attrs(doc = "Returns the log entry's term.")),
+    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's term."))
   )]
   term: u64,
   /// Holds the kind of the log entry.
   #[viewit(
-    getter(const, attrs(doc = "Returns the log entry's kind.")),
-    setter(attrs(doc = "Sets the log entry's kind."))
+    getter(vis = "pub(crate)", const, attrs(doc = "Returns the log entry's kind.")),
+    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
   )]
   kind: LogKind,
 
@@ -123,24 +123,53 @@ pub struct Log {
   /// this.
   #[viewit(
     getter(
+      vis = "pub(crate)",
       const,
       attrs(
         doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
     [`LogStorage`]."
       )
     ),
-    setter(attrs(
-      doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
+    setter(
+      vis = "pub(crate)",
+      attrs(
+        doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
     [`LogStorage`]."
-    ))
+      )
+    )
   )]
   appended_at: u64,
 }
 
 impl Log {
-  /// Create an empty [`Log`]
+  /// Create a [`Log`]
   #[inline]
-  pub const fn new(term: u64, index: u64, kind: LogKind) -> Self {
+  pub const fn new(data: Bytes) -> Self {
+    Self {
+      index: 0,
+      term: 0,
+      kind: LogKind::User,
+      data,
+      extension: Bytes::new(),
+      appended_at: 0,
+    }
+  }
+
+  /// Create a [`Log`] with extension
+  #[inline]
+  pub const fn with_extension(data: Bytes, extension: Bytes) -> Self {
+    Self {
+      index: 0,
+      term: 0,
+      kind: LogKind::User,
+      data,
+      extension,
+      appended_at: 0,
+    }
+  }
+
+  #[inline]
+  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind) -> Self {
     Self {
       index,
       term,
@@ -289,9 +318,9 @@ pub(super) mod tests {
       TestCase {
         name: "simple case",
         logs: vec![
-          Log::new(1, 1234, LogKind::User),
-          Log::new(1, 1235, LogKind::User),
-          Log::new(2, 1236, LogKind::User),
+          Log::crate_new(1, 1234, LogKind::User),
+          Log::crate_new(1, 1235, LogKind::User),
+          Log::crate_new(2, 1236, LogKind::User),
         ],
         want_idx: 1234,
         want_err: false,

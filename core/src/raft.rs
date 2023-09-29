@@ -30,12 +30,24 @@ pub use state::*;
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 
-struct Leader {
+pub struct Leader {
   id: ServerId,
   addr: SocketAddr,
 }
 
 impl Leader {
+  /// Returns the id of the leader.
+  #[inline]
+  pub const fn id(&self) -> &ServerId {
+    &self.id
+  }
+
+  /// Returns the address of the leader.
+  #[inline]
+  pub const fn addr(&self) -> SocketAddr {
+    self.addr
+  }
+
   #[inline]
   const fn new(id: ServerId, addr: SocketAddr) -> Self {
     Self { id, addr }
