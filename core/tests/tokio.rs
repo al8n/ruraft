@@ -1,3 +1,4 @@
+use agnostic::tokio::TokioRuntime;
 use ruraft_core::tests::run as run_unit_test;
 
 fn run(fut: impl std::future::Future<Output = ()>) {
@@ -7,3 +8,6 @@ fn run(fut: impl std::future::Future<Output = ()>) {
 
 #[path = "tokio/snapshot.rs"]
 mod snapshot;
+
+#[path = "tokio/net_transport.rs"]
+mod net_transport;

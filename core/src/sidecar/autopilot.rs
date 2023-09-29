@@ -5,6 +5,4 @@
 /// gains Raft leadership the corresponding [`Autopilot`] instance should have it's
 /// [`run`] method called. Then if leadership is lost that node should call the
 /// [`stop`] method on the Autopilot instance.
-pub struct Autopilot {
-
-}
+pub struct Autopilot {}

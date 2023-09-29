@@ -17,10 +17,12 @@ mod fsm;
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;
-pub mod storage;
-/// 
+///
 pub mod sidecar;
-mod transport;
+pub mod storage;
+/// Transport related trait and structs for the Raft.
+pub mod transport;
+
 /// utils functions or structs
 pub mod utils;
 
@@ -36,6 +38,7 @@ pub struct NodeId {}
 #[cfg(feature = "test")]
 pub mod tests {
   pub use super::storage::tests::snapshot::*;
+  pub use super::transport::tests::*;
 
   /// Sequential access lock for tests.
   static ACCESS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
