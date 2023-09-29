@@ -2,13 +2,16 @@ use agnostic::Runtime;
 use async_channel::Receiver;
 use futures::FutureExt;
 
-use super::{FinateStateMachine, Raft, Storage, Transport};
+use crate::sidecar::Sidecar;
 
-impl<F, S, T, R> Raft<F, S, T, R>
+use super::{FinateStateMachine, RaftCore, Storage, Transport};
+
+impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
 where
-  F: FinateStateMachine,
-  S: Storage,
-  T: Transport,
+  F: FinateStateMachine<Runtime = R>,
+  S: Storage<Runtime = R>,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
   /// A long running task responsible for applying logs
@@ -23,7 +26,6 @@ where
 
     loop {
       futures::select! {
-
         _ = shutdown_rx.recv().fuse() => {
           tracing::info!(target = "ruraft", "shutdown finate state machine...");
           return;
