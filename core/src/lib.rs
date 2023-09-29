@@ -15,6 +15,8 @@ mod fsm;
 pub mod membership;
 mod raft;
 pub mod storage;
+/// 
+pub mod sidecar;
 mod transport;
 /// utils functions or structs
 pub mod utils;
