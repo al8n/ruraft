@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
   membership::ServerId,
-  raft::{Leader, Role},
+  raft::{Node, Role},
 };
 
 /// Raft is the API for the Raft consensus algorithm.
@@ -17,7 +17,7 @@ pub trait Raft {
   type Log: Send + Sync + 'static;
 
   /// Used to return the current leader of the cluster.
-  async fn leader(&self) -> Option<Leader>;
+  async fn leader(&self) -> Option<Node>;
 
   /// Used to apply a `Log` to the finate state machine in a highly consistent
   /// manner. This returns a future that can be used to wait on the application.

@@ -162,7 +162,7 @@ where
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header,
-  consumer: CommandConsumer<Error>,
+  consumer: CommandConsumer,
   wg: AsyncWaitGroup,
   conn_pool: Mutex<HashMap<SocketAddr, <R::Net as Net>::TcpStream>>,
   conn_size: AtomicUsize,
@@ -182,7 +182,7 @@ where
   type Runtime = R;
   type Options = NetTransportOptions;
 
-  fn consumer(&self) -> CommandConsumer<Self::Error> {
+  fn consumer(&self) -> CommandConsumer {
     self.consumer.clone()
   }
 
@@ -409,7 +409,7 @@ where
 struct RequestHandler<R: Runtime> {
   ln: <R::Net as agnostic::net::Net>::TcpListener,
   local_header: Header,
-  producer: CommandProducer<Error>,
+  producer: CommandProducer,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   wg: AsyncWaitGroup,
@@ -489,7 +489,7 @@ where
 
   async fn handle_connection(
     conn: <R::Net as agnostic::net::Net>::TcpStream,
-    producer: CommandProducer<Error>,
+    producer: CommandProducer,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header,
   ) -> Result<(), Error> {
@@ -545,7 +545,7 @@ where
     let resp = if let RequestKind::Heartbeat(_) = req.kind {
       Response::heartbeat(version, local_header)
     } else {
-      let (tx, handle) = Command::<Error>::new(req);
+      let (tx, handle) = Command::new(req);
       futures::select! {
         res = producer.send(tx).fuse() => {
           match res {

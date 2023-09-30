@@ -82,7 +82,7 @@ pub struct AppendEntriesRequest {
 
 /// The response returned from an
 /// [`AppendEntriesRequest`].
-#[viewit::viewit]
+#[viewit::viewit(setters(prefix = "with"))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 
 pub struct AppendEntriesResponse {
@@ -102,6 +102,18 @@ pub struct AppendEntriesResponse {
   /// There are scenarios where this request didn't succeed
   /// but there's no need to wait/back-off the next attempt.
   no_retry_backoff: bool,
+}
+
+impl AppendEntriesResponse {
+  pub const fn new(id: ServerId, addr: SocketAddr) -> Self {
+    Self {
+      header: Header::new(id, addr),
+      term: 0,
+      last_log: 0,
+      success: false,
+      no_retry_backoff: false,
+    }
+  }
 }
 
 /// The command used by a candidate to ask a Raft peer
@@ -370,7 +382,7 @@ impl ProtocolVersion {
 
 /// Request to be sent to the Raft node.
 #[non_exhaustive]
-pub(super) enum RequestKind {
+pub(crate) enum RequestKind {
   AppendEntries(AppendEntriesRequest),
   Vote(VoteRequest),
   InstallSnapshot(InstallSnapshotRequest),
@@ -379,8 +391,8 @@ pub(super) enum RequestKind {
 }
 
 pub struct Request {
-  pub(super) protocol_version: ProtocolVersion,
-  pub(super) kind: RequestKind,
+  pub(crate) protocol_version: ProtocolVersion,
+  pub(crate) kind: RequestKind,
 }
 
 impl Request {
@@ -542,13 +554,8 @@ impl Response {
 
 /// Errors returned by the [`CommandHandle`].
 #[derive(Debug, thiserror::Error)]
-pub enum CommandHandleError<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
+pub enum CommandHandleError
 {
-  /// Returned when the command is handled by the Raft but got an error
-  #[error("{0}")]
-  Err(E),
   /// Returned when the command is cancelled
   #[error("{0}")]
   Canceled(#[from] oneshot::Canceled),
@@ -557,28 +564,19 @@ where
 /// A future for getting the corresponding response from the Raft.
 #[pin_project::pin_project]
 #[repr(transparent)]
-pub(super) struct CommandHandle<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
+pub(super) struct CommandHandle {
   #[pin]
-  rx: oneshot::Receiver<Result<Response, E>>,
+  rx: oneshot::Receiver<Response>,
 }
 
-impl<E> CommandHandle<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
-  pub(crate) fn new(rx: oneshot::Receiver<Result<Response, E>>) -> Self {
+impl CommandHandle {
+  pub(crate) fn new(rx: oneshot::Receiver<Response>) -> Self {
     Self { rx }
   }
 }
 
-impl<E> Future for CommandHandle<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
-  type Output = Result<Response, CommandHandleError<E>>;
+impl Future for CommandHandle {
+  type Output = Result<Response, CommandHandleError>;
 
   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
     // Using Pin::as_mut to get a Pin<&mut Receiver>.
@@ -586,27 +584,23 @@ where
 
     // Now, poll the receiver directly
     this.rx.poll(cx).map(|res| match res {
-      Ok(res) => res.map_err(CommandHandleError::Err),
+      Ok(res) => Ok(res),
       Err(e) => Err(From::from(e)),
     })
   }
 }
 
 /// The struct is used to interact with the Raft.
-pub struct Command<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
+pub struct Command
 {
   req: Request,
-  tx: oneshot::Sender<Result<Response, E>>,
+  tx: oneshot::Sender<Response>,
 }
 
-impl<E> Command<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
+impl Command
 {
   /// Create a new command from the given request.
-  pub(super) fn new(req: Request) -> (Self, CommandHandle<E>) {
+  pub(super) fn new(req: Request) -> (Self, CommandHandle) {
     let (tx, rx) = oneshot::channel();
     (Self { req, tx }, CommandHandle::new(rx))
   }
@@ -619,7 +613,11 @@ where
   /// Respond to the request, if the remote half is closed
   /// then the response will be returned back as an error.
   pub fn respond(self, resp: Response) -> Result<(), Response> {
-    self.tx.send(Ok(resp)).map_err(|resp| resp.unwrap())
+    self.tx.send(resp)
+  }
+
+  pub(crate) fn into_components(self) -> (oneshot::Sender<Response>, Request) {
+    (self.tx, self.req)
   }
 }
 
@@ -627,17 +625,12 @@ where
 /// from remote nodes
 #[pin_project::pin_project]
 #[derive(Debug)]
-pub struct CommandConsumer<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
+pub struct CommandConsumer {
   #[pin]
-  rx: async_channel::Receiver<Command<E>>,
+  rx: async_channel::Receiver<Command>,
 }
 
-impl<E> Clone for CommandConsumer<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
+impl Clone for CommandConsumer
 {
   fn clone(&self) -> Self {
     Self {
@@ -646,29 +639,21 @@ where
   }
 }
 
-impl<E> Stream for CommandConsumer<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
-  type Item = <async_channel::Receiver<Command<E>> as Stream>::Item;
+impl Stream for CommandConsumer {
+  type Item = <async_channel::Receiver<Command> as Stream>::Item;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    <async_channel::Receiver<Command<E>> as Stream>::poll_next(self.project().rx, cx)
+    <async_channel::Receiver<Command> as Stream>::poll_next(self.project().rx, cx)
   }
 }
 
 /// A producer for [`Command`]s
-pub struct CommandProducer<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
+pub struct CommandProducer
 {
-  tx: async_channel::Sender<Command<E>>,
+  tx: async_channel::Sender<Command>,
 }
 
-impl<E> Clone for CommandProducer<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
+impl Clone for CommandProducer {
   fn clone(&self) -> Self {
     Self {
       tx: self.tx.clone(),
@@ -676,23 +661,18 @@ where
   }
 }
 
-impl<E> CommandProducer<E>
-where
-  E: std::error::Error + Send + Sync + 'static,
-{
+impl CommandProducer {
   /// Produce a command for processing
   pub async fn send(
     &self,
-    command: Command<E>,
-  ) -> Result<(), async_channel::SendError<Command<E>>> {
+    command: Command,
+  ) -> Result<(), async_channel::SendError<Command>> {
     self.tx.send(command).await
   }
 }
 
 /// Returns unbounded command producer and command consumer.
-pub fn command<E>() -> (CommandProducer<E>, CommandConsumer<E>)
-where
-  E: std::error::Error + Send + Sync + 'static,
+pub fn command() -> (CommandProducer, CommandConsumer)
 {
   let (tx, rx) = async_channel::unbounded();
   (CommandProducer { tx }, CommandConsumer { rx })

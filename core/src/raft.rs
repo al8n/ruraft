@@ -1,6 +1,6 @@
 use std::{
   net::SocketAddr,
-  sync::{atomic::Ordering, Arc},
+  sync::{atomic::{Ordering, AtomicBool}, Arc},
   time::Duration,
 };
 
@@ -17,7 +17,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::Transport,
+  transport::{Transport, CommandConsumer},
 };
 
 mod candidate;
@@ -30,12 +30,18 @@ pub use state::*;
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 
-pub struct Leader {
+pub struct Node {
   id: ServerId,
   addr: SocketAddr,
 }
 
-impl Leader {
+impl core::fmt::Display for Node {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}({})", self.id, self.addr)
+  }
+}
+
+impl Node {
   /// Returns the id of the leader.
   #[inline]
   pub const fn id(&self) -> &ServerId {
@@ -67,8 +73,9 @@ where
   fsm: Arc<F>,
   storage: Arc<S>,
   transport: Arc<T>,
-  leader: ArcSwapOption<Leader>,
-
+  leader: ArcSwapOption<Node>,
+  local: Node,
+  candidate_from_leadership_transfer: AtomicBool,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
@@ -89,6 +96,21 @@ where
   _marker: std::marker::PhantomData<R>,
 }
 
+impl<F, S, T, SC, R> core::ops::Deref for RaftInner<F, S, T, SC, R>
+where
+  F: FinateStateMachine<Runtime = R>,
+  S: Storage<Runtime = R>,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  type Target = State;
+
+  fn deref(&self) -> &Self::Target {
+    &self.state
+  }
+}
+
 impl<F, S, T, SC, R> RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
@@ -103,7 +125,7 @@ where
   }
 
   #[inline]
-  fn set_leader(&self, leader: Option<Leader>) {
+  fn set_leader(&self, leader: Option<Node>) {
     let new = leader.map(Arc::new);
     let old = self.leader.swap(new.clone());
     match (new, old) {
@@ -228,6 +250,21 @@ where
   shutdown_rx: async_channel::Receiver<()>,
 }
 
+impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
+where
+  F: FinateStateMachine<Runtime = R>,
+  S: Storage<Runtime = R>,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  type Target = RaftInner<F, S, T, SC, R>;
+
+  fn deref(&self) -> &Self::Target {
+    &self.inner
+  }
+}
+
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
@@ -248,7 +285,11 @@ where
         }
         default => {
           match self.inner.role() {
-            Role::Follower => todo!(),
+            Role::Follower => {
+              self.spawn_sidecar(Role::Follower);
+              self.run_follower().await;
+              self.stop_sidecar().await;
+            },
             Role::Candidate => todo!(),
             Role::Leader => todo!(),
             Role::Shutdown => {

@@ -25,7 +25,7 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Returns a stream that can be used to
   /// consume and respond to RPC requests.
-  fn consumer(&self) -> CommandConsumer<Self::Error>;
+  fn consumer(&self) -> CommandConsumer;
 
   /// Used to return our local addr to distinguish from our peers.
   fn local_addr(&self) -> SocketAddr;
