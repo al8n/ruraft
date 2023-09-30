@@ -6,3 +6,5 @@ license = { workspace = true }
 description = "A placeholder"
 
 [dependencies]
+bytes = { workspace = true }
+ruraft-core = { path = "../core" }

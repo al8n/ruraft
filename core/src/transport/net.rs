@@ -68,8 +68,8 @@ pub enum Error {
   /// Returned when the response is unexpected
   #[error("unexpected response {actual}, expected {expected}")]
   UnexpectedResponse {
-    expected: CommandResponseKind,
-    actual: CommandResponseKind,
+    expected: &'static str,
+    actual: &'static str,
   },
   /// Returned when the remote response error
   #[error("remote: {0}")]
@@ -154,7 +154,11 @@ impl NetTransportOptions {
 /// InstallSnapshot is special, in that after the request we stream
 /// the entire state. That socket is not re-used as the connection state
 /// is not known if there is an error.
-pub struct NetTransport<R: Runtime> {
+pub struct NetTransport<R>
+where
+  R: Runtime,
+  <R::Sleep as Future>::Output: Send,
+{
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header,
@@ -182,8 +186,12 @@ where
     self.consumer.clone()
   }
 
-  fn local_header(&self) -> &Header {
-    &self.local_header
+  fn local_addr(&self) -> SocketAddr {
+    self.local_header.addr
+  }
+
+  fn local_id(&self) -> &ServerId {
+    &self.local_header.id
   }
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error> {
@@ -322,9 +330,8 @@ where
     let kind = CommandResponseKind::try_from(header[0])?;
     let version = ProtocolVersion::from_u8(header[1])?;
     let len = u32::from_be_bytes([header[2], header[3], header[4], header[5]]) as usize;
-    let mut data = Vec::with_capacity(len);
+    let mut data = vec![0; len];
     r.read_exact(&mut data).await?;
-
     match kind {
       CommandResponseKind::Err => {
         let res = decode::<ErrorResponse>(version, &data)?;
@@ -336,8 +343,8 @@ where
         Ok(res)
       }
       kind => Err(Error::UnexpectedResponse {
-        expected: expected_kind,
-        actual: kind,
+        expected: expected_kind.as_str(),
+        actual: kind.as_str(),
       }),
     }
   }
@@ -387,6 +394,17 @@ where
   }
 }
 
+impl<R> Drop for NetTransport<R>
+where
+  R: Runtime,
+  <R::Sleep as Future>::Output: Send,
+{
+  fn drop(&mut self) {
+    use pollster::FutureExt as _;
+    let _ = self.shutdown().block_on();
+  }
+}
+
 /// Used to handle connection from remote peers.
 struct RequestHandler<R: Runtime> {
   ln: <R::Net as agnostic::net::Net>::TcpListener,
@@ -406,49 +424,66 @@ where
     const BASE_DELAY: Duration = Duration::from_millis(5);
     const MAX_DELAY: Duration = Duration::from_secs(1);
 
+    scopeguard::defer!(self.wg.done());
+
     let mut loop_delay = Duration::ZERO;
     loop {
-      // Accept incoming connections
-      match self.ln.accept().await {
-        Ok((conn, addr)) => {
-          // No error, reset loop delay
-          loop_delay = Duration::ZERO;
+      futures::select! {
+        res = self.ln.accept().fuse() => {
+          // Accept incoming connections
+          match res {
+            Ok((conn, addr)) => {
+              // No error, reset loop delay
+              loop_delay = Duration::ZERO;
 
-          tracing::debug!(target = "ruraft.net.transport", remote = %addr, "accepted connection");
+              tracing::debug!(target = "ruraft.net.transport", remote = %addr, "accepted connection");
 
-          // Spawn a task to handle the connection
-          let producer = self.producer.clone();
-          let shutdown_rx = self.shutdown_rx.clone();
-          let local_header = self.local_header.clone();
-          let wg = self.wg.add(1);
-          R::spawn_detach(async move {
-            if Self::handle_connection(conn, producer, shutdown_rx, local_header)
-              .await
-              .is_err()
-            {
-              // We do not need to log error here, error has been logged in handle_connection
-              tracing::error!(target = "ruraft.net.transport", remote = %addr, "failed to handle connection");
+              // Spawn a task to handle the connection
+              let producer = self.producer.clone();
+              let shutdown_rx = self.shutdown_rx.clone();
+              let local_header = self.local_header.clone();
+              let wg = self.wg.add(1);
+              R::spawn_detach(async move {
+                if Self::handle_connection(conn, producer, shutdown_rx, local_header)
+                  .await
+                  .is_err()
+                {
+                  // We do not need to log error here, error has been logged in handle_connection
+                  tracing::error!(target = "ruraft.net.transport", remote = %addr, "failed to handle connection");
+                }
+                wg.done();
+              });
             }
-            wg.done();
-          });
-        }
-        Err(e) => {
-          if loop_delay.is_zero() {
-            loop_delay = BASE_DELAY;
-          } else {
-            loop_delay *= 2;
-          }
+            Err(e) => {
+              if loop_delay.is_zero() {
+                loop_delay = BASE_DELAY;
+              } else {
+                loop_delay *= 2;
+              }
 
-          if !self.shutdown.load(Ordering::Acquire) {
-            tracing::error!(target = "ruraft.net.transport", err=%e, "failed to accept connection");
-          }
+              if loop_delay > MAX_DELAY {
+                loop_delay = MAX_DELAY;
+              }
 
-          futures::select! {
-            _ = R::sleep(loop_delay).fuse() => continue,
-            _ = self.shutdown_rx.recv().fuse() => return,
-          }
+              if !self.shutdown.load(Ordering::Acquire) {
+                tracing::error!(target = "ruraft.net.transport", err=%e, "failed to accept connection");
+              }
+
+              futures::select! {
+                _ = R::sleep(loop_delay).fuse() => continue,
+                _ = self.shutdown_rx.recv().fuse() => {
+                  tracing::debug!(target = "ruraft.net.transport", "received shutdown signal, exit request handler task...");
+                  return;
+                },
+              }
+            }
+          };
         }
-      };
+        _ = self.shutdown_rx.recv().fuse() => {
+          tracing::debug!(target = "ruraft.net.transport", "received shutdown signal, exit request handler task...");
+          return;
+        }
+      }
     }
   }
 
@@ -473,7 +508,7 @@ where
     let kind = CommandKind::try_from(header[0])?;
     let version = ProtocolVersion::from_u8(header[1])?;
     let msg_len = u32::from_be_bytes([header[2], header[3], header[4], header[5]]) as usize;
-    let mut buf = Vec::with_capacity(msg_len);
+    let mut buf = vec![0; msg_len];
     r.read_exact(&mut buf).await?;
 
     let req = match kind {
@@ -537,18 +572,110 @@ where
         _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
       }
     };
-
     let resp = resp.encode().map_err(|e| {
       tracing::error!(target = "ruraft.net.transport", err=%e, "failed to encode response");
       Error::IO(e)
     })?;
 
-    BufWriter::new(r.into_inner())
-      .write_all(&resp)
-      .await
-      .map_err(|e| {
-        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
-        Error::IO(e)
-      })
+    r.into_inner().write_all(&resp).await.map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
+      Error::IO(e)
+    })
+  }
+}
+
+#[cfg(any(test, feature = "test"))]
+pub(super) mod tests {
+  use crate::storage::{Log, LogKind};
+
+  use super::*;
+
+  async fn make_transport<R>() -> NetTransport<R>
+  where
+    R: Runtime,
+    <R::Sleep as Future>::Output: Send,
+  {
+    let opts = NetTransportOptions::new(ServerId::random(), "127.0.0.1:0".parse().unwrap());
+    NetTransport::<R>::new(opts).await.unwrap()
+  }
+
+  fn make_append_req(id: ServerId, addr: SocketAddr) -> AppendEntriesRequest {
+    AppendEntriesRequest {
+      header: Header::new(id, addr),
+      term: 10,
+      prev_log_entry: 100,
+      prev_log_term: 4,
+      entries: vec![Log::crate_new(101, 4, LogKind::Noop)],
+      leader_commit: 90,
+    }
+  }
+
+  fn make_append_resp(id: ServerId, addr: SocketAddr) -> AppendEntriesResponse {
+    AppendEntriesResponse {
+      header: Header::new(id, addr),
+      term: 4,
+      last_log: 90,
+      success: true,
+      no_retry_backoff: false,
+    }
+  }
+
+  pub async fn test_net_transport_start_stop<R: Runtime>()
+  where
+    <R::Sleep as Future>::Output: Send,
+  {
+    let trans = NetTransport::<R>::new(NetTransportOptions::new(
+      ServerId::random(),
+      "127.0.0.1:0".parse().unwrap(),
+    ))
+    .await
+    .unwrap();
+
+    trans.shutdown().await.unwrap();
+  }
+
+  pub async fn test_net_transport_append_entries<R>()
+  where
+    R: Runtime,
+    <R::Sleep as Future>::Output: Send,
+  {
+    let trans1 = NetTransport::<R>::new(NetTransportOptions::new(
+      ServerId::random(),
+      "127.0.0.1:0".parse().unwrap(),
+    ))
+    .await
+    .unwrap();
+
+    let trans1_addr = trans1.local_addr();
+    let args = make_append_req(trans1.local_id().clone(), trans1_addr);
+    let expected_resp = make_append_resp(trans1.local_id().clone(), trans1_addr);
+    let mut consumer = trans1.consumer();
+    let resp = expected_resp.clone();
+
+    R::spawn_detach(async move {
+      use futures::StreamExt;
+
+      futures::select! {
+        req = consumer.next().fuse() => {
+          let req = req.unwrap();
+          let Ok(_) = req.respond(Response::append_entries(ProtocolVersion::V1, resp)) else {
+            panic!("unexpected respond fail");
+          };
+        },
+        _ = R::sleep(Duration::from_millis(200)).fuse() => {
+          panic!("timeout");
+        },
+      }
+    });
+
+    let trans2 = NetTransport::<R>::new(NetTransportOptions::new(
+      ServerId::random(),
+      "127.0.0.1:0".parse().unwrap(),
+    ))
+    .await
+    .unwrap();
+
+    let res = trans2.append_entries(args).await.unwrap();
+    assert_eq!(res, expected_resp);
   }
 }

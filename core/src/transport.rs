@@ -27,8 +27,11 @@ pub trait Transport: Send + Sync + 'static {
   /// consume and respond to RPC requests.
   fn consumer(&self) -> CommandConsumer<Self::Error>;
 
-  /// Used to return our local header to distinguish from our peers.
-  fn local_header(&self) -> &Header;
+  /// Used to return our local addr to distinguish from our peers.
+  fn local_addr(&self) -> SocketAddr;
+
+  /// Used to return our local id to distinguish from our peers.
+  fn local_id(&self) -> &ServerId;
 
   /// Returns a transport
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -78,3 +81,8 @@ pub trait Transport: Send + Sync + 'static {
 // 	/// It is always OK to call this method.
 //   fn request(&self) -> &AppendEntriesRequest;
 // }
+
+#[cfg(feature = "test")]
+pub(super) mod tests {
+  pub use super::net::tests::*;
+}

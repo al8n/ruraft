@@ -75,7 +75,7 @@ pub const fn encoded_len_varint(value: u64) -> usize {
 /// Encodes an integer value into LEB128 variable length format, and writes it to the buffer.
 /// The buffer must have enough remaining space (maximum 10 bytes).
 #[inline]
-pub const fn encode_varint(mut value: u64, buf: &mut [u8]) {
+pub fn encode_varint(mut value: u64, buf: &mut [u8]) {
   let mut i = 0usize;
   loop {
     if value < 0x80 {

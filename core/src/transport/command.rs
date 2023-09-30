@@ -294,6 +294,19 @@ pub(super) enum CommandResponseKind {
   Err = 5,
 }
 
+impl CommandResponseKind {
+  pub(super) const fn as_str(&self) -> &'static str {
+    match self {
+      Self::AppendEntries => "AppendEntries",
+      Self::Vote => "Vote",
+      Self::InstallSnapshot => "InstallSnapshot",
+      Self::TimeoutNow => "TimeoutNow",
+      Self::Heartbeat => "Heartbeat",
+      Self::Err => "Error",
+    }
+  }
+}
+
 impl core::fmt::Display for CommandResponseKind {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
@@ -357,7 +370,7 @@ impl ProtocolVersion {
 
 /// Request to be sent to the Raft node.
 #[non_exhaustive]
-pub enum RequestKind {
+pub(super) enum RequestKind {
   AppendEntries(AppendEntriesRequest),
   Vote(VoteRequest),
   InstallSnapshot(InstallSnapshotRequest),
@@ -409,7 +422,7 @@ impl Request {
     }
   }
 
-  pub const fn header(&self) -> &Header {
+  pub(super) const fn header(&self) -> &Header {
     match &self.kind {
       RequestKind::AppendEntries(req) => req.header(),
       RequestKind::Vote(req) => req.header(),
@@ -419,7 +432,7 @@ impl Request {
     }
   }
 
-  pub fn encode(&self) -> io::Result<Vec<u8>> {
+  pub(super) fn encode(&self) -> io::Result<Vec<u8>> {
     match self.protocol_version {
       ProtocolVersion::V1 => {
         const OFFSET: usize = ProtocolVersion::V1.header_offset();
@@ -450,8 +463,9 @@ where
 }
 
 /// Response from the Raft node
+#[derive(Debug)]
 #[non_exhaustive]
-pub enum ResponseKind {
+pub(crate) enum ResponseKind {
   AppendEntries(AppendEntriesResponse),
   Vote(VoteResponse),
   InstallSnapshot(InstallSnapshotResponse),
@@ -460,51 +474,31 @@ pub enum ResponseKind {
   Error(ErrorResponse),
 }
 
+#[derive(Debug)]
 pub struct Response {
   protocol_version: ProtocolVersion,
   kind: ResponseKind,
 }
 
 impl Response {
-  const fn append_entries(version: ProtocolVersion, res: AppendEntriesResponse) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::AppendEntries(res),
-    }
-  }
-
-  const fn vote(version: ProtocolVersion, res: VoteResponse) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::Vote(res),
-    }
-  }
-
-  const fn install_snapshot(version: ProtocolVersion, res: InstallSnapshotResponse) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::InstallSnapshot(res),
-    }
-  }
-
-  const fn timeout_now(version: ProtocolVersion, res: TimeoutNowResponse) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::TimeoutNow(res),
-    }
-  }
-
-  pub(super) const fn heartbeat(version: ProtocolVersion, header: Header) -> Self {
+  pub const fn heartbeat(version: ProtocolVersion, header: Header) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::Heartbeat(HeartbeatResponse { header }),
     }
   }
 
-  pub(super) const fn error(version: ProtocolVersion, header: Header, error: String) -> Self {
+  pub const fn error(version: ProtocolVersion, header: Header, error: String) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::Error(ErrorResponse { header, error }),
+    }
+  }
+
+  pub const fn append_entries(version: ProtocolVersion, resp: AppendEntriesResponse) -> Self {
+    Self {
+      protocol_version: version,
+      kind: ResponseKind::AppendEntries(resp),
     }
   }
 
@@ -563,7 +557,7 @@ where
 /// A future for getting the corresponding response from the Raft.
 #[pin_project::pin_project]
 #[repr(transparent)]
-pub struct CommandHandle<E>
+pub(super) struct CommandHandle<E>
 where
   E: std::error::Error + Send + Sync + 'static,
 {
@@ -612,28 +606,20 @@ where
   E: std::error::Error + Send + Sync + 'static,
 {
   /// Create a new command from the given request.
-  pub fn new(req: Request) -> (Self, CommandHandle<E>) {
+  pub(super) fn new(req: Request) -> (Self, CommandHandle<E>) {
     let (tx, rx) = oneshot::channel();
     (Self { req, tx }, CommandHandle::new(rx))
   }
 
-  /// Returns the [`Request`] of this command.
-  #[inline]
-  pub const fn request(&self) -> &Request {
-    &self.req
+  /// Returns the header of the request.
+  pub fn header(&self) -> &Header {
+    self.req.header()
   }
 
-  /// Set the [`Request`] in builder pattern
-  #[inline]
-  pub fn with_request(mut self, req: Request) -> Self {
-    self.req = req;
-    self
-  }
-
-  /// Set the [`Request`] for this command
-  #[inline]
-  pub fn set_request(&mut self, req: Request) {
-    self.req = req;
+  /// Respond to the request, if the remote half is closed
+  /// then the response will be returned back as an error.
+  pub fn respond(self, resp: Response) -> Result<(), Response> {
+    self.tx.send(Ok(resp)).map_err(|resp| resp.unwrap())
   }
 }
 
