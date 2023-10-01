@@ -4,9 +4,9 @@ use agnostic::Runtime;
 use serde::{de::DeserializeOwned, Serialize};
 mod command;
 pub use command::*;
-mod net;
+// mod net;
 use futures::AsyncRead;
-pub use net::*;
+// pub use net::*;
 
 use crate::membership::ServerId;
 
@@ -21,10 +21,16 @@ pub trait Heartbeater: Send + Sync + 'static {
   type Error: std::error::Error + Send + Sync + 'static;
   /// The runtime used by the transport.
   type Runtime: Runtime;
+  /// The id type used to identify nodes.
+  type NodeId;
+  /// The address type of node.
+  type NodeAddress;
 
   /// This funciton will be used as the heartbeat handler for the raft node.
-  async fn handle_heartbeat(&self, req: HeartbeatRequest)
-    -> Result<HeartbeatResponse, Self::Error>;
+  async fn handle_heartbeat(
+    &self,
+    req: HeartbeatRequest<Self::NodeId, Self::NodeAddress>,
+  ) -> Result<HeartbeatResponse<Self::NodeId, Self::NodeAddress>, Self::Error>;
 }
 
 /// Used to resolve a [`SocketAddr`] from a node address.
@@ -50,10 +56,10 @@ pub trait Encoder: Send + Sync + 'static {
   type Bytes: AsRef<[u8]>;
 
   /// Encodes [`Request`] to [`Encoder::Bytes`] for transmission
-  fn encode_request(req: Request) -> Result<Self::Bytes, Self::Error>;
+  fn encode_request<Id, Address>(req: Request<Id, Address>) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes [`Response`] to [`Encoder::Bytes`] for transmission
-  fn encode_response(resp: Response) -> Result<Self::Bytes, Self::Error>;
+  fn encode_response<Id, Address>(resp: Response<Id, Address>) -> Result<Self::Bytes, Self::Error>;
 }
 
 /// Used to decode [`Request`] and [`Response`] from a reader.
@@ -63,10 +69,14 @@ pub trait Decoder: Send + Sync + 'static {
   type Error: std::error::Error + Send + Sync + 'static;
 
   /// Decodes [`Request`] from a reader.
-  async fn decode_request(reader: impl AsyncRead + Unpin) -> Result<Request, Self::Error>;
+  async fn decode_request<Id, Address>(
+    reader: impl AsyncRead + Unpin,
+  ) -> Result<Request<Id, Address>, Self::Error>;
 
   /// Decodes [`Response`] from a reader.
-  async fn decode_response(reader: impl AsyncRead + Unpin) -> Result<Response, Self::Error>;
+  async fn decode_response<Id, Address>(
+    reader: impl AsyncRead + Unpin,
+  ) -> Result<Response<Id, Address>, Self::Error>;
 }
 
 /// Used for pipelining [`AppendEntriesRequest`]s. It is used
@@ -78,8 +88,13 @@ pub trait AppendPipeline {
   type Error: std::error::Error + Send + Sync + 'static;
   /// The runtime used by the transport.
   type Runtime: Runtime;
+  /// The id type used to identify nodes.
+  type NodeId;
+  /// The address type of node.
+  type NodeAddress;
+
   /// The append entries response yield by the pipeline.
-  type Item: AppendFuture;
+  type Item: AppendFuture<NodeId = Self::NodeId, NodeAddress = Self::NodeAddress>;
 
   /// Returns a stream that can be used to consume
   /// response futures when they are ready.
@@ -90,8 +105,8 @@ pub trait AppendPipeline {
   /// Sends the append entries requrest to the target node.
   async fn append_entries(
     &self,
-    req: AppendEntriesRequest,
-  ) -> Result<AppendEntriesResponse, Self::Error>;
+    req: AppendEntriesRequest<Self::NodeId, Self::NodeAddress>,
+  ) -> Result<AppendEntriesResponse<Self::NodeId, Self::NodeAddress>, Self::Error>;
 
   /// Closes the pipeline and cancels all inflight requests
   async fn close(&self) -> Result<(), Self::Error>;
@@ -99,8 +114,17 @@ pub trait AppendPipeline {
 
 /// Used to return information about a pipelined [`AppendEntriesRequest`].
 pub trait AppendFuture:
-  std::future::Future<Output = std::io::Result<AppendEntriesResponse>> + Send + Sync + 'static
+  std::future::Future<
+    Output = std::io::Result<AppendEntriesResponse<Self::NodeId, Self::NodeAddress>>,
+  > + Send
+  + Sync
+  + 'static
 {
+  /// The id type used to identify nodes.
+  type NodeId;
+  /// The address type of node.
+  type NodeAddress;
+
   /// Returns the time that the append request was started.
   /// It is always OK to call this method.
   fn start(&self) -> std::time::Instant;
@@ -131,7 +155,11 @@ pub trait Transport: Send + Sync + 'static {
 
   /// The pipeline used to increase the replication throughput by masking latency and better
   /// utilizing bandwidth.
-  type Pipeline: AppendPipeline<Runtime = Self::Runtime>;
+  type Pipeline: AppendPipeline<
+    Runtime = Self::Runtime,
+    NodeId = Self::NodeId,
+    NodeAddress = <Self::Resolver as NodeAddressResolver>::NodeAddress,
+  >;
 
   /// The node address resolver used to resolve a node address to a [`SocketAddr`].
   ///
@@ -144,7 +172,11 @@ pub trait Transport: Send + Sync + 'static {
   /// **N.B.** With caution when you want to customize the heartbeat handler,
   /// if your heartbeat handler implementation is wrong, then the raft node will
   /// show unexpected behaviours
-  type Heartbeater: Heartbeater<Runtime = Self::Runtime>;
+  type Heartbeater: Heartbeater<
+    Runtime = Self::Runtime,
+    NodeId = Self::NodeId,
+    NodeAddress = <Self::Resolver as NodeAddressResolver>::NodeAddress,
+  >;
 
   /// The encoder used to encode [`Request`] or [`Response`] for data transmission.
   type Encoder: Encoder;
@@ -154,7 +186,9 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Returns a stream that can be used to
   /// consume and respond to RPC requests.
-  fn consumer(&self) -> CommandConsumer;
+  fn consumer(
+    &self,
+  ) -> RequestConsumer<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>;
 
   /// Used to return our local addr to distinguish from our peers.
   fn local_addr(&self) -> &<Self::Resolver as NodeAddressResolver>::NodeAddress;
@@ -187,24 +221,48 @@ pub trait Transport: Send + Sync + 'static {
   /// Sends the append entries requrest to the target node.
   async fn append_entries(
     &self,
-    req: AppendEntriesRequest,
-  ) -> Result<AppendEntriesResponse, Self::Error>;
+    req: AppendEntriesRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+  ) -> Result<
+    AppendEntriesResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    Self::Error,
+  >;
 
   /// Sends the vote request to the target node.
-  async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, Self::Error>;
+  async fn vote(
+    &self,
+    req: VoteRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+  ) -> Result<
+    VoteResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    Self::Error,
+  >;
 
   /// Used to push a snapshot down to a follower.
   async fn install_snapshot(
     &self,
-    req: InstallSnapshotRequest,
+    req: InstallSnapshotRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
     source: impl AsyncRead + Send,
-  ) -> Result<InstallSnapshotResponse, Self::Error>;
+  ) -> Result<
+    InstallSnapshotResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    Self::Error,
+  >;
 
   /// Used to start a leadership transfer to the target node.
-  async fn timeout_now(&self, req: TimeoutNowRequest) -> Result<TimeoutNowResponse, Self::Error>;
+  async fn timeout_now(
+    &self,
+    req: TimeoutNowRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+  ) -> Result<
+    TimeoutNowResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    Self::Error,
+  >;
 
   /// Used to send a heartbeat to the target node.
-  async fn heartbeat(&self, req: HeartbeatRequest) -> Result<HeartbeatResponse, Self::Error>;
+  async fn heartbeat(
+    &self,
+    req: HeartbeatRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+  ) -> Result<
+    HeartbeatResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    Self::Error,
+  >;
 
   /// Shutdown the transport.
   async fn shutdown(&self) -> Result<(), Self::Error>;
@@ -212,5 +270,5 @@ pub trait Transport: Send + Sync + 'static {
 
 #[cfg(feature = "test")]
 pub(super) mod tests {
-  pub use super::net::tests::*;
+  // pub use super::net::tests::*;
 }

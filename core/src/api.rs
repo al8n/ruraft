@@ -13,11 +13,18 @@ use crate::{
 pub trait Raft {
   /// The error type returned by the Raft.
   type Error: std::error::Error + Send + Sync + 'static;
+
   /// The log type should by applied to the finate state machine.
   type Log: Send + Sync + 'static;
 
+  /// The id node.
+  type Id: Clone + core::fmt::Display + Send + Sync + 'static;
+
+  /// The address of the node.
+  type Address: Clone + core::fmt::Display + Send + Sync + 'static;
+
   /// Used to return the current leader of the cluster.
-  async fn leader(&self) -> Option<Node>;
+  async fn leader(&self) -> Option<Node<Self::Id, Self::Address>>;
 
   /// Used to apply a `Log` to the finate state machine in a highly consistent
   /// manner. This returns a future that can be used to wait on the application.
