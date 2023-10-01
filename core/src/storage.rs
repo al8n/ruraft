@@ -38,10 +38,6 @@ pub trait Storage: Send + Sync + 'static {
 #[cfg(feature = "test")]
 pub(super) mod tests {
   pub(crate) mod snapshot {
-    pub use crate::storage::{
-      log::tests::*,
-      // stable::tests::*,
-      snapshot::tests::*,
-    };
+    pub use crate::storage::snapshot::tests::*;
   }
 }

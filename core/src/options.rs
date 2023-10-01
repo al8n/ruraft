@@ -11,9 +11,13 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 /// the protocol to use when _speaking_ to other servers. Note that depending on
 /// the protocol version being spoken, some otherwise understood RPC messages
 /// may be refused. See dispositionRPC for details of this logic.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
 #[repr(u8)]
 #[non_exhaustive]
+#[cfg_attr(
+  feature = "serde",
+  derive(serde_repr::Serialize_repr, serde_repr::Deserialize_repr)
+)]
 pub enum ProtocolVersion {
   /// The current version of the protocol.
   #[default]
@@ -23,7 +27,11 @@ pub enum ProtocolVersion {
 /// The version of snapshots that this server can understand.
 /// Currently, it is always assumed that the server generates the latest version,
 /// though this may be changed in the future to include a configurable version.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(
+  feature = "serde",
+  derive(serde_repr::Serialize_repr, serde_repr::Deserialize_repr)
+)]
 #[repr(u8)]
 #[non_exhaustive]
 pub enum SnapshotVersion {
@@ -47,7 +55,8 @@ impl SnapshotVersion {
   getters(vis_all = "pub"),
   setters(vis_all = "pub")
 )]
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Options {
   /// Allows a Raft server to inter-operate with older
   /// Raft servers running an older version of the code. This is used to
@@ -221,8 +230,9 @@ impl<'de> Deserialize<'de> for DurationNoUninit {
 /// or accepting a [`Options`] but only using specific fields to keep the API clear.
 /// Reconfiguring some fields is potentially dangerous so we should only
 /// selectively enable it for fields where that is allowed.
-#[derive(bytemuck::NoUninit, Clone, Copy, Serialize, Deserialize)]
+#[derive(bytemuck::NoUninit, Clone, Copy)]
 #[repr(C)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReloadableOptions {
   /// Controls how many logs we leave after a snapshot. This is used
   /// so that we can quickly replay logs on a follower instead of being forced to

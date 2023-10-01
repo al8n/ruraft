@@ -1,6 +1,9 @@
 use std::{
   net::SocketAddr,
-  sync::{atomic::{Ordering, AtomicBool}, Arc},
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+  },
   time::Duration,
 };
 
@@ -17,7 +20,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{Transport, CommandConsumer},
+  transport::{NodeAddressResolver, RequestConsumer, Transport},
 };
 
 mod candidate;
@@ -30,32 +33,36 @@ pub use state::*;
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 
-pub struct Node {
-  id: ServerId,
-  addr: SocketAddr,
+pub struct Node<Id, Address> {
+  id: Id,
+  addr: Address,
 }
 
-impl core::fmt::Display for Node {
+impl<Id, Address> core::fmt::Display for Node<Id, Address>
+where
+  Id: core::fmt::Display,
+  Address: core::fmt::Display,
+{
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}({})", self.id, self.addr)
   }
 }
 
-impl Node {
+impl<Id, Address> Node<Id, Address> {
   /// Returns the id of the leader.
   #[inline]
-  pub const fn id(&self) -> &ServerId {
+  pub const fn id(&self) -> &Id {
     &self.id
   }
 
   /// Returns the address of the leader.
   #[inline]
-  pub const fn addr(&self) -> SocketAddr {
-    self.addr
+  pub const fn addr(&self) -> &Address {
+    &self.addr
   }
 
   #[inline]
-  const fn new(id: ServerId, addr: SocketAddr) -> Self {
+  pub const fn new(id: Id, addr: Address) -> Self {
     Self { id, addr }
   }
 }
@@ -73,8 +80,8 @@ where
   fsm: Arc<F>,
   storage: Arc<S>,
   transport: Arc<T>,
-  leader: ArcSwapOption<Node>,
-  local: Node,
+  leader: ArcSwapOption<Node<T::NodeId, <T::Resolver as NodeAddressResolver>::NodeAddress>>,
+  local: Node<T::NodeId, <T::Resolver as NodeAddressResolver>::NodeAddress>,
   candidate_from_leadership_transfer: AtomicBool,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
@@ -125,7 +132,10 @@ where
   }
 
   #[inline]
-  fn set_leader(&self, leader: Option<Node>) {
+  fn set_leader(
+    &self,
+    leader: Option<Node<T::NodeId, <T::Resolver as NodeAddressResolver>::NodeAddress>>,
+  ) {
     let new = leader.map(Arc::new);
     let old = self.leader.swap(new.clone());
     match (new, old) {
@@ -287,7 +297,7 @@ where
           match self.inner.role() {
             Role::Follower => {
               self.spawn_sidecar(Role::Follower);
-              self.run_follower().await;
+              // self.run_follower().await;
               self.stop_sidecar().await;
             },
             Role::Candidate => todo!(),

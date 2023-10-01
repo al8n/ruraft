@@ -238,7 +238,7 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   }
 }
 
-#[cfg(feature = "metrics")]
+// #[cfg(feature = "metrics")]
 pub(crate) enum LogStorageExtError<E: std::error::Error> {
   LogStorageError(E),
   NotFound,

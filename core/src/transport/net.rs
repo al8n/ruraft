@@ -25,6 +25,9 @@ use crate::options::ProtocolVersion;
 
 use super::*;
 
+mod resolver;
+pub use resolver::*;
+
 /// The default TimeoutScale in a [`NetworkTransport`].
 pub const DEFAULT_TIMEOUT_SCALE: usize = 256 * 1024; // 256KB
 
@@ -82,15 +85,15 @@ pub enum Error {
 /// Encapsulates configuration for the network transport layer.
 #[viewit::viewit]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetTransportOptions {
+pub struct NetTransportOptions<Id, Address> {
   /// The protocol version to use for encoding/decoding messages.
   protocol_version: ProtocolVersion,
 
   /// The local ID of the server we are running on.
-  id: ServerId,
+  id: Id,
 
   /// The address for the network transport layer bind to.
-  bind_addr: SocketAddr,
+  bind_addr: Address,
 
   /// Controls how many connections we will pool
   max_pool: usize,
@@ -126,10 +129,10 @@ pub struct NetTransportOptions {
   timeout: Duration,
 }
 
-impl NetTransportOptions {
+impl<Id, Address> NetTransportOptions<Id, Address> {
   /// Create a new [`NetTransportOptions`] with default values.
   #[inline]
-  pub const fn new(id: ServerId, bind_addr: SocketAddr) -> Self {
+  pub const fn new(id: Id, bind_addr: Address) -> Self {
     Self {
       max_pool: 3,
       max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -154,15 +157,17 @@ impl NetTransportOptions {
 /// InstallSnapshot is special, in that after the request we stream
 /// the entire state. That socket is not re-used as the connection state
 /// is not known if there is an error.
-pub struct NetTransport<R>
+pub struct NetTransport<Id, Resolver, R>
 where
+  Resolver: NodeAddressResolver<Runtime = R>,
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
-  local_header: Header,
-  consumer: CommandConsumer,
+  local_header: Header<Id, <Resolver as NodeAddressResolver>::NodeAddress>,
+  consumer: RequestConsumer<Id, <Resolver as NodeAddressResolver>::NodeAddress>,
+  resolver: Resolver,
   wg: AsyncWaitGroup,
   conn_pool: Mutex<HashMap<SocketAddr, <R::Net as Net>::TcpStream>>,
   conn_size: AtomicUsize,
@@ -173,16 +178,31 @@ where
 }
 
 #[async_trait::async_trait]
-impl<R> Transport for NetTransport<R>
+impl<Id, Resolver, R> Transport for NetTransport<Id, Resolver, R>
 where
+  Resolver: NodeAddressResolver<Runtime = R>,
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {
   type Error = Error;
   type Runtime = R;
-  type Options = NetTransportOptions;
+  type Options = NetTransportOptions<Id, <Resolver as NodeAddressResolver>::NodeAddress>;
 
-  fn consumer(&self) -> CommandConsumer {
+  type NodeId = Id;
+
+  type Pipeline: AppendPipeline<Runtime = Self::Runtime>;
+
+  type Resolver: NodeAddressResolver<Runtime = Self::Runtime>;
+
+  type Heartbeater: Heartbeater<Runtime = Self::Runtime>;
+
+  type Encoder: Encoder;
+
+  type Decoder: Decoder;
+
+  fn consumer(
+    &self,
+  ) -> RequestConsumer<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress> {
     self.consumer.clone()
   }
 
@@ -194,7 +214,7 @@ where
     &self.local_header.id
   }
 
-  async fn new(opts: Self::Options) -> Result<Self, Self::Error> {
+  async fn new(resolver: Self::Resolver, opts: Self::Options) -> Result<Self, Self::Error> {
     let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
     let auto_port = opts.bind_addr.port() == 0;
 
@@ -409,7 +429,7 @@ where
 struct RequestHandler<R: Runtime> {
   ln: <R::Net as agnostic::net::Net>::TcpListener,
   local_header: Header,
-  producer: CommandProducer,
+  producer: RequestProducer,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   wg: AsyncWaitGroup,
@@ -489,7 +509,7 @@ where
 
   async fn handle_connection(
     conn: <R::Net as agnostic::net::Net>::TcpStream,
-    producer: CommandProducer,
+    producer: RequestProducer,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header,
   ) -> Result<(), Error> {
