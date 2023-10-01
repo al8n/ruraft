@@ -1,6 +1,9 @@
 use std::{
   net::SocketAddr,
-  sync::{atomic::{Ordering, AtomicBool}, Arc},
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+  },
   time::Duration,
 };
 
@@ -17,7 +20,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{Transport, CommandConsumer},
+  transport::{CommandConsumer, Transport},
 };
 
 mod candidate;

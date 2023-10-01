@@ -554,8 +554,7 @@ impl Response {
 
 /// Errors returned by the [`CommandHandle`].
 #[derive(Debug, thiserror::Error)]
-pub enum CommandHandleError
-{
+pub enum CommandHandleError {
   /// Returned when the command is cancelled
   #[error("{0}")]
   Canceled(#[from] oneshot::Canceled),
@@ -591,14 +590,12 @@ impl Future for CommandHandle {
 }
 
 /// The struct is used to interact with the Raft.
-pub struct Command
-{
+pub struct Command {
   req: Request,
   tx: oneshot::Sender<Response>,
 }
 
-impl Command
-{
+impl Command {
   /// Create a new command from the given request.
   pub(super) fn new(req: Request) -> (Self, CommandHandle) {
     let (tx, rx) = oneshot::channel();
@@ -630,8 +627,7 @@ pub struct CommandConsumer {
   rx: async_channel::Receiver<Command>,
 }
 
-impl Clone for CommandConsumer
-{
+impl Clone for CommandConsumer {
   fn clone(&self) -> Self {
     Self {
       rx: self.rx.clone(),
@@ -648,8 +644,7 @@ impl Stream for CommandConsumer {
 }
 
 /// A producer for [`Command`]s
-pub struct CommandProducer
-{
+pub struct CommandProducer {
   tx: async_channel::Sender<Command>,
 }
 
@@ -663,17 +658,13 @@ impl Clone for CommandProducer {
 
 impl CommandProducer {
   /// Produce a command for processing
-  pub async fn send(
-    &self,
-    command: Command,
-  ) -> Result<(), async_channel::SendError<Command>> {
+  pub async fn send(&self, command: Command) -> Result<(), async_channel::SendError<Command>> {
     self.tx.send(command).await
   }
 }
 
 /// Returns unbounded command producer and command consumer.
-pub fn command() -> (CommandProducer, CommandConsumer)
-{
+pub fn command() -> (CommandProducer, CommandConsumer) {
   let (tx, rx) = async_channel::unbounded();
   (CommandProducer { tx }, CommandConsumer { rx })
 }
