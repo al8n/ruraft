@@ -1,43 +1,22 @@
-use std::{fmt::Display, hash::Hash, net::SocketAddr};
+use std::net::SocketAddr;
 
 use agnostic::Runtime;
-use serde::{de::DeserializeOwned, Serialize};
+use futures::AsyncRead;
+
+mod address;
+pub use address::*;
+
 mod command;
 pub use command::*;
-// mod net;
-use futures::AsyncRead;
-// pub use net::*;
 
-use crate::membership::ServerId;
-
-/// Used to overide the default heartbeat handler.
-///
-/// **N.B.** With caution when you want to customize the heartbeat handler,
-/// if your heartbeat handler implementation is wrong, then may lead to
-/// unexpected behaviours for the raft node.
-#[async_trait::async_trait]
-pub trait Heartbeater: Send + Sync + 'static {
-  /// The error type returned by the resolver.
-  type Error: std::error::Error + Send + Sync + 'static;
-  /// The runtime used by the transport.
-  type Runtime: Runtime;
-  /// The id type used to identify nodes.
-  type NodeId;
-  /// The address type of node.
-  type NodeAddress;
-
-  /// This funciton will be used as the heartbeat handler for the raft node.
-  async fn handle_heartbeat(
-    &self,
-    req: HeartbeatRequest<Self::NodeId, Self::NodeAddress>,
-  ) -> Result<HeartbeatResponse<Self::NodeId, Self::NodeAddress>, Self::Error>;
-}
+mod id;
+pub use id::*;
 
 /// Used to resolve a [`SocketAddr`] from a node address.
 #[async_trait::async_trait]
 pub trait NodeAddressResolver: Send + Sync + 'static {
   /// The address type used to identify nodes.
-  type NodeAddress: Clone + Display + Eq + Serialize + DeserializeOwned + Send + Sync + 'static;
+  type NodeAddress: NodeAddress;
   /// The error type returned by the resolver.
   type Error: std::error::Error + Send + Sync + 'static;
   /// The runtime used by the transport.
@@ -49,34 +28,55 @@ pub trait NodeAddressResolver: Send + Sync + 'static {
 
 /// Used to encode [`Request`] and [`Response`] to bytes for transmission.
 pub trait Encoder: Send + Sync + 'static {
-  /// The error type returned by the resolver.
-  type Error: std::error::Error + Send + Sync + 'static;
-
+  /// The error type returned by the encoder.
+  type Error: std::error::Error
+    + From<<Self::NodeId as NodeId>::Error>
+    + From<<Self::NodeAddress as NodeAddress>::Error>
+    + Send
+    + Sync
+    + 'static;
+  /// The id type used to identify nodes.
+  type NodeId: NodeId;
+  /// The address type of node.
+  type NodeAddress: NodeAddress;
   /// The encoded result for sending
   type Bytes: AsRef<[u8]>;
 
   /// Encodes [`Request`] to [`Encoder::Bytes`] for transmission
-  fn encode_request<Id, Address>(req: Request<Id, Address>) -> Result<Self::Bytes, Self::Error>;
+  fn encode_request(
+    req: Request<Self::NodeId, Self::NodeAddress>,
+  ) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes [`Response`] to [`Encoder::Bytes`] for transmission
-  fn encode_response<Id, Address>(resp: Response<Id, Address>) -> Result<Self::Bytes, Self::Error>;
+  fn encode_response(
+    resp: Response<Self::NodeId, Self::NodeAddress>,
+  ) -> Result<Self::Bytes, Self::Error>;
 }
 
 /// Used to decode [`Request`] and [`Response`] from a reader.
 #[async_trait::async_trait]
 pub trait Decoder: Send + Sync + 'static {
-  /// The error type returned by the resolver.
-  type Error: std::error::Error + Send + Sync + 'static;
+  /// The error type returned by the encoder.
+  type Error: std::error::Error
+    + From<<Self::NodeId as NodeId>::Error>
+    + From<<Self::NodeAddress as NodeAddress>::Error>
+    + Send
+    + Sync
+    + 'static;
+  /// The id type used to identify nodes.
+  type NodeId: NodeId;
+  /// The address type of node.
+  type NodeAddress: NodeAddress;
 
   /// Decodes [`Request`] from a reader.
-  async fn decode_request<Id, Address>(
+  async fn decode_request(
     reader: impl AsyncRead + Unpin,
-  ) -> Result<Request<Id, Address>, Self::Error>;
+  ) -> Result<Request<Self::NodeId, Self::NodeAddress>, Self::Error>;
 
   /// Decodes [`Response`] from a reader.
-  async fn decode_response<Id, Address>(
+  async fn decode_response(
     reader: impl AsyncRead + Unpin,
-  ) -> Result<Response<Id, Address>, Self::Error>;
+  ) -> Result<Response<Self::NodeId, Self::NodeAddress>, Self::Error>;
 }
 
 /// Used for pipelining [`AppendEntriesRequest`]s. It is used
@@ -89,9 +89,9 @@ pub trait AppendPipeline {
   /// The runtime used by the transport.
   type Runtime: Runtime;
   /// The id type used to identify nodes.
-  type NodeId;
+  type NodeId: NodeId;
   /// The address type of node.
-  type NodeAddress;
+  type NodeAddress: NodeAddress;
 
   /// The append entries response yield by the pipeline.
   type Item: AppendFuture<NodeId = Self::NodeId, NodeAddress = Self::NodeAddress>;
@@ -121,9 +121,9 @@ pub trait AppendFuture:
   + 'static
 {
   /// The id type used to identify nodes.
-  type NodeId;
+  type NodeId: NodeId;
   /// The address type of node.
-  type NodeAddress;
+  type NodeAddress: NodeAddress;
 
   /// Returns the time that the append request was started.
   /// It is always OK to call this method.
@@ -137,7 +137,6 @@ pub trait Transport: Send + Sync + 'static {
   type Error: std::error::Error
     + From<<Self::Pipeline as AppendPipeline>::Error>
     + From<<Self::Resolver as NodeAddressResolver>::Error>
-    + From<<Self::Heartbeater as Heartbeater>::Error>
     + From<<Self::Encoder as Encoder>::Error>
     + From<<Self::Decoder as Decoder>::Error>
     + Send
@@ -151,7 +150,7 @@ pub trait Transport: Send + Sync + 'static {
   type Options: Send + Sync + 'static;
 
   /// The id type used to identify nodes.
-  type NodeId: Clone + Display + Eq + Hash + Serialize + DeserializeOwned + Send + Sync + 'static;
+  type NodeId: NodeId;
 
   /// The pipeline used to increase the replication throughput by masking latency and better
   /// utilizing bandwidth.
@@ -166,17 +165,6 @@ pub trait Transport: Send + Sync + 'static {
   /// e.g., you can implement a DNS resolver, then the raft node can accept a domain like `www.foo.com`
   /// as the node address.
   type Resolver: NodeAddressResolver<Runtime = Self::Runtime>;
-
-  /// The overrider for the default heartbeat handler of the raft node.
-  ///
-  /// **N.B.** With caution when you want to customize the heartbeat handler,
-  /// if your heartbeat handler implementation is wrong, then the raft node will
-  /// show unexpected behaviours
-  type Heartbeater: Heartbeater<
-    Runtime = Self::Runtime,
-    NodeId = Self::NodeId,
-    NodeAddress = <Self::Resolver as NodeAddressResolver>::NodeAddress,
-  >;
 
   /// The encoder used to encode [`Request`] or [`Response`] for data transmission.
   type Encoder: Encoder;
@@ -198,12 +186,6 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Returns the node address resolver for the transport
   fn resolver(&self) -> &Self::Resolver;
-
-  /// Sets the heartbeat handler for the raft node to override the default heartbeat handler
-  fn set_heartbeater(&mut self, heartbeater: Self::Heartbeater);
-
-  /// Returns the heartbeat overrider, if any.
-  fn heartbeater(&self) -> Option<&Self::Heartbeater>;
 
   /// Returns a transport
   async fn new(resolver: Self::Resolver, opts: Self::Options) -> Result<Self, Self::Error>

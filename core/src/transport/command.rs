@@ -1,7 +1,5 @@
 use std::{
-  future::Future,
-  io, mem,
-  net::SocketAddr,
+  io,
   pin::Pin,
   task::{Context, Poll},
 };
@@ -10,13 +8,10 @@ use futures::{channel::oneshot, Stream};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  membership::{Membership, ServerId},
+  membership::Membership,
   options::{ProtocolVersion, SnapshotVersion},
   storage::Log,
 };
-
-pub(super) const HEADER_SIZE: usize =
-  mem::size_of::<ProtocolVersion>() + mem::size_of::<CommandKind>() + mem::size_of::<u32>();
 
 /// A common sub-structure used to pass along protocol version and
 /// other information about the cluster.
@@ -25,7 +20,8 @@ pub(super) const HEADER_SIZE: usize =
   getters(vis_all = "pub"),
   setters(vis_all = "pub")
 )]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header<Id, Address> {
   /// The id of the node sending the RPC Request or Response
   #[viewit(
@@ -60,7 +56,8 @@ impl<Id, Address> Header<Id, Address> {
 /// The command used to append entries to the
 /// replicated log.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AppendEntriesRequest<Id, Address> {
   /// The header of the request
   #[viewit(getter(const))]
@@ -84,7 +81,8 @@ pub struct AppendEntriesRequest<Id, Address> {
 /// The response returned from an
 /// [`AppendEntriesRequest`].
 #[viewit::viewit(setters(prefix = "with"))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 
 pub struct AppendEntriesResponse<Id, Address> {
   /// The header of the response
@@ -120,7 +118,8 @@ impl<Id, Address> AppendEntriesResponse<Id, Address> {
 /// The command used by a candidate to ask a Raft peer
 /// for a vote in an election.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VoteRequest<Id, Address> {
   /// The header of the request
   #[viewit(getter(const))]
@@ -144,7 +143,8 @@ pub struct VoteRequest<Id, Address> {
 /// The command used by a candidate to ask a Raft peer
 /// for a vote in an election.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VoteResponse<Id, Address> {
   /// The header of the response
   #[viewit(getter(const))]
@@ -160,7 +160,8 @@ pub struct VoteResponse<Id, Address> {
 /// The command sent to a Raft peer to bootstrap its
 /// log (and state machine) from a snapshot on another peer.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InstallSnapshotRequest<Id, Address> {
   /// The header of the request
   #[viewit(getter(const))]
@@ -190,7 +191,8 @@ pub struct InstallSnapshotRequest<Id, Address> {
 /// The response returned from an
 /// [`InstallSnapshotRequest`].
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InstallSnapshotResponse<Id, Address> {
   /// The header of the response
   #[viewit(getter(const))]
@@ -206,7 +208,8 @@ pub struct InstallSnapshotResponse<Id, Address> {
 /// The command used by a leader to signal another server to
 /// start an election.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TimeoutNowRequest<Id, Address> {
   /// The header of the request
   #[viewit(getter(const))]
@@ -215,7 +218,8 @@ pub struct TimeoutNowRequest<Id, Address> {
 
 /// The response to [`TimeoutNowRequest`].
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TimeoutNowResponse<Id, Address> {
   /// The header of the response
   #[viewit(getter(const))]
@@ -224,7 +228,8 @@ pub struct TimeoutNowResponse<Id, Address> {
 
 /// The heartbeat command.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HeartbeatRequest<Id, Address> {
   /// The header of the request
   #[viewit(getter(const))]
@@ -237,7 +242,8 @@ pub struct HeartbeatRequest<Id, Address> {
 /// The response returned from an
 /// [`HeartbeatRequest`].
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HeartbeatResponse<Id, Address> {
   /// The header of the response
   #[viewit(getter(const))]
@@ -247,23 +253,14 @@ pub struct HeartbeatResponse<Id, Address> {
 /// The response returned from an
 /// [`HeartbeatRequest`].
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ErrorResponse<Id, Address> {
   /// The header of the response
   #[viewit(getter(const))]
   header: Header<Id, Address>,
   /// The error message
   error: String,
-}
-
-impl ProtocolVersion {
-  pub(crate) const fn header_offset(&self) -> usize {
-    match self {
-      ProtocolVersion::V1 => {
-        mem::size_of::<Self>() + mem::size_of::<CommandKind>() + mem::size_of::<u32>()
-      }
-    }
-  }
 }
 
 #[repr(u8)]
@@ -366,18 +363,6 @@ macro_rules! encode {
     buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
     Ok(buf)
   }};
-}
-
-impl ProtocolVersion {
-  pub(super) fn from_u8(val: u8) -> io::Result<Self> {
-    match val {
-      1 => Ok(Self::V1),
-      _ => Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("unknown protocol version: {val}"),
-      )),
-    }
-  }
 }
 
 /// Request to be sent to the Raft node.
@@ -665,42 +650,42 @@ impl<Id, Address> Response<Id, Address> {
   // }
 }
 
-/// Errors returned by the [`CommandHandle`].
-#[derive(Debug, thiserror::Error)]
-pub enum CommandHandleError {
-  /// Returned when the command is cancelled
-  #[error("{0}")]
-  Canceled(#[from] oneshot::Canceled),
-}
+// /// Errors returned by the [`CommandHandle`].
+// #[derive(Debug, thiserror::Error)]
+// pub enum CommandHandleError {
+//   /// Returned when the command is cancelled
+//   #[error("{0}")]
+//   Canceled(#[from] oneshot::Canceled),
+// }
 
-/// A future for getting the corresponding response from the Raft.
-#[pin_project::pin_project]
-#[repr(transparent)]
-pub(super) struct CommandHandle<Id, Address> {
-  #[pin]
-  rx: oneshot::Receiver<Response<Id, Address>>,
-}
+// /// A future for getting the corresponding response from the Raft.
+// #[pin_project::pin_project]
+// #[repr(transparent)]
+// pub(super) struct CommandHandle<Id, Address> {
+//   #[pin]
+//   rx: oneshot::Receiver<Response<Id, Address>>,
+// }
 
-impl<Id, Address> CommandHandle<Id, Address> {
-  pub(crate) fn new(rx: oneshot::Receiver<Response<Id, Address>>) -> Self {
-    Self { rx }
-  }
-}
+// impl<Id, Address> CommandHandle<Id, Address> {
+//   pub(crate) fn new(rx: oneshot::Receiver<Response<Id, Address>>) -> Self {
+//     Self { rx }
+//   }
+// }
 
-impl<Id, Address> Future for CommandHandle<Id, Address> {
-  type Output = Result<Response<Id, Address>, CommandHandleError>;
+// impl<Id, Address> Future for CommandHandle<Id, Address> {
+//   type Output = Result<Response<Id, Address>, CommandHandleError>;
 
-  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    // Using Pin::as_mut to get a Pin<&mut Receiver>.
-    let this = self.project();
+//   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+//     // Using Pin::as_mut to get a Pin<&mut Receiver>.
+//     let this = self.project();
 
-    // Now, poll the receiver directly
-    this.rx.poll(cx).map(|res| match res {
-      Ok(res) => Ok(res),
-      Err(e) => Err(From::from(e)),
-    })
-  }
-}
+//     // Now, poll the receiver directly
+//     this.rx.poll(cx).map(|res| match res {
+//       Ok(res) => Ok(res),
+//       Err(e) => Err(From::from(e)),
+//     })
+//   }
+// }
 
 // /// The struct is used to interact with the Raft.
 // pub struct Command {
@@ -756,7 +741,7 @@ impl<Id, Address> Stream for RequestConsumer<Id, Address> {
   }
 }
 
-/// A producer for [`Command`]s
+/// A producer for [`Request`]s
 pub struct RequestProducer<Id, Address> {
   tx: async_channel::Sender<Request<Id, Address>>,
 }
