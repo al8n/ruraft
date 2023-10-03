@@ -2,14 +2,18 @@ use agnostic::Runtime;
 use async_channel::Receiver;
 use futures::FutureExt;
 
-use crate::sidecar::Sidecar;
+use crate::{sidecar::Sidecar, transport::NodeAddressResolver};
 
 use super::{FinateStateMachine, RaftCore, Storage, Transport};
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,

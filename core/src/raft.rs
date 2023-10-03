@@ -1,5 +1,4 @@
 use std::{
-  net::SocketAddr,
   sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -16,11 +15,10 @@ use futures::FutureExt;
 use crate::{
   error::Error,
   fsm::FinateStateMachine,
-  membership::ServerId,
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{NodeAddressResolver, RequestConsumer, Transport},
+  transport::{NodeAddress, NodeAddressResolver, NodeId, RequestConsumer, Transport},
 };
 
 mod candidate;
@@ -33,22 +31,22 @@ pub use state::*;
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 
-pub struct Node<Id, Address> {
+pub struct Node<Id: NodeId, Address: NodeAddress> {
   id: Id,
   addr: Address,
 }
 
 impl<Id, Address> core::fmt::Display for Node<Id, Address>
 where
-  Id: core::fmt::Display,
-  Address: core::fmt::Display,
+  Id: NodeId,
+  Address: NodeAddress,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}({})", self.id, self.addr)
   }
 }
 
-impl<Id, Address> Node<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Node<Id, Address> {
   /// Returns the id of the leader.
   #[inline]
   pub const fn id(&self) -> &Id {
@@ -70,7 +68,11 @@ impl<Id, Address> Node<Id, Address> {
 struct RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -106,7 +108,11 @@ where
 impl<F, S, T, SC, R> core::ops::Deref for RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -121,7 +127,11 @@ where
 impl<F, S, T, SC, R> RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -158,7 +168,11 @@ where
 pub struct RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -169,7 +183,11 @@ where
 impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -184,7 +202,11 @@ where
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   R: Runtime,
 {
@@ -196,7 +218,11 @@ where
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -251,7 +277,11 @@ where
 struct RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -263,7 +293,11 @@ where
 impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -278,7 +312,11 @@ where
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Runtime = R>,
+  S: Storage<
+    NodeId = T::NodeId,
+    NodeAddress = <T::Resolver as NodeAddressResolver>::NodeAddress,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,

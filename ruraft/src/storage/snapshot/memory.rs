@@ -12,28 +12,35 @@ use agnostic::Runtime;
 use async_lock::RwLock;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 
-use crate::{membership::Membership, options::SnapshotVersion};
-
-use super::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage};
+use ruraft_core::{
+  membership::Membership,
+  options::SnapshotVersion,
+  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
+  transport::{NodeAddress, NodeId},
+};
 
 /// Implements the [`SnapshotStorage`] trait in memory and
 /// retains only the most recent snapshot
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
-#[derive(Debug, Default)]
-pub struct MemorySnapshotStorage<R: Runtime> {
-  latest: Arc<RwLock<MemorySnapshot>>,
+#[derive(Debug)]
+pub struct MemorySnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
+  latest: Arc<RwLock<MemorySnapshot<Id, Address>>>,
   has_snapshot: AtomicBool,
   _runtime: std::marker::PhantomData<R>,
 }
 
 #[async_trait::async_trait]
-impl<R: Runtime> SnapshotStorage for MemorySnapshotStorage<R> {
+impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotStorage
+  for MemorySnapshotStorage<Id, Address, R>
+{
   type Error = io::Error;
-  type Sink = MemorySnapshotSink<R>;
-  type Source = MemorySnapshotSource<R>;
+  type Sink = MemorySnapshotSink<Self::NodeId, Self::NodeAddress, R>;
+  type Source = MemorySnapshotSource<Self::NodeId, Self::NodeAddress, R>;
   type Options = ();
   type Runtime = R;
+  type NodeId = Id;
+  type NodeAddress = Address;
 
   async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
   where
@@ -51,7 +58,7 @@ impl<R: Runtime> SnapshotStorage for MemorySnapshotStorage<R> {
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership,
+    membership: Membership<Self::NodeId, Self::NodeAddress>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error> {
     if !version.valid() {
@@ -84,7 +91,7 @@ impl<R: Runtime> SnapshotStorage for MemorySnapshotStorage<R> {
     })
   }
 
-  async fn list(&self) -> Result<Vec<SnapshotMeta>, Self::Error> {
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::NodeId, Self::NodeAddress>>, Self::Error> {
     let lock = self.latest.read().await;
     if !self.has_snapshot.load(Ordering::Acquire) {
       return Ok(vec![]);
@@ -100,7 +107,8 @@ impl<R: Runtime> SnapshotStorage for MemorySnapshotStorage<R> {
         io::ErrorKind::NotFound,
         format!(
           "failed to open snapshot id (term: {}, index: {})",
-          lock.meta.id.term, lock.meta.id.index
+          lock.meta.id.term(),
+          lock.meta.id.index()
         ),
       ));
     }
@@ -115,23 +123,34 @@ impl<R: Runtime> SnapshotStorage for MemorySnapshotStorage<R> {
   }
 }
 
-#[derive(Debug, Default)]
-struct MemorySnapshot {
-  meta: SnapshotMeta,
+#[derive(Debug)]
+struct MemorySnapshot<Id: NodeId, Address: NodeAddress> {
+  meta: SnapshotMeta<Id, Address>,
   contents: Vec<u8>,
+}
+
+impl<Id: NodeId, Address: NodeAddress> Default for MemorySnapshot<Id, Address> {
+  fn default() -> Self {
+    Self {
+      meta: Default::default(),
+      contents: Default::default(),
+    }
+  }
 }
 
 /// Implements [`SnapshotSink`] in memory
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
-#[derive(Debug, Default, Clone)]
-pub struct MemorySnapshotSink<R: Runtime> {
-  snap: Arc<RwLock<MemorySnapshot>>,
+#[derive(Debug, Clone)]
+pub struct MemorySnapshotSink<Id: NodeId, Address: NodeAddress, R: Runtime> {
+  snap: Arc<RwLock<MemorySnapshot<Id, Address>>>,
   id: SnapshotId,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<R: Runtime> AsyncWrite for MemorySnapshotSink<R> {
+impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncWrite
+  for MemorySnapshotSink<Id, Address, R>
+{
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     let mut snap = futures::ready!(self.snap.write().poll_unpin(cx));
     snap.contents.extend_from_slice(buf);
@@ -149,7 +168,9 @@ impl<R: Runtime> AsyncWrite for MemorySnapshotSink<R> {
 }
 
 #[async_trait::async_trait]
-impl<R: Runtime> SnapshotSink for MemorySnapshotSink<R> {
+impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSink
+  for MemorySnapshotSink<Id, Address, R>
+{
   type Runtime = R;
 
   fn id(&self) -> &SnapshotId {
@@ -165,13 +186,15 @@ impl<R: Runtime> SnapshotSink for MemorySnapshotSink<R> {
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSource<R: Runtime> {
-  meta: SnapshotMeta,
+pub struct MemorySnapshotSource<Id: NodeId, Address: NodeAddress, R: Runtime> {
+  meta: SnapshotMeta<Id, Address>,
   contents: Vec<u8>,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<R: Runtime> AsyncRead for MemorySnapshotSource<R> {
+impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncRead
+  for MemorySnapshotSource<Id, Address, R>
+{
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
@@ -184,22 +207,30 @@ impl<R: Runtime> AsyncRead for MemorySnapshotSource<R> {
   }
 }
 
-impl<R: Runtime> SnapshotSource for MemorySnapshotSource<R> {
+impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSource
+  for MemorySnapshotSource<Id, Address, R>
+{
   type Runtime = R;
+  type NodeId = Id;
+  type NodeAddress = Address;
 
-  fn meta(&self) -> &SnapshotMeta {
+  fn meta(&self) -> &SnapshotMeta<Self::NodeId, Self::NodeAddress> {
     &self.meta
   }
 }
 
 #[cfg(feature = "test")]
 pub(super) mod tests {
+  use std::net::SocketAddr;
+
   use futures::{AsyncReadExt, AsyncWriteExt};
 
   use super::*;
 
   pub async fn test_memory_snapshot_storage_create<R: Runtime>() {
-    let snap = MemorySnapshotStorage::<R>::new(()).await.unwrap();
+    let snap = MemorySnapshotStorage::<String, SocketAddr, R>::new(())
+      .await
+      .unwrap();
 
     // check no snapshots
     let snaps = snap.list().await.unwrap();
@@ -228,8 +259,8 @@ pub(super) mod tests {
 
     // check the latest
     let latest = snaps.first().unwrap();
-    assert_eq!(latest.id.index, 10, "expected index 10");
-    assert_eq!(latest.id.term, 3, "expected term 3");
+    assert_eq!(latest.id.index(), 10, "expected index 10");
+    assert_eq!(latest.id.term(), 3, "expected term 3");
     assert_eq!(latest.membership_index, 2, "expected membership index 2");
     assert_eq!(latest.size, 13, "expected size 13");
 
@@ -243,7 +274,9 @@ pub(super) mod tests {
   }
 
   pub async fn test_memory_snapshot_storage_open_snapshot_twice<R: Runtime>() {
-    let snap = MemorySnapshotStorage::<R>::new(()).await.unwrap();
+    let snap = MemorySnapshotStorage::<String, SocketAddr, R>::new(())
+      .await
+      .unwrap();
 
     // create a new sink
     let mut sink = snap

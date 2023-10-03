@@ -44,12 +44,12 @@ pub trait Encoder: Send + Sync + 'static {
 
   /// Encodes [`Request`] to [`Encoder::Bytes`] for transmission
   fn encode_request(
-    req: Request<Self::NodeId, Self::NodeAddress>,
+    req: &Request<Self::NodeId, Self::NodeAddress>,
   ) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes [`Response`] to [`Encoder::Bytes`] for transmission
   fn encode_response(
-    resp: Response<Self::NodeId, Self::NodeAddress>,
+    resp: &Response<Self::NodeId, Self::NodeAddress>,
   ) -> Result<Self::Bytes, Self::Error>;
 }
 

@@ -2,8 +2,8 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use agnostic::Runtime;
 use async_lock::Mutex;
-
-use super::*;
+use bytes::Bytes;
+use ruraft_core::storage::StableStorage;
 
 #[derive(Default)]
 struct Inner {

@@ -1,17 +1,16 @@
-use crate::{membership::Membership, options::SnapshotVersion};
+use crate::{
+  membership::Membership,
+  options::SnapshotVersion,
+  transport::{NodeAddress, NodeId},
+};
 
-use serde::{Deserialize, Serialize};
-
-mod file;
-pub use file::*;
-
-#[cfg(any(feature = "test", test))]
-mod memory;
-#[cfg(any(feature = "test", test))]
-#[cfg_attr(docsrs, doc(cfg(feature = "test")))]
-pub use memory::*;
-
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[viewit::viewit(
+  vis_all = "pub(crate)",
+  getters(vis_all = "pub"),
+  setters(vis_all = "pub", style = "ref")
+)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SnapshotId {
   index: u64,
   term: u64,
@@ -35,9 +34,10 @@ impl SnapshotId {
 }
 
 /// Metadata of a snapshot.
-#[viewit::viewit]
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct SnapshotMeta {
+#[viewit::viewit(getters(vis_all = "pub"), setters(vis_all = "pub", style = "ref"))]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SnapshotMeta<Id: NodeId, Address: NodeAddress> {
   /// The version number of the snapshot metadata. This does not cover
   /// the application's data in the snapshot, that should be versioned
   /// separately.
@@ -52,12 +52,29 @@ pub struct SnapshotMeta {
   term: u64,
 
   /// Membership at the time of the snapshot.
-  membership: Membership,
+  #[viewit(getter(style = "ref", const))]
+  membership: Membership<Id, Address>,
   /// The index of the membership that was taken
   membership_index: u64,
 
   /// The size of the snapshot, in bytes.
   size: u64,
+}
+
+impl<Id: NodeId, Address: NodeAddress> Default for SnapshotMeta<Id, Address> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<Id: NodeId, Address: NodeAddress> SnapshotMeta<Id, Address> {
+  /// Create a snapshot meta.
+  #[inline]
+  pub fn new() -> Self {
+    Self {
+      ..Default::default()
+    }
+  }
 }
 
 /// Used to allow for flexible implementations
@@ -71,8 +88,17 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
+  /// The id type used to identify nodes.
+  type NodeId: NodeId;
+  /// The address type of node.
+  type NodeAddress: NodeAddress;
+
   type Sink: SnapshotSink<Runtime = Self::Runtime>;
-  type Source: SnapshotSource<Runtime = Self::Runtime>;
+  type Source: SnapshotSource<
+    NodeId = Self::NodeId,
+    NodeAddress = Self::NodeAddress,
+    Runtime = Self::Runtime,
+  >;
   type Options;
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -87,13 +113,13 @@ pub trait SnapshotStorage: Send + Sync + 'static {
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership,
+    membership: Membership<Self::NodeId, Self::NodeAddress>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error>;
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
-  async fn list(&self) -> Result<Vec<SnapshotMeta>, Self::Error>;
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::NodeId, Self::NodeAddress>>, Self::Error>;
 
   /// Open takes a snapshot ID and provides a ReadCloser.
   async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error>;
@@ -116,12 +142,10 @@ pub trait SnapshotSink: futures::io::AsyncWrite {
 pub trait SnapshotSource: futures::io::AsyncRead {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
+  /// The id type used to identify nodes.
+  type NodeId: NodeId;
+  /// The address type of node.
+  type NodeAddress: NodeAddress;
 
-  fn meta(&self) -> &SnapshotMeta;
-}
-
-#[cfg(feature = "test")]
-pub(crate) mod tests {
-  pub use super::file::tests::*;
-  pub use super::memory::tests::*;
+  fn meta(&self) -> &SnapshotMeta<Self::NodeId, Self::NodeAddress>;
 }

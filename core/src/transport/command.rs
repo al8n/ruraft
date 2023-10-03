@@ -5,13 +5,14 @@ use std::{
 };
 
 use futures::{channel::oneshot, Stream};
-use serde::{Deserialize, Serialize};
 
 use crate::{
   membership::Membership,
   options::{ProtocolVersion, SnapshotVersion},
   storage::Log,
 };
+
+use super::{NodeAddress, NodeId};
 
 /// A common sub-structure used to pass along protocol version and
 /// other information about the cluster.
@@ -45,7 +46,7 @@ pub struct Header<Id, Address> {
   addr: Address,
 }
 
-impl<Id, Address> Header<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Header<Id, Address> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
   pub const fn new(id: Id, addr: Address) -> Self {
@@ -56,9 +57,9 @@ impl<Id, Address> Header<Id, Address> {
 /// The command used to append entries to the
 /// replicated log.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AppendEntriesRequest<Id, Address> {
+pub struct AppendEntriesRequest<Id: NodeId, Address: NodeAddress> {
   /// The header of the request
   #[viewit(getter(const))]
   header: Header<Id, Address>,
@@ -72,7 +73,7 @@ pub struct AppendEntriesRequest<Id, Address> {
   prev_log_term: u64,
 
   /// New entries to commit
-  entries: Vec<Log>,
+  entries: Vec<Log<Id, Address>>,
 
   /// Commit index on the leader
   leader_commit: u64,
@@ -103,7 +104,7 @@ pub struct AppendEntriesResponse<Id, Address> {
   no_retry_backoff: bool,
 }
 
-impl<Id, Address> AppendEntriesResponse<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> AppendEntriesResponse<Id, Address> {
   pub const fn new(id: Id, addr: Address) -> Self {
     Self {
       header: Header::new(id, addr),
@@ -162,7 +163,7 @@ pub struct VoteResponse<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct InstallSnapshotRequest<Id, Address> {
+pub struct InstallSnapshotRequest<Id: NodeId, Address: NodeAddress> {
   /// The header of the request
   #[viewit(getter(const))]
   header: Header<Id, Address>,
@@ -179,7 +180,7 @@ pub struct InstallSnapshotRequest<Id, Address> {
   last_log_term: u64,
 
   /// Cluster membership.
-  membership: Membership,
+  membership: Membership<Id, Address>,
 
   /// Log index where [`Membership`] entry was originally written.
   membership_index: u64,
@@ -348,27 +349,27 @@ impl TryFrom<u8> for CommandResponseKind {
   }
 }
 
-macro_rules! encode {
-  (v1::$ty:ident { $expr: expr }) => {{
-    let mut buf = Vec::with_capacity(128);
-    buf.push({ $expr });
-    buf.push(ProtocolVersion::V1 as u8);
+// macro_rules! encode {
+//   (v1::$ty:ident { $expr: expr }) => {{
+//     let mut buf = Vec::with_capacity(128);
+//     buf.push({ $expr });
+//     buf.push(ProtocolVersion::V1 as u8);
 
-    // Reserve length for the message.
-    buf.extend_from_slice(&[0, 0, 0, 0]);
+//     // Reserve length for the message.
+//     buf.extend_from_slice(&[0, 0, 0, 0]);
 
-    rmp_serde::encode::write(&mut buf, $ty)
-      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let encoded_len = buf.len() - OFFSET;
-    buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
-    Ok(buf)
-  }};
-}
+//     rmp_serde::encode::write(&mut buf, $ty)
+//       .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+//     let encoded_len = buf.len() - OFFSET;
+//     buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+//     Ok(buf)
+//   }};
+// }
 
 /// Request to be sent to the Raft node.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum RequestKind<Id, Address> {
+pub enum RequestKind<Id: NodeId, Address: NodeAddress> {
   AppendEntries(AppendEntriesRequest<Id, Address>),
   Vote(VoteRequest<Id, Address>),
   InstallSnapshot(InstallSnapshotRequest<Id, Address>),
@@ -376,44 +377,66 @@ pub enum RequestKind<Id, Address> {
   Heartbeat(HeartbeatRequest<Id, Address>),
 }
 
-impl<Id, Address> From<AppendEntriesRequest<Id, Address>> for RequestKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> RequestKind<Id, Address> {
+  /// Returns the tag of this request kind for encoding/decoding.
+  #[inline]
+  pub const fn tag(&self) -> u8 {
+    match self {
+      Self::AppendEntries(_) => 0,
+      Self::Vote(_) => 1,
+      Self::InstallSnapshot(_) => 2,
+      Self::TimeoutNow(_) => 3,
+      Self::Heartbeat(_) => 4,
+    }
+  }
+}
+
+impl<Id: NodeId, Address: NodeAddress> From<AppendEntriesRequest<Id, Address>>
+  for RequestKind<Id, Address>
+{
   fn from(req: AppendEntriesRequest<Id, Address>) -> Self {
     Self::AppendEntries(req)
   }
 }
 
-impl<Id, Address> From<VoteRequest<Id, Address>> for RequestKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<VoteRequest<Id, Address>> for RequestKind<Id, Address> {
   fn from(req: VoteRequest<Id, Address>) -> Self {
     Self::Vote(req)
   }
 }
 
-impl<Id, Address> From<InstallSnapshotRequest<Id, Address>> for RequestKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<InstallSnapshotRequest<Id, Address>>
+  for RequestKind<Id, Address>
+{
   fn from(req: InstallSnapshotRequest<Id, Address>) -> Self {
     Self::InstallSnapshot(req)
   }
 }
 
-impl<Id, Address> From<TimeoutNowRequest<Id, Address>> for RequestKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<TimeoutNowRequest<Id, Address>>
+  for RequestKind<Id, Address>
+{
   fn from(req: TimeoutNowRequest<Id, Address>) -> Self {
     Self::TimeoutNow(req)
   }
 }
 
-impl<Id, Address> From<HeartbeatRequest<Id, Address>> for RequestKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<HeartbeatRequest<Id, Address>>
+  for RequestKind<Id, Address>
+{
   fn from(req: HeartbeatRequest<Id, Address>) -> Self {
     Self::Heartbeat(req)
   }
 }
 
 #[derive(Debug)]
-pub struct Request<Id, Address> {
+pub struct Request<Id: NodeId, Address: NodeAddress> {
   pub(crate) protocol_version: ProtocolVersion,
   pub(crate) kind: RequestKind<Id, Address>,
   pub(crate) tx: oneshot::Sender<Response<Id, Address>>,
 }
 
-impl<Id, Address> Request<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Request<Id, Address> {
   // pub const fn append_entries(version: ProtocolVersion, req: AppendEntriesRequest) -> Self {
   //   Self {
   //     protocol_version: version,
@@ -452,6 +475,7 @@ impl<Id, Address> Request<Id, Address> {
   //   }
   // }
 
+  /// Returns the header of the request
   pub const fn header(&self) -> &Header<Id, Address> {
     match &self.kind {
       RequestKind::AppendEntries(req) => req.header(),
@@ -460,6 +484,18 @@ impl<Id, Address> Request<Id, Address> {
       RequestKind::TimeoutNow(req) => req.header(),
       RequestKind::Heartbeat(req) => req.header(),
     }
+  }
+
+  /// Returns the protocol version of the request.
+  #[inline]
+  pub const fn protocol_version(&self) -> ProtocolVersion {
+    self.protocol_version
+  }
+
+  /// Returns the kind of the request.
+  #[inline]
+  pub const fn kind(&self) -> &RequestKind<Id, Address> {
+    &self.kind
   }
 
   /// Respond to the request, if the remote half is closed
@@ -496,16 +532,16 @@ impl<Id, Address> Request<Id, Address> {
   // }
 }
 
-pub(super) fn decode<T>(protocol_version: ProtocolVersion, src: &[u8]) -> io::Result<T>
-where
-  T: serde::de::DeserializeOwned,
-{
-  match protocol_version {
-    ProtocolVersion::V1 => {
-      rmp_serde::decode::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    }
-  }
-}
+// pub(super) fn decode<T>(protocol_version: ProtocolVersion, src: &[u8]) -> io::Result<T>
+// where
+//   T: serde::de::DeserializeOwned,
+// {
+//   match protocol_version {
+//     ProtocolVersion::V1 => {
+//       rmp_serde::decode::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+//     }
+//   }
+// }
 
 /// Response from the Raft node
 #[derive(Debug, Clone)]
@@ -519,37 +555,64 @@ pub enum ResponseKind<Id, Address> {
   Error(ErrorResponse<Id, Address>),
 }
 
-impl<Id, Address> From<AppendEntriesResponse<Id, Address>> for ResponseKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> ResponseKind<Id, Address> {
+  /// Returns the tag of this request kind for encoding/decoding.
+  #[inline]
+  pub const fn tag(&self) -> u8 {
+    match self {
+      Self::AppendEntries(_) => 0,
+      Self::Vote(_) => 1,
+      Self::InstallSnapshot(_) => 2,
+      Self::TimeoutNow(_) => 3,
+      Self::Heartbeat(_) => 4,
+      Self::Error(_) => 255,
+    }
+  }
+}
+
+impl<Id: NodeId, Address: NodeAddress> From<AppendEntriesResponse<Id, Address>>
+  for ResponseKind<Id, Address>
+{
   fn from(resp: AppendEntriesResponse<Id, Address>) -> Self {
     Self::AppendEntries(resp)
   }
 }
 
-impl<Id, Address> From<VoteResponse<Id, Address>> for ResponseKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<VoteResponse<Id, Address>>
+  for ResponseKind<Id, Address>
+{
   fn from(resp: VoteResponse<Id, Address>) -> Self {
     Self::Vote(resp)
   }
 }
 
-impl<Id, Address> From<InstallSnapshotResponse<Id, Address>> for ResponseKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<InstallSnapshotResponse<Id, Address>>
+  for ResponseKind<Id, Address>
+{
   fn from(resp: InstallSnapshotResponse<Id, Address>) -> Self {
     Self::InstallSnapshot(resp)
   }
 }
 
-impl<Id, Address> From<TimeoutNowResponse<Id, Address>> for ResponseKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<TimeoutNowResponse<Id, Address>>
+  for ResponseKind<Id, Address>
+{
   fn from(resp: TimeoutNowResponse<Id, Address>) -> Self {
     Self::TimeoutNow(resp)
   }
 }
 
-impl<Id, Address> From<HeartbeatResponse<Id, Address>> for ResponseKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<HeartbeatResponse<Id, Address>>
+  for ResponseKind<Id, Address>
+{
   fn from(resp: HeartbeatResponse<Id, Address>) -> Self {
     Self::Heartbeat(resp)
   }
 }
 
-impl<Id, Address> From<ErrorResponse<Id, Address>> for ResponseKind<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> From<ErrorResponse<Id, Address>>
+  for ResponseKind<Id, Address>
+{
   fn from(resp: ErrorResponse<Id, Address>) -> Self {
     Self::Error(resp)
   }
@@ -561,7 +624,7 @@ pub struct Response<Id, Address> {
   kind: ResponseKind<Id, Address>,
 }
 
-impl<Id, Address> Response<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Response<Id, Address> {
   pub const fn append_entries(
     version: ProtocolVersion,
     resp: AppendEntriesResponse<Id, Address>,
@@ -625,6 +688,12 @@ impl<Id, Address> Response<Id, Address> {
     }
   }
 
+  /// Returns the kind of the response.
+  #[inline]
+  pub const fn kind(&self) -> &ResponseKind<Id, Address> {
+    &self.kind
+  }
+
   // pub fn encode(&self) -> io::Result<Vec<u8>> {
   //   match self.protocol_version {
   //     ProtocolVersion::V1 => {
@@ -666,13 +735,13 @@ impl<Id, Address> Response<Id, Address> {
 //   rx: oneshot::Receiver<Response<Id, Address>>,
 // }
 
-// impl<Id, Address> CommandHandle<Id, Address> {
+// impl<Id: NodeId, Address: NodeAddress> CommandHandle<Id, Address> {
 //   pub(crate) fn new(rx: oneshot::Receiver<Response<Id, Address>>) -> Self {
 //     Self { rx }
 //   }
 // }
 
-// impl<Id, Address> Future for CommandHandle<Id, Address> {
+// impl<Id: NodeId, Address: NodeAddress> Future for CommandHandle<Id, Address> {
 //   type Output = Result<Response<Id, Address>, CommandHandleError>;
 
 //   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -720,12 +789,12 @@ impl<Id, Address> Response<Id, Address> {
 /// from remote nodes
 #[pin_project::pin_project]
 #[derive(Debug)]
-pub struct RequestConsumer<Id, Address> {
+pub struct RequestConsumer<Id: NodeId, Address: NodeAddress> {
   #[pin]
   rx: async_channel::Receiver<Request<Id, Address>>,
 }
 
-impl<Id, Address> Clone for RequestConsumer<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Clone for RequestConsumer<Id, Address> {
   fn clone(&self) -> Self {
     Self {
       rx: self.rx.clone(),
@@ -733,7 +802,7 @@ impl<Id, Address> Clone for RequestConsumer<Id, Address> {
   }
 }
 
-impl<Id, Address> Stream for RequestConsumer<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Stream for RequestConsumer<Id, Address> {
   type Item = <async_channel::Receiver<Request<Id, Address>> as Stream>::Item;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -742,11 +811,11 @@ impl<Id, Address> Stream for RequestConsumer<Id, Address> {
 }
 
 /// A producer for [`Request`]s
-pub struct RequestProducer<Id, Address> {
+pub struct RequestProducer<Id: NodeId, Address: NodeAddress> {
   tx: async_channel::Sender<Request<Id, Address>>,
 }
 
-impl<Id, Address> Clone for RequestProducer<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> Clone for RequestProducer<Id, Address> {
   fn clone(&self) -> Self {
     Self {
       tx: self.tx.clone(),
@@ -754,7 +823,7 @@ impl<Id, Address> Clone for RequestProducer<Id, Address> {
   }
 }
 
-impl<Id, Address> RequestProducer<Id, Address> {
+impl<Id: NodeId, Address: NodeAddress> RequestProducer<Id, Address> {
   /// Produce a command for processing
   pub async fn send(
     &self,
@@ -765,7 +834,8 @@ impl<Id, Address> RequestProducer<Id, Address> {
 }
 
 /// Returns unbounded command producer and command consumer.
-pub fn command<Id, Address>() -> (RequestProducer<Id, Address>, RequestConsumer<Id, Address>) {
+pub fn command<Id: NodeId, Address: NodeAddress>(
+) -> (RequestProducer<Id, Address>, RequestConsumer<Id, Address>) {
   let (tx, rx) = async_channel::unbounded();
   (RequestProducer { tx }, RequestConsumer { rx })
 }
