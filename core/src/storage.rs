@@ -5,6 +5,8 @@ pub use log::*;
 mod stable;
 pub use stable::*;
 
+use crate::transport::{Address, Id};
+
 /// Storage is a trait that must be implemented by the user to provide the persistent storage for the Raft.
 pub trait Storage: Send + Sync + 'static {
   /// Errors returned by the storage.
@@ -13,14 +15,19 @@ pub trait Storage: Send + Sync + 'static {
     + From<<Self::Snapshot as SnapshotStorage>::Error>
     + From<<Self::Log as LogStorage>::Error>;
 
+  /// The id type used to identify nodes.
+  type Id: Id;
+  /// The address type of node.
+  type Address: Address;
+
   /// Stable storage
   type Stable: StableStorage<Runtime = Self::Runtime>;
 
   /// Snapshot storage
-  type Snapshot: SnapshotStorage<Runtime = Self::Runtime>;
+  type Snapshot: SnapshotStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// Log storage
-  type Log: LogStorage<Runtime = Self::Runtime>;
+  type Log: LogStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
@@ -37,7 +44,5 @@ pub trait Storage: Send + Sync + 'static {
 
 #[cfg(feature = "test")]
 pub(super) mod tests {
-  pub(crate) mod snapshot {
-    pub use crate::storage::snapshot::tests::*;
-  }
+  pub use super::log::tests::*;
 }

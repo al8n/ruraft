@@ -34,7 +34,7 @@ mod commitment;
 ///
 #[cfg(feature = "test")]
 pub mod tests {
-  pub use super::storage::tests::snapshot::*;
+  pub use super::storage::tests::*;
   pub use super::transport::tests::*;
 
   /// Sequential access lock for tests.

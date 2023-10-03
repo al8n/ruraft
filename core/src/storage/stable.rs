@@ -1,13 +1,8 @@
 use bytes::Bytes;
 
-#[cfg(any(feature = "test", test))]
-mod memory;
-#[cfg(any(feature = "test", test))]
-#[cfg_attr(docsrs, doc(cfg(feature = "test")))]
-pub use memory::*;
-
 /// Used to provide stable storage
 /// of key configurations to ensure safety.
+/// e.g. votes are persisted to this storage.
 #[async_trait::async_trait]
 pub trait StableStorage: Send + Sync + 'static {
   /// The error type returned by the stable storage.

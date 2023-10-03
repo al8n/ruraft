@@ -1,11 +1,8 @@
-use std::{
-  net::SocketAddr,
-  time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crate::{
-  membership::ServerId,
   raft::{Node, Role},
+  transport::{Address, Id},
 };
 
 /// Raft is the API for the Raft consensus algorithm.
@@ -18,10 +15,10 @@ pub trait Raft {
   type Log: Send + Sync + 'static;
 
   /// The id node.
-  type Id: Clone + core::fmt::Display + Send + Sync + 'static;
+  type Id: Id;
 
   /// The address of the node.
-  type Address: Clone + core::fmt::Display + Send + Sync + 'static;
+  type Address: Address;
 
   /// Used to return the current leader of the cluster.
   async fn leader(&self) -> Option<Node<Self::Id, Self::Address>>;
@@ -67,8 +64,8 @@ pub trait Raft {
   /// membership change log entry is appended.
   async fn add_voter(
     &self,
-    id: ServerId,
-    addr: SocketAddr,
+    id: Self::Id,
+    addr: Self::Address,
     prev_index: u64,
     timeout: Option<Duration>,
   ) -> Result<(), Self::Error>;
@@ -80,8 +77,8 @@ pub trait Raft {
   /// fail. For prevIndex and timeout, see [`Raft::add_voter`].
   async fn add_nonvoter(
     &self,
-    id: ServerId,
-    addr: SocketAddr,
+    id: Self::Id,
+    addr: Self::Address,
     prev_index: u64,
     timeout: Option<Duration>,
   ) -> Result<(), Self::Error>;
@@ -91,7 +88,7 @@ pub trait Raft {
   /// run on the leader or it will fail. For `prev_index` and `timeout`, see [`Raft::add_voter`].
   async fn remove_server(
     &self,
-    id: ServerId,
+    id: Self::Id,
     prev_index: u64,
     timeout: Option<Duration>,
   ) -> Result<(), Self::Error>;
@@ -102,7 +99,7 @@ pub trait Raft {
   /// does nothing. This must be run on the leader or it will fail. For `prev_index` and `timeout`, see [`Raft::add_voter`].
   async fn demote_voter(
     &self,
-    id: ServerId,
+    id: Self::Id,
     prev_index: u64,
     timeout: Option<Duration>,
   ) -> Result<(), Self::Error>;

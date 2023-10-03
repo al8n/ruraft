@@ -3,23 +3,37 @@ use std::{ops::RangeBounds, time::Duration};
 use async_channel::Receiver;
 use bytes::Bytes;
 use futures::FutureExt;
-use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
 
-use crate::utils::now_timestamp;
-
-#[cfg(any(feature = "test", test))]
-mod memory;
-#[cfg(any(feature = "test", test))]
-#[cfg_attr(docsrs, doc(cfg(feature = "test")))]
-pub use memory::*;
+use crate::{
+  membership::Membership,
+  transport::{Address, Id},
+  utils::now_timestamp,
+};
 
 /// Describes various types of log entries.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
-#[repr(u8)]
-pub enum LogKind {
-  /// Applied to a user [`FinateStateMachine`].
-  User,
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
+pub enum LogKind<I: Id, A: Address> {
+  /// Holds end-user data and extension.
+  User {
+    /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
+    data: Bytes,
+    /// Extensions holds an opaque byte slice of information for middleware. It
+    /// is up to the client of the library to properly modify this as it adds
+    /// layers and remove those layers when appropriate. This value is a part of
+    /// the log, so very large values could cause timing issues.
+    ///
+    /// N.B. It is _up to the client_ to handle upgrade paths. For instance if
+    /// using this with go-raftchunking, the client should ensure that all Raft
+    /// peers are using a version that can handle that extension before ever
+    /// actually triggering chunking behavior. It is sometimes sufficient to
+    /// ensure that non-leaders are upgraded first, then the current leader is
+    /// upgraded, but a leader changeover during this process could lead to
+    /// trouble, so gating extension behavior via some flag in the client
+    /// program is also a good idea.
+    extension: Bytes,
+  },
   /// Used to assert leadership.
   Noop,
   /// Used to ensure all preceding operations have been
@@ -28,24 +42,23 @@ pub enum LogKind {
   /// it is possible there are operations committed but not yet applied to
   /// the [`FinateStateMachine`].
   Barrier,
-
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Memberhsip,
+  Memberhsip(Membership<I, A>),
 }
 
-impl LogKind {
-  /// Returns a string representation of the log type.
-  #[inline]
-  pub const fn as_string(&self) -> &'static str {
-    match self {
-      Self::User => "user",
-      Self::Noop => "noop",
-      Self::Barrier => "barrier",
-      Self::Memberhsip => "membership",
-    }
-  }
-}
+// impl<Id:> LogKind {
+//   /// Returns a string representation of the log type.
+//   #[inline]
+//   pub const fn as_string(&self) -> &'static str {
+//     match self {
+//       Self::User => "user",
+//       Self::Noop => "noop",
+//       Self::Barrier => "barrier",
+//       Self::Memberhsip => "membership",
+//     }
+//   }
+// }
 
 /// Log entries are replicated to all members of the Raft cluster
 /// and form the heart of the replicated state machine.
@@ -56,37 +69,31 @@ impl LogKind {
   getters(vis_all = "pub"),
   setters(vis_all = "pub")
 )]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Log {
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Log<I: Id, A: Address> {
   /// Holds the kind of the log entry.
   #[viewit(
     getter(
-      vis = "pub(crate)",
+      vis = "pub",
       const,
+      style = "ref",
       attrs(doc = "Returns the log entry's kind.")
     ),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
   )]
-  kind: LogKind,
+  kind: LogKind<I, A>,
 
   /// Holds the index of the log entry.
   #[viewit(
-    getter(
-      vis = "pub(crate)",
-      const,
-      attrs(doc = "Returns the log entry's index.")
-    ),
+    getter(vis = "pub", const, attrs(doc = "Returns the log entry's index.")),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's index."))
   )]
   index: u64,
 
   /// Holds the term of the log entry.
   #[viewit(
-    getter(
-      vis = "pub(crate)",
-      const,
-      attrs(doc = "Returns the log entry's term.")
-    ),
+    getter(vis = "pub", const, attrs(doc = "Returns the log entry's term.")),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's term."))
   )]
   term: u64,
@@ -104,7 +111,7 @@ pub struct Log {
   /// this.
   #[viewit(
     getter(
-      vis = "pub(crate)",
+      vis = "pub",
       const,
       attrs(
         doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
@@ -120,51 +127,19 @@ pub struct Log {
     )
   )]
   appended_at: u64,
-
-  /// Holds the log entry's type-specific data.
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Returns the log entry's type-specific data.")
-    ),
-    setter(attrs(doc = "Sets the log entry's type-specific data."))
-  )]
-  data: Bytes,
-  /// Extensions holds an opaque byte slice of information for middleware. It
-  /// is up to the client of the library to properly modify this as it adds
-  /// layers and remove those layers when appropriate. This value is a part of
-  /// the log, so very large values could cause timing issues.
-  ///
-  /// N.B. It is _up to the client_ to handle upgrade paths. For instance if
-  /// using this with go-raftchunking, the client should ensure that all Raft
-  /// peers are using a version that can handle that extension before ever
-  /// actually triggering chunking behavior. It is sometimes sufficient to
-  /// ensure that non-leaders are upgraded first, then the current leader is
-  /// upgraded, but a leader changeover during this process could lead to
-  /// trouble, so gating extension behavior via some flag in the client
-  /// program is also a good idea.
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Returns the log entry's extensions.")
-    ),
-    setter(attrs(doc = "Sets the log entry's extensions."))
-  )]
-  extension: Bytes,
 }
 
-impl Log {
+impl<I: Id, A: Address> Log<I, A> {
   /// Create a [`Log`]
   #[inline]
   pub const fn new(data: Bytes) -> Self {
     Self {
       index: 0,
       term: 0,
-      kind: LogKind::User,
-      data,
-      extension: Bytes::new(),
+      kind: LogKind::User {
+        data,
+        extension: Bytes::new(),
+      },
       appended_at: 0,
     }
   }
@@ -175,21 +150,17 @@ impl Log {
     Self {
       index: 0,
       term: 0,
-      kind: LogKind::User,
-      data,
-      extension,
+      kind: LogKind::User { data, extension },
       appended_at: 0,
     }
   }
 
   #[inline]
-  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind) -> Self {
+  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A>) -> Self {
     Self {
       index,
       term,
       kind,
-      data: Bytes::new(),
-      extension: Bytes::new(),
       appended_at: 0,
     }
   }
@@ -206,6 +177,11 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
+  /// The id type used to identify nodes.
+  type Id: Id;
+  /// The address type of node.
+  type Address: Address;
+
   /// Returns the first index written. 0 for no entries.
   async fn first_index(&self) -> Result<u64, Self::Error>;
 
@@ -213,13 +189,13 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   async fn last_index(&self) -> Result<u64, Self::Error>;
 
   /// Gets a log entry at a given index.
-  async fn get_log(&self, index: u64) -> Result<Option<Log>, Self::Error>;
+  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error>;
 
   /// Stores a log entry
-  async fn store_log(&self, log: &Log) -> Result<(), Self::Error>;
+  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error>;
 
   /// Stores multiple log entries. By default the logs stored may not be contiguous with previous logs (i.e. may have a gap in Index since the last log written). If an implementation can't tolerate this it may optionally implement `MonotonicLogStore` to indicate that this is not allowed. This changes Raft's behaviour after restoring a user snapshot to remove all previous logs instead of relying on a "gap" to signal the discontinuity between logs before the snapshot and logs after.
-  async fn store_logs(&self, logs: &[Log]) -> Result<(), Self::Error>;
+  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error>;
 
   /// Removes a range of log entries.
   async fn remove_range(&self, range: impl RangeBounds<u64> + Send) -> Result<(), Self::Error>;
@@ -247,7 +223,9 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
 
 #[async_trait::async_trait]
 pub(crate) trait LogStorageExt: LogStorage {
-  async fn oldest_log(&self) -> Result<Log, LogStorageExtError<Self::Error>> {
+  async fn oldest_log(
+    &self,
+  ) -> Result<Log<Self::Id, Self::Address>, LogStorageExtError<Self::Error>> {
     // We might get unlucky and have a truncate right between getting first log
     // index and fetching it so keep trying until we succeed or hard fail.
     let mut last_fail_idx = 0;
@@ -310,18 +288,17 @@ impl<T: LogStorage> LogStorageExt for T {}
 
 #[cfg(all(feature = "test", feature = "metrics"))]
 pub(super) mod tests {
-  use agnostic::Runtime;
-
   use super::*;
+  use std::net::SocketAddr;
 
   struct TestCase {
     name: &'static str,
-    logs: Vec<Log>,
+    logs: Vec<Log<String, SocketAddr>>,
     want_idx: u64,
     want_err: bool,
   }
 
-  pub async fn test_oldest_log<R: Runtime>() {
+  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr>>(store: S) {
     let cases = vec![
       TestCase {
         name: "empty logs",
@@ -332,9 +309,9 @@ pub(super) mod tests {
       TestCase {
         name: "simple case",
         logs: vec![
-          Log::crate_new(1, 1234, LogKind::User),
-          Log::crate_new(1, 1235, LogKind::User),
-          Log::crate_new(2, 1236, LogKind::User),
+          Log::crate_new(1, 1234, LogKind::Noop),
+          Log::crate_new(1, 1235, LogKind::Noop),
+          Log::crate_new(2, 1236, LogKind::Noop),
         ],
         want_idx: 1234,
         want_err: false,
@@ -342,7 +319,6 @@ pub(super) mod tests {
     ];
 
     for case in cases {
-      let store = MemoryLogStorage::<R>::new();
       store
         .store_logs(&case.logs)
         .await

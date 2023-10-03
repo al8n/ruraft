@@ -2,22 +2,23 @@ use std::{
   fs::{self, File},
   hash::Hasher,
   io::{self, BufReader, BufWriter, Read, Seek, Write},
+  mem,
   path::{Path, PathBuf},
   pin::Pin,
   sync::Arc,
   task::{Context, Poll},
 };
 
-use crate::{
+use agnostic::Runtime;
+use nodecraft::Transformable;
+use once_cell::sync::Lazy;
+use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
+  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
+  transport::{Address, Id},
   utils::{checksumable::ChecksumableWriter, make_dir_all},
 };
-
-use super::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage};
-
-use agnostic::Runtime;
-use once_cell::sync::Lazy;
 
 const TEST_PATH: &str = "perm_test";
 const SNAPSHOT_PATH: &str = "snapshots";
@@ -33,15 +34,22 @@ static STATE_FILE_PATH: Lazy<PathBuf> = Lazy::new(|| {
 });
 const TEMP_SUFFIX: &str = ".tmp";
 
-impl SnapshotId {
+trait SnapshotIdExt {
+  fn name(&self) -> String;
+  fn temp_name(&self) -> String;
+}
+
+impl SnapshotIdExt for SnapshotId {
   fn name(&self) -> String {
-    format!("{}_{}_{}", self.term, self.index, self.timestamp)
+    format!("{}_{}_{}", self.term(), self.index(), self.timestamp())
   }
 
   fn temp_name(&self) -> String {
     format!(
       "{}_{}_{}{TEMP_SUFFIX}",
-      self.term, self.index, self.timestamp
+      self.term(),
+      self.index(),
+      self.timestamp()
     )
   }
 }
@@ -103,7 +111,7 @@ impl FileSnapshotStorageOptions {
 /// Implements the [`SnapshotStorage`] trait and allows
 /// snapshots to be made on the local disk.
 #[derive(Clone)]
-pub struct FileSnapshotStorage<R: Runtime> {
+pub struct FileSnapshotStorage<I: Id, A: Address, R: Runtime> {
   path: Arc<PathBuf>,
   retain: usize,
 
@@ -111,10 +119,15 @@ pub struct FileSnapshotStorage<R: Runtime> {
   /// It's a private field, only used in testing
   no_sync: bool,
 
-  _runtime: std::marker::PhantomData<R>,
+  _runtime: std::marker::PhantomData<(I, A, R)>,
 }
 
-impl<R: Runtime> FileSnapshotStorage<R> {
+impl<I, A, R> FileSnapshotStorage<I, A, R>
+where
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   /// Reaps any snapshots beyond the retain count.
   pub fn reap_snapshots(&self) -> io::Result<()> {
     let snapshots = self.get_snapshots().map_err(|e| {
@@ -123,7 +136,7 @@ impl<R: Runtime> FileSnapshotStorage<R> {
     })?;
 
     for snap in snapshots.iter().skip(self.retain) {
-      let path = self.path.join(snap.id.name());
+      let path = self.path.join(snap.id().name());
       tracing::info!(target = "ruraft", path = %path.display(), "reaping snapshot");
       fs::remove_dir_all(&path).map_err(|e| {
         tracing::error!(target = "ruraft", path = %path.display(), err = %e, "failed to reap snapshot");
@@ -142,7 +155,7 @@ impl<R: Runtime> FileSnapshotStorage<R> {
     fs::remove_file(&path)
   }
 
-  fn get_snapshots(&self) -> io::Result<Vec<SnapshotMeta>> {
+  fn get_snapshots(&self) -> io::Result<Vec<SnapshotMeta<I, A>>> {
     // Get the eligible snapshots
     let snapshots = fs::read_dir(self.path.as_path()).map_err(|e| {
       tracing::error!(target = "ruraft", err = %e, "failed to scan snapshot directory");
@@ -191,29 +204,38 @@ impl<R: Runtime> FileSnapshotStorage<R> {
       a.term.cmp(&b.term).then_with(|| {
         a.index
           .cmp(&b.index)
-          .then_with(|| a.id.timestamp.cmp(&b.id.timestamp))
+          .then_with(|| a.timestamp().cmp(&b.timestamp))
       })
     });
     res.reverse();
     Ok(res)
   }
 
-  fn read_meta(&self, name: &str) -> io::Result<FileSnapshotMeta> {
+  fn read_meta(&self, name: &str) -> io::Result<FileSnapshotMeta<I, A>> {
     // Open the meta file
     let metapath = self.path.join(name).join(META_FILE_PATH.as_path());
     let mut fh = BufReader::new(File::open(metapath)?);
 
     // Read the meta data
-    serde_json::from_reader(&mut fh).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    <FileSnapshotMeta<I, A> as Transformable>::decode_from_reader(&mut fh)
+      .map(|(_, meta)| meta)
+      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
 }
 
 #[async_trait::async_trait]
-impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
+impl<I, A, R> SnapshotStorage for FileSnapshotStorage<I, A, R>
+where
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   type Error = FileSnapshotStorageError;
-  type Sink = FileSnapshotSink<R>;
+  type Sink = FileSnapshotSink<Self::Id, Self::Address, R>;
+  type Id = I;
+  type Address = A;
   type Runtime = R;
-  type Source = FileSnapshotSource<R>;
+  type Source = FileSnapshotSource<Self::Id, Self::Address, R>;
   type Options = FileSnapshotStorageOptions;
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -248,7 +270,7 @@ impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership,
+    membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error> {
     // Create a new path
@@ -271,7 +293,7 @@ impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
     let meta = FileSnapshotMeta {
       meta: SnapshotMeta {
         version,
-        id,
+        timestamp: id.timestamp(),
         index,
         term,
         membership,
@@ -281,7 +303,12 @@ impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
       crc: 0,
     };
 
-    FileSnapshotSink::<R>::write_meta(&path, &meta, self.no_sync).map_err(|e| {
+    FileSnapshotSink::<Self::Id, Self::Address, Self::Runtime>::write_meta(
+      &path,
+      &meta,
+      self.no_sync,
+    )
+    .map_err(|e| {
       tracing::error!(target = "ruraft", err = %e, "failed to write metadata");
       e
     })?;
@@ -312,7 +339,7 @@ impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
-  async fn list(&self) -> Result<Vec<SnapshotMeta>, Self::Error> {
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error> {
     // Get the eligible snapshots
     let mut snapshots = self.get_snapshots().map_err(|e| {
       tracing::error!(target = "ruraft", err = %e, "failed to get snapshots");
@@ -370,20 +397,25 @@ impl<R: Runtime> SnapshotStorage for FileSnapshotStorage<R> {
 
 /// Stored on disk. We also put a CRC
 /// on disk so that we can verify the snapshot.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct FileSnapshotMeta {
-  #[serde(flatten)]
-  meta: SnapshotMeta,
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+struct FileSnapshotMeta<I: Id, A: Address> {
+  #[cfg_attr(feature = "serde", serde(flatten))]
+  meta: SnapshotMeta<I, A>,
   crc: u64,
 }
 
-pub struct FileSnapshotSource<R: Runtime> {
-  meta: FileSnapshotMeta,
+pub struct FileSnapshotSource<I: Id, A: Address, R: Runtime> {
+  meta: FileSnapshotMeta<I, A>,
   file: BufReader<File>,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<R: Runtime> futures::io::AsyncRead for FileSnapshotSource<R> {
+impl<I: Id, A: Address, R: Runtime> futures::io::AsyncRead for FileSnapshotSource<I, A, R>
+where
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
@@ -393,35 +425,47 @@ impl<R: Runtime> futures::io::AsyncRead for FileSnapshotSource<R> {
   }
 }
 
-impl<R: Runtime> SnapshotSource for FileSnapshotSource<R> {
+impl<I, A, R> SnapshotSource for FileSnapshotSource<I, A, R>
+where
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   type Runtime = R;
-  fn meta(&self) -> &SnapshotMeta {
+  type Id = I;
+  type Address = A;
+  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
     &self.meta.meta
   }
 }
 
-pub struct FileSnapshotSink<R: Runtime> {
-  store: FileSnapshotStorage<R>,
+pub struct FileSnapshotSink<I: Id, A: Address, R: Runtime> {
+  store: FileSnapshotStorage<I, A, R>,
   dir: PathBuf,
 
   no_sync: bool,
 
   file: BufWriter<ChecksumableWriter<File, crc32fast::Hasher>>,
-  meta: FileSnapshotMeta,
+  meta: FileSnapshotMeta<I, A>,
   closed: bool,
 }
 
-impl<R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<R> {
+impl<I: Id, A: Address, R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<I, A, R>
+where
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   fn poll_write(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
     buf: &[u8],
   ) -> Poll<io::Result<usize>> {
-    Poll::Ready(self.file.write(buf))
+    Poll::Ready(self.as_mut().file.write(buf))
   }
 
   fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-    Poll::Ready(self.file.flush())
+    Poll::Ready(self.as_mut().file.flush())
   }
 
   fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -430,10 +474,10 @@ impl<R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<R> {
       return Poll::Ready(Ok(()));
     }
 
-    self.closed = true;
+    self.as_mut().closed = true;
 
     // Close the open handles
-    if let Err(e) = self.finalize() {
+    if let Err(e) = self.as_mut().finalize() {
       tracing::error!(target = "ruraft", err = %e, "failed to finalize snapshot");
       if let Err(e) = fs::remove_dir_all(&self.dir) {
         tracing::error!(target = "ruraft", err = %e, "failed to delete temporary snapshot directory");
@@ -443,7 +487,9 @@ impl<R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<R> {
     }
 
     // Write out the meta data
-    if let Err(e) = FileSnapshotSink::<R>::write_meta(&self.dir, &self.meta, self.store.no_sync) {
+    if let Err(e) =
+      FileSnapshotSink::<I, A, R>::write_meta(&self.dir, &self.meta, self.store.no_sync)
+    {
       tracing::error!(target = "ruraft", err = %e, "failed to write snapshot metadata");
       return Poll::Ready(Err(e));
     }
@@ -481,7 +527,12 @@ impl<R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<R> {
   }
 }
 
-impl<R: Runtime> FileSnapshotSink<R> {
+impl<I, A, R> FileSnapshotSink<I, A, R>
+where
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
+  R: Runtime,
+{
   fn finalize(&mut self) -> io::Result<()> {
     // Flush any remaining data
     self.file.flush()?;
@@ -499,13 +550,16 @@ impl<R: Runtime> FileSnapshotSink<R> {
     Ok(())
   }
 
-  fn write_meta<P: AsRef<Path>>(dir: &P, meta: &FileSnapshotMeta, no_sync: bool) -> io::Result<()> {
+  fn write_meta<P: AsRef<Path>>(
+    dir: &P,
+    meta: &FileSnapshotMeta<I, A>,
+    no_sync: bool,
+  ) -> io::Result<()> {
     // Open the meta file
     let metapath = dir.as_ref().join(META_FILE_PATH.as_path());
-    let mut fh = BufWriter::new(File::create(metapath)?);
+    let mut fh = BufWriter::with_capacity(meta.encoded_len(), File::create(metapath)?);
 
-    serde_json::to_writer(&mut fh, meta)?;
-
+    meta.encode_to_writer(&mut fh)?;
     fh.flush()?;
 
     if !no_sync {
@@ -517,11 +571,16 @@ impl<R: Runtime> FileSnapshotSink<R> {
 }
 
 #[async_trait::async_trait]
-impl<R: Runtime> SnapshotSink for FileSnapshotSink<R> {
+impl<I, A, R> SnapshotSink for FileSnapshotSink<I, A, R>
+where
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   type Runtime = R;
 
-  fn id(&self) -> &SnapshotId {
-    &self.meta.meta.id
+  fn id(&self) -> SnapshotId {
+    self.meta.meta.id()
   }
 
   async fn cancel(&mut self) -> io::Result<()> {
@@ -543,8 +602,94 @@ impl<R: Runtime> SnapshotSink for FileSnapshotSink<R> {
   }
 }
 
+const CRC_SIZE: usize = mem::size_of::<u64>();
+
+#[async_trait::async_trait]
+impl<I, A> Transformable for FileSnapshotMeta<I, A>
+where
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
+{
+  type Error = <SnapshotMeta<I, A> as Transformable>::Error;
+
+  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    let encoded_len = self.encoded_len();
+    if dst.len() < encoded_len {
+      return Err(Self::Error::EncodeBufferTooSmall);
+    }
+
+    self.meta.encode(dst)?;
+    dst[encoded_len..encoded_len + CRC_SIZE].copy_from_slice(&self.crc.to_be_bytes());
+
+    Ok(())
+  }
+
+  fn encode_to_writer<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+    self.meta.encode_to_writer(writer)?;
+    writer.write_all(&self.crc.to_be_bytes())
+  }
+
+  async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
+    &self,
+    writer: &mut W,
+  ) -> std::io::Result<()> {
+    use futures::AsyncWriteExt;
+
+    self.meta.encode_to_async_writer(writer).await?;
+    writer.write_all(&self.crc.to_be_bytes()).await
+  }
+
+  fn encoded_len(&self) -> usize {
+    self.meta.encoded_len() + CRC_SIZE
+  }
+
+  fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
+  where
+    Self: Sized,
+  {
+    <SnapshotMeta<I, A> as Transformable>::decode(src).and_then(|(readed, meta)| {
+      if src.len() < readed + CRC_SIZE {
+        return Err(Self::Error::Corrupted);
+      }
+      let crc = u64::from_be_bytes(src[readed..readed + CRC_SIZE].try_into().unwrap());
+      Ok((readed + CRC_SIZE, Self { meta, crc }))
+    })
+  }
+
+  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    <SnapshotMeta<I, A> as Transformable>::decode_from_reader(reader).and_then(|(readed, meta)| {
+      let mut crc_buf = [0u8; CRC_SIZE];
+      reader.read_exact(&mut crc_buf)?;
+      let crc = u64::from_be_bytes(crc_buf);
+      Ok((readed + CRC_SIZE, Self { meta, crc }))
+    })
+  }
+
+  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
+    reader: &mut R,
+  ) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    use futures::AsyncReadExt;
+
+    let (readed, meta) =
+      <SnapshotMeta<I, A> as Transformable>::decode_from_async_reader(reader).await?;
+
+    let mut crc_buf = [0u8; CRC_SIZE];
+    reader.read_exact(&mut crc_buf).await?;
+    let crc = u64::from_be_bytes(crc_buf);
+    Ok((readed + CRC_SIZE, Self { meta, crc }))
+  }
+}
+
 #[cfg(feature = "test")]
 pub(crate) mod tests {
+  use std::net::SocketAddr;
+
   use futures::{AsyncReadExt, AsyncWriteExt};
 
   use super::*;
@@ -558,9 +703,10 @@ pub(crate) mod tests {
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let snap = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-      .await
-      .unwrap();
+    let snap =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
+        .await
+        .unwrap();
 
     snap
       .create(SnapshotVersion::V1, 10, 3, Membership::default(), 0)
@@ -577,9 +723,10 @@ pub(crate) mod tests {
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
-    let snap = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-      .await
-      .unwrap();
+    let snap =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
+        .await
+        .unwrap();
 
     // check no snapshots
     assert_eq!(snap.list().await.unwrap().len(), 0);
@@ -613,7 +760,7 @@ pub(crate) mod tests {
     assert_eq!(latest.size, 13);
 
     // Read the snapshot
-    let mut src = snap.open(&latest.id).await.unwrap();
+    let mut src = snap.open(&latest.id()).await.unwrap();
 
     // Read out everything
     let mut buf = Vec::new();
@@ -632,9 +779,10 @@ pub(crate) mod tests {
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let storage = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-      .await
-      .unwrap();
+    let storage =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
+        .await
+        .unwrap();
 
     let mut snap = storage
       .create(SnapshotVersion::V1, 10, 2, Membership::default(), 0)
@@ -658,9 +806,10 @@ pub(crate) mod tests {
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 2))
-      .await
-      .unwrap();
+    let storage =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 2))
+        .await
+        .unwrap();
 
     for i in 10..15 {
       let mut sink = storage
@@ -697,7 +846,9 @@ pub(crate) mod tests {
     perm.set_mode(0o000);
     fs::set_permissions(&dir2, perm).unwrap();
 
-    let Err(err) = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir2, 3)).await
+    let Err(err) =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
+        .await
     else {
       panic!("should fail to use dir with bad perms");
     };
@@ -719,7 +870,7 @@ pub(crate) mod tests {
     let dir2 = dir.join("raft");
     drop(parent);
 
-    FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
+    FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
       .await
       .expect("should not fail when using non existing parent");
   }
@@ -734,9 +885,10 @@ pub(crate) mod tests {
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage = FileSnapshotStorage::<R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-      .await
-      .unwrap();
+    let storage =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
+        .await
+        .unwrap();
 
     let mut sink = storage
       .create(SnapshotVersion::V1, 130350, 5, Membership::default(), 0)

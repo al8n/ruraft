@@ -25,9 +25,6 @@ use crate::options::ProtocolVersion;
 
 use super::*;
 
-mod resolver;
-pub use resolver::*;
-
 /// The default TimeoutScale in a [`NetworkTransport`].
 pub const DEFAULT_TIMEOUT_SCALE: usize = 256 * 1024; // 256KB
 
@@ -85,7 +82,7 @@ pub enum Error {
 /// Encapsulates configuration for the network transport layer.
 #[viewit::viewit]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetTransportOptions<Id, Address> {
+pub struct NetTransportOptions<I, A> {
   /// The protocol version to use for encoding/decoding messages.
   protocol_version: ProtocolVersion,
 
@@ -129,7 +126,7 @@ pub struct NetTransportOptions<Id, Address> {
   timeout: Duration,
 }
 
-impl<Id, Address> NetTransportOptions<Id, Address> {
+impl<I, A> NetTransportOptions<I, A> {
   /// Create a new [`NetTransportOptions`] with default values.
   #[inline]
   pub const fn new(id: Id, bind_addr: Address) -> Self {
@@ -159,14 +156,14 @@ impl<Id, Address> NetTransportOptions<Id, Address> {
 /// is not known if there is an error.
 pub struct NetTransport<Id, Resolver, R>
 where
-  Resolver: NodeAddressResolver<Runtime = R>,
+  Resolver: AddressResolver<Runtime = R>,
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
-  local_header: Header<Id, <Resolver as NodeAddressResolver>::NodeAddress>,
-  consumer: RequestConsumer<Id, <Resolver as NodeAddressResolver>::NodeAddress>,
+  local_header: Header<Id, <Resolver as AddressResolver>::Address>,
+  consumer: RequestConsumer<Id, <Resolver as AddressResolver>::Address>,
   resolver: Resolver,
   wg: AsyncWaitGroup,
   conn_pool: Mutex<HashMap<SocketAddr, <R::Net as Net>::TcpStream>>,
@@ -180,19 +177,19 @@ where
 #[async_trait::async_trait]
 impl<Id, Resolver, R> Transport for NetTransport<Id, Resolver, R>
 where
-  Resolver: NodeAddressResolver<Runtime = R>,
+  Resolver: AddressResolver<Runtime = R>,
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {
   type Error = Error;
   type Runtime = R;
-  type Options = NetTransportOptions<Id, <Resolver as NodeAddressResolver>::NodeAddress>;
+  type Options = NetTransportOptions<Id, <Resolver as AddressResolver>::Address>;
 
-  type NodeId = Id;
+  type Id = Id;
 
   type Pipeline: AppendPipeline<Runtime = Self::Runtime>;
 
-  type Resolver: NodeAddressResolver<Runtime = Self::Runtime>;
+  type Resolver: AddressResolver<Runtime = Self::Runtime>;
 
   type Heartbeater: Heartbeater<Runtime = Self::Runtime>;
 
@@ -200,9 +197,7 @@ where
 
   type Decoder: Decoder;
 
-  fn consumer(
-    &self,
-  ) -> RequestConsumer<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress> {
+  fn consumer(&self) -> RequestConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
     self.consumer.clone()
   }
 

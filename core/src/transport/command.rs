@@ -5,13 +5,14 @@ use std::{
 };
 
 use futures::{channel::oneshot, Stream};
-use serde::{Deserialize, Serialize};
 
 use crate::{
   membership::Membership,
   options::{ProtocolVersion, SnapshotVersion},
   storage::Log,
 };
+
+use super::{Address, Id};
 
 /// A common sub-structure used to pass along protocol version and
 /// other information about the cluster.
@@ -22,7 +23,7 @@ use crate::{
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Header<Id, Address> {
+pub struct Header<I, A> {
   /// The id of the node sending the RPC Request or Response
   #[viewit(
     getter(
@@ -32,7 +33,7 @@ pub struct Header<Id, Address> {
     ),
     setter(attrs(doc = "Set the server id of the request or response"),)
   )]
-  id: Id,
+  id: I,
   /// The addr of the node sending the RPC Request or Response
   #[viewit(
     getter(
@@ -42,13 +43,13 @@ pub struct Header<Id, Address> {
     ),
     setter(attrs(doc = "Set the target address of the request or response"),)
   )]
-  addr: Address,
+  addr: A,
 }
 
-impl<Id, Address> Header<Id, Address> {
+impl<I: Id, A: Address> Header<I, A> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
-  pub const fn new(id: Id, addr: Address) -> Self {
+  pub const fn new(id: I, addr: A) -> Self {
     Self { id, addr }
   }
 }
@@ -56,12 +57,12 @@ impl<Id, Address> Header<Id, Address> {
 /// The command used to append entries to the
 /// replicated log.
 #[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AppendEntriesRequest<Id, Address> {
+pub struct AppendEntriesRequest<I: Id, A: Address> {
   /// The header of the request
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// Provide the current term and leader
   term: u64,
@@ -72,7 +73,7 @@ pub struct AppendEntriesRequest<Id, Address> {
   prev_log_term: u64,
 
   /// New entries to commit
-  entries: Vec<Log>,
+  entries: Vec<Log<I, A>>,
 
   /// Commit index on the leader
   leader_commit: u64,
@@ -84,10 +85,10 @@ pub struct AppendEntriesRequest<Id, Address> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 
-pub struct AppendEntriesResponse<Id, Address> {
+pub struct AppendEntriesResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// Newer term if leader is out of date
   term: u64,
@@ -103,8 +104,8 @@ pub struct AppendEntriesResponse<Id, Address> {
   no_retry_backoff: bool,
 }
 
-impl<Id, Address> AppendEntriesResponse<Id, Address> {
-  pub const fn new(id: Id, addr: Address) -> Self {
+impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
+  pub const fn new(id: I, addr: A) -> Self {
     Self {
       header: Header::new(id, addr),
       term: 0,
@@ -120,10 +121,10 @@ impl<Id, Address> AppendEntriesResponse<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct VoteRequest<Id, Address> {
+pub struct VoteRequest<I, A> {
   /// The header of the request
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// The term of the candidate
   term: u64,
@@ -145,10 +146,10 @@ pub struct VoteRequest<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct VoteResponse<Id, Address> {
+pub struct VoteResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// Newer term if leader is out of date.
   term: u64,
@@ -162,10 +163,10 @@ pub struct VoteResponse<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct InstallSnapshotRequest<Id, Address> {
+pub struct InstallSnapshotRequest<I: Id, A: Address> {
   /// The header of the request
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// The snapshot version
   snapshot_version: SnapshotVersion,
@@ -179,7 +180,7 @@ pub struct InstallSnapshotRequest<Id, Address> {
   last_log_term: u64,
 
   /// Cluster membership.
-  membership: Membership,
+  membership: Membership<I, A>,
 
   /// Log index where [`Membership`] entry was originally written.
   membership_index: u64,
@@ -193,10 +194,10 @@ pub struct InstallSnapshotRequest<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct InstallSnapshotResponse<Id, Address> {
+pub struct InstallSnapshotResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// The term
   term: u64,
@@ -210,30 +211,30 @@ pub struct InstallSnapshotResponse<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TimeoutNowRequest<Id, Address> {
+pub struct TimeoutNowRequest<I, A> {
   /// The header of the request
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 }
 
 /// The response to [`TimeoutNowRequest`].
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TimeoutNowResponse<Id, Address> {
+pub struct TimeoutNowResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 }
 
 /// The heartbeat command.
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct HeartbeatRequest<Id, Address> {
+pub struct HeartbeatRequest<I, A> {
   /// The header of the request
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 
   /// Provide the current term and leader
   term: u64,
@@ -244,10 +245,10 @@ pub struct HeartbeatRequest<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct HeartbeatResponse<Id, Address> {
+pub struct HeartbeatResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
 }
 
 /// The response returned from an
@@ -255,10 +256,10 @@ pub struct HeartbeatResponse<Id, Address> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ErrorResponse<Id, Address> {
+pub struct ErrorResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
-  header: Header<Id, Address>,
+  header: Header<I, A>,
   /// The error message
   error: String,
 }
@@ -348,72 +349,86 @@ impl TryFrom<u8> for CommandResponseKind {
   }
 }
 
-macro_rules! encode {
-  (v1::$ty:ident { $expr: expr }) => {{
-    let mut buf = Vec::with_capacity(128);
-    buf.push({ $expr });
-    buf.push(ProtocolVersion::V1 as u8);
+// macro_rules! encode {
+//   (v1::$ty:ident { $expr: expr }) => {{
+//     let mut buf = Vec::with_capacity(128);
+//     buf.push({ $expr });
+//     buf.push(ProtocolVersion::V1 as u8);
 
-    // Reserve length for the message.
-    buf.extend_from_slice(&[0, 0, 0, 0]);
+//     // Reserve length for the message.
+//     buf.extend_from_slice(&[0, 0, 0, 0]);
 
-    rmp_serde::encode::write(&mut buf, $ty)
-      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let encoded_len = buf.len() - OFFSET;
-    buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
-    Ok(buf)
-  }};
-}
+//     rmp_serde::encode::write(&mut buf, $ty)
+//       .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+//     let encoded_len = buf.len() - OFFSET;
+//     buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+//     Ok(buf)
+//   }};
+// }
 
 /// Request to be sent to the Raft node.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum RequestKind<Id, Address> {
-  AppendEntries(AppendEntriesRequest<Id, Address>),
-  Vote(VoteRequest<Id, Address>),
-  InstallSnapshot(InstallSnapshotRequest<Id, Address>),
-  TimeoutNow(TimeoutNowRequest<Id, Address>),
-  Heartbeat(HeartbeatRequest<Id, Address>),
+pub enum RequestKind<I: Id, A: Address> {
+  AppendEntries(AppendEntriesRequest<I, A>),
+  Vote(VoteRequest<I, A>),
+  InstallSnapshot(InstallSnapshotRequest<I, A>),
+  TimeoutNow(TimeoutNowRequest<I, A>),
+  Heartbeat(HeartbeatRequest<I, A>),
 }
 
-impl<Id, Address> From<AppendEntriesRequest<Id, Address>> for RequestKind<Id, Address> {
-  fn from(req: AppendEntriesRequest<Id, Address>) -> Self {
+impl<I: Id, A: Address> RequestKind<I, A> {
+  /// Returns the tag of this request kind for encoding/decoding.
+  #[inline]
+  pub const fn tag(&self) -> u8 {
+    match self {
+      Self::AppendEntries(_) => 0,
+      Self::Vote(_) => 1,
+      Self::InstallSnapshot(_) => 2,
+      Self::TimeoutNow(_) => 3,
+      Self::Heartbeat(_) => 4,
+    }
+  }
+}
+
+impl<I: Id, A: Address> From<AppendEntriesRequest<I, A>> for RequestKind<I, A> {
+  fn from(req: AppendEntriesRequest<I, A>) -> Self {
     Self::AppendEntries(req)
   }
 }
 
-impl<Id, Address> From<VoteRequest<Id, Address>> for RequestKind<Id, Address> {
-  fn from(req: VoteRequest<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<VoteRequest<I, A>> for RequestKind<I, A> {
+  fn from(req: VoteRequest<I, A>) -> Self {
     Self::Vote(req)
   }
 }
 
-impl<Id, Address> From<InstallSnapshotRequest<Id, Address>> for RequestKind<Id, Address> {
-  fn from(req: InstallSnapshotRequest<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<InstallSnapshotRequest<I, A>> for RequestKind<I, A> {
+  fn from(req: InstallSnapshotRequest<I, A>) -> Self {
     Self::InstallSnapshot(req)
   }
 }
 
-impl<Id, Address> From<TimeoutNowRequest<Id, Address>> for RequestKind<Id, Address> {
-  fn from(req: TimeoutNowRequest<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<TimeoutNowRequest<I, A>> for RequestKind<I, A> {
+  fn from(req: TimeoutNowRequest<I, A>) -> Self {
     Self::TimeoutNow(req)
   }
 }
 
-impl<Id, Address> From<HeartbeatRequest<Id, Address>> for RequestKind<Id, Address> {
-  fn from(req: HeartbeatRequest<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<HeartbeatRequest<I, A>> for RequestKind<I, A> {
+  fn from(req: HeartbeatRequest<I, A>) -> Self {
     Self::Heartbeat(req)
   }
 }
 
 #[derive(Debug)]
-pub struct Request<Id, Address> {
+pub struct Request<I: Id, A: Address> {
   pub(crate) protocol_version: ProtocolVersion,
-  pub(crate) kind: RequestKind<Id, Address>,
-  pub(crate) tx: oneshot::Sender<Response<Id, Address>>,
+  pub(crate) kind: RequestKind<I, A>,
+  pub(crate) tx: oneshot::Sender<Response<I, A>>,
 }
 
-impl<Id, Address> Request<Id, Address> {
+impl<I: Id, A: Address> Request<I, A> {
   // pub const fn append_entries(version: ProtocolVersion, req: AppendEntriesRequest) -> Self {
   //   Self {
   //     protocol_version: version,
@@ -452,7 +467,8 @@ impl<Id, Address> Request<Id, Address> {
   //   }
   // }
 
-  pub const fn header(&self) -> &Header<Id, Address> {
+  /// Returns the header of the request
+  pub const fn header(&self) -> &Header<I, A> {
     match &self.kind {
       RequestKind::AppendEntries(req) => req.header(),
       RequestKind::Vote(req) => req.header(),
@@ -462,18 +478,25 @@ impl<Id, Address> Request<Id, Address> {
     }
   }
 
+  /// Returns the protocol version of the request.
+  #[inline]
+  pub const fn protocol_version(&self) -> ProtocolVersion {
+    self.protocol_version
+  }
+
+  /// Returns the kind of the request.
+  #[inline]
+  pub const fn kind(&self) -> &RequestKind<I, A> {
+    &self.kind
+  }
+
   /// Respond to the request, if the remote half is closed
   /// then the response will be returned back as an error.
-  pub fn respond(self, resp: Response<Id, Address>) -> Result<(), Response<Id, Address>> {
+  pub fn respond(self, resp: Response<I, A>) -> Result<(), Response<I, A>> {
     self.tx.send(resp)
   }
 
-  pub(crate) fn into_components(
-    self,
-  ) -> (
-    oneshot::Sender<Response<Id, Address>>,
-    RequestKind<Id, Address>,
-  ) {
+  pub(crate) fn into_components(self) -> (oneshot::Sender<Response<I, A>>, RequestKind<I, A>) {
     (self.tx, self.kind)
   }
 
@@ -496,83 +519,95 @@ impl<Id, Address> Request<Id, Address> {
   // }
 }
 
-pub(super) fn decode<T>(protocol_version: ProtocolVersion, src: &[u8]) -> io::Result<T>
-where
-  T: serde::de::DeserializeOwned,
-{
-  match protocol_version {
-    ProtocolVersion::V1 => {
-      rmp_serde::decode::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-    }
-  }
-}
+// pub(super) fn decode<T>(protocol_version: ProtocolVersion, src: &[u8]) -> io::Result<T>
+// where
+//   T: serde::de::DeserializeOwned,
+// {
+//   match protocol_version {
+//     ProtocolVersion::V1 => {
+//       rmp_serde::decode::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+//     }
+//   }
+// }
 
 /// Response from the Raft node
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum ResponseKind<Id, Address> {
-  AppendEntries(AppendEntriesResponse<Id, Address>),
-  Vote(VoteResponse<Id, Address>),
-  InstallSnapshot(InstallSnapshotResponse<Id, Address>),
-  TimeoutNow(TimeoutNowResponse<Id, Address>),
-  Heartbeat(HeartbeatResponse<Id, Address>),
-  Error(ErrorResponse<Id, Address>),
+pub enum ResponseKind<I, A> {
+  AppendEntries(AppendEntriesResponse<I, A>),
+  Vote(VoteResponse<I, A>),
+  InstallSnapshot(InstallSnapshotResponse<I, A>),
+  TimeoutNow(TimeoutNowResponse<I, A>),
+  Heartbeat(HeartbeatResponse<I, A>),
+  Error(ErrorResponse<I, A>),
 }
 
-impl<Id, Address> From<AppendEntriesResponse<Id, Address>> for ResponseKind<Id, Address> {
-  fn from(resp: AppendEntriesResponse<Id, Address>) -> Self {
+impl<I: Id, A: Address> ResponseKind<I, A> {
+  /// Returns the tag of this request kind for encoding/decoding.
+  #[inline]
+  pub const fn tag(&self) -> u8 {
+    match self {
+      Self::AppendEntries(_) => 0,
+      Self::Vote(_) => 1,
+      Self::InstallSnapshot(_) => 2,
+      Self::TimeoutNow(_) => 3,
+      Self::Heartbeat(_) => 4,
+      Self::Error(_) => 255,
+    }
+  }
+}
+
+impl<I: Id, A: Address> From<AppendEntriesResponse<I, A>> for ResponseKind<I, A> {
+  fn from(resp: AppendEntriesResponse<I, A>) -> Self {
     Self::AppendEntries(resp)
   }
 }
 
-impl<Id, Address> From<VoteResponse<Id, Address>> for ResponseKind<Id, Address> {
-  fn from(resp: VoteResponse<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<VoteResponse<I, A>> for ResponseKind<I, A> {
+  fn from(resp: VoteResponse<I, A>) -> Self {
     Self::Vote(resp)
   }
 }
 
-impl<Id, Address> From<InstallSnapshotResponse<Id, Address>> for ResponseKind<Id, Address> {
-  fn from(resp: InstallSnapshotResponse<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<InstallSnapshotResponse<I, A>> for ResponseKind<I, A> {
+  fn from(resp: InstallSnapshotResponse<I, A>) -> Self {
     Self::InstallSnapshot(resp)
   }
 }
 
-impl<Id, Address> From<TimeoutNowResponse<Id, Address>> for ResponseKind<Id, Address> {
-  fn from(resp: TimeoutNowResponse<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<TimeoutNowResponse<I, A>> for ResponseKind<I, A> {
+  fn from(resp: TimeoutNowResponse<I, A>) -> Self {
     Self::TimeoutNow(resp)
   }
 }
 
-impl<Id, Address> From<HeartbeatResponse<Id, Address>> for ResponseKind<Id, Address> {
-  fn from(resp: HeartbeatResponse<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<HeartbeatResponse<I, A>> for ResponseKind<I, A> {
+  fn from(resp: HeartbeatResponse<I, A>) -> Self {
     Self::Heartbeat(resp)
   }
 }
 
-impl<Id, Address> From<ErrorResponse<Id, Address>> for ResponseKind<Id, Address> {
-  fn from(resp: ErrorResponse<Id, Address>) -> Self {
+impl<I: Id, A: Address> From<ErrorResponse<I, A>> for ResponseKind<I, A> {
+  fn from(resp: ErrorResponse<I, A>) -> Self {
     Self::Error(resp)
   }
 }
 
 #[derive(Debug, Clone)]
-pub struct Response<Id, Address> {
+pub struct Response<I, A> {
   protocol_version: ProtocolVersion,
-  kind: ResponseKind<Id, Address>,
+  kind: ResponseKind<I, A>,
 }
 
-impl<Id, Address> Response<Id, Address> {
-  pub const fn append_entries(
-    version: ProtocolVersion,
-    resp: AppendEntriesResponse<Id, Address>,
-  ) -> Self {
+impl<I: Id, A: Address> Response<I, A> {
+  pub const fn append_entries(version: ProtocolVersion, resp: AppendEntriesResponse<I, A>) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::AppendEntries(resp),
     }
   }
 
-  pub const fn vote(version: ProtocolVersion, resp: VoteResponse<Id, Address>) -> Self {
+  pub const fn vote(version: ProtocolVersion, resp: VoteResponse<I, A>) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::Vote(resp),
@@ -581,7 +616,7 @@ impl<Id, Address> Response<Id, Address> {
 
   pub const fn install_snapshot(
     version: ProtocolVersion,
-    resp: InstallSnapshotResponse<Id, Address>,
+    resp: InstallSnapshotResponse<I, A>,
   ) -> Self {
     Self {
       protocol_version: version,
@@ -589,24 +624,21 @@ impl<Id, Address> Response<Id, Address> {
     }
   }
 
-  pub const fn timeout_now(
-    version: ProtocolVersion,
-    resp: TimeoutNowResponse<Id, Address>,
-  ) -> Self {
+  pub const fn timeout_now(version: ProtocolVersion, resp: TimeoutNowResponse<I, A>) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::TimeoutNow(resp),
     }
   }
 
-  pub const fn heartbeat(version: ProtocolVersion, header: Header<Id, Address>) -> Self {
+  pub const fn heartbeat(version: ProtocolVersion, header: Header<I, A>) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::Heartbeat(HeartbeatResponse { header }),
     }
   }
 
-  pub const fn error(version: ProtocolVersion, header: Header<Id, Address>, error: String) -> Self {
+  pub const fn error(version: ProtocolVersion, header: Header<I, A>, error: String) -> Self {
     Self {
       protocol_version: version,
       kind: ResponseKind::Error(ErrorResponse { header, error }),
@@ -614,7 +646,7 @@ impl<Id, Address> Response<Id, Address> {
   }
 
   /// Returns the header of the response.
-  pub const fn header(&self) -> &Header<Id, Address> {
+  pub const fn header(&self) -> &Header<I, A> {
     match &self.kind {
       ResponseKind::AppendEntries(res) => res.header(),
       ResponseKind::Vote(res) => res.header(),
@@ -623,6 +655,12 @@ impl<Id, Address> Response<Id, Address> {
       ResponseKind::Heartbeat(res) => res.header(),
       ResponseKind::Error(res) => res.header(),
     }
+  }
+
+  /// Returns the kind of the response.
+  #[inline]
+  pub const fn kind(&self) -> &ResponseKind<I, A> {
+    &self.kind
   }
 
   // pub fn encode(&self) -> io::Result<Vec<u8>> {
@@ -661,19 +699,19 @@ impl<Id, Address> Response<Id, Address> {
 // /// A future for getting the corresponding response from the Raft.
 // #[pin_project::pin_project]
 // #[repr(transparent)]
-// pub(super) struct CommandHandle<Id, Address> {
+// pub(super) struct CommandHandle<I, A> {
 //   #[pin]
-//   rx: oneshot::Receiver<Response<Id, Address>>,
+//   rx: oneshot::Receiver<Response<I, A>>,
 // }
 
-// impl<Id, Address> CommandHandle<Id, Address> {
-//   pub(crate) fn new(rx: oneshot::Receiver<Response<Id, Address>>) -> Self {
+// impl<I: Id, A: Address> CommandHandle<I, A> {
+//   pub(crate) fn new(rx: oneshot::Receiver<Response<I, A>>) -> Self {
 //     Self { rx }
 //   }
 // }
 
-// impl<Id, Address> Future for CommandHandle<Id, Address> {
-//   type Output = Result<Response<Id, Address>, CommandHandleError>;
+// impl<I: Id, A: Address> Future for CommandHandle<I, A> {
+//   type Output = Result<Response<I, A>, CommandHandleError>;
 
 //   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
 //     // Using Pin::as_mut to get a Pin<&mut Receiver>.
@@ -720,12 +758,12 @@ impl<Id, Address> Response<Id, Address> {
 /// from remote nodes
 #[pin_project::pin_project]
 #[derive(Debug)]
-pub struct RequestConsumer<Id, Address> {
+pub struct RequestConsumer<I: Id, A: Address> {
   #[pin]
-  rx: async_channel::Receiver<Request<Id, Address>>,
+  rx: async_channel::Receiver<Request<I, A>>,
 }
 
-impl<Id, Address> Clone for RequestConsumer<Id, Address> {
+impl<I: Id, A: Address> Clone for RequestConsumer<I, A> {
   fn clone(&self) -> Self {
     Self {
       rx: self.rx.clone(),
@@ -733,20 +771,20 @@ impl<Id, Address> Clone for RequestConsumer<Id, Address> {
   }
 }
 
-impl<Id, Address> Stream for RequestConsumer<Id, Address> {
-  type Item = <async_channel::Receiver<Request<Id, Address>> as Stream>::Item;
+impl<I: Id, A: Address> Stream for RequestConsumer<I, A> {
+  type Item = <async_channel::Receiver<Request<I, A>> as Stream>::Item;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    <async_channel::Receiver<Request<Id, Address>> as Stream>::poll_next(self.project().rx, cx)
+    <async_channel::Receiver<Request<I, A>> as Stream>::poll_next(self.project().rx, cx)
   }
 }
 
 /// A producer for [`Request`]s
-pub struct RequestProducer<Id, Address> {
-  tx: async_channel::Sender<Request<Id, Address>>,
+pub struct RequestProducer<I: Id, A: Address> {
+  tx: async_channel::Sender<Request<I, A>>,
 }
 
-impl<Id, Address> Clone for RequestProducer<Id, Address> {
+impl<I: Id, A: Address> Clone for RequestProducer<I, A> {
   fn clone(&self) -> Self {
     Self {
       tx: self.tx.clone(),
@@ -754,18 +792,18 @@ impl<Id, Address> Clone for RequestProducer<Id, Address> {
   }
 }
 
-impl<Id, Address> RequestProducer<Id, Address> {
+impl<I: Id, A: Address> RequestProducer<I, A> {
   /// Produce a command for processing
   pub async fn send(
     &self,
-    command: Request<Id, Address>,
-  ) -> Result<(), async_channel::SendError<Request<Id, Address>>> {
+    command: Request<I, A>,
+  ) -> Result<(), async_channel::SendError<Request<I, A>>> {
     self.tx.send(command).await
   }
 }
 
 /// Returns unbounded command producer and command consumer.
-pub fn command<Id, Address>() -> (RequestProducer<Id, Address>, RequestConsumer<Id, Address>) {
+pub fn command<I: Id, A: Address>() -> (RequestProducer<I, A>, RequestConsumer<I, A>) {
   let (tx, rx) = async_channel::unbounded();
   (RequestProducer { tx }, RequestConsumer { rx })
 }

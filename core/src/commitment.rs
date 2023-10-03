@@ -4,27 +4,32 @@ use async_channel::Sender;
 use async_lock::Mutex;
 use std::collections::HashMap;
 
-use crate::membership::{Membership, ServerId};
+use crate::{
+  membership::Membership,
+  transport::{Address, Id},
+};
 
-struct Inner {
+struct Inner<I: Id, A: Address> {
   /// notified when commit_index increases
   commit_tx: Sender<()>,
   /// voter ID to log index: the server stores up through this log entry
-  match_indexes: HashMap<ServerId, u64>,
+  match_indexes: HashMap<I, u64>,
   /// a quorum stores up through this log entry. monotonically increases.
   commit_index: u64,
   /// the first index of this leader's term: this needs to be replicated to a
   /// majority of the cluster before this leader may mark anything committed
   /// (per Raft's commitment rule)
   start_index: u64,
+
+  _marker: std::marker::PhantomData<A>,
 }
 
-impl Inner {
+impl<I: Id, A: Address> Inner<I, A> {
   /// Called once a server completes writing entries to disk: either the
   /// leader has written the new entry or a follower has replied to an
   /// `append_entries` RPC. The given server's disk agrees with this server's log up
   /// through the given index.
-  async fn match_index(&mut self, id: &ServerId, match_index: u64) {
+  async fn match_index(&mut self, id: &I, match_index: u64) {
     match self.match_indexes.get_mut(id) {
       Some(prev) if match_index > *prev => {
         *prev = match_index;
@@ -37,7 +42,7 @@ impl Inner {
   /// Called when a new cluster membership is created: it will be
   /// used to determine commitment from now on. 'membership' is the servers in
   /// the cluster.
-  async fn set_membership(&mut self, membership: &Membership) {
+  async fn set_membership(&mut self, membership: &Membership<I, A>) {
     let mut old_match_indexes = core::mem::replace(
       &mut self.match_indexes,
       HashMap::with_capacity(membership.len()),
@@ -79,16 +84,20 @@ impl Inner {
 /// Used to advance the leader's commit index. The leader and
 /// replication task reports in newly written entries with match(), and
 /// this notifies on commit channel when the commit index has advanced.
-pub(crate) struct Commitment(Arc<Mutex<Inner>>);
+pub(crate) struct Commitment<I: Id, A: Address>(Arc<Mutex<Inner<I, A>>>);
 
-impl Commitment {
+impl<I: Id, A: Address> Commitment<I, A> {
   /// Returns a [`Commitment`] that notifies the provided
   /// channel when log entries have been committed. A new [`Commitment`] is
   /// created each time this server becomes leader for a particular term.
   /// `membership` is the servers in the cluster.
   /// `start_index` is the first index created in this term (see
   // its description above).
-  pub(crate) fn new(commit_tx: Sender<()>, membership: &Membership, start_index: u64) -> Self {
+  pub(crate) fn new(
+    commit_tx: Sender<()>,
+    membership: &Membership<I, A>,
+    start_index: u64,
+  ) -> Self {
     let mut match_indexes = HashMap::with_capacity(membership.len());
     for (id, (_, suffrage)) in membership.iter() {
       if suffrage.is_voter() {
@@ -100,10 +109,11 @@ impl Commitment {
       match_indexes,
       commit_index: 0,
       start_index,
+      _marker: Default::default(),
     })))
   }
 
-  pub(crate) async fn set_membership(&self, membership: &Membership) {
+  pub(crate) async fn set_membership(&self, membership: &Membership<I, A>) {
     self.0.lock().await.set_membership(membership).await;
   }
 
@@ -112,7 +122,7 @@ impl Commitment {
     self.0.lock().await.commit_index
   }
 
-  pub(crate) async fn match_index(&self, server: &ServerId, index: u64) {
+  pub(crate) async fn match_index(&self, server: &I, index: u64) {
     self.0.lock().await.match_index(server, index).await;
   }
 }

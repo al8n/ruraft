@@ -5,3 +5,11 @@
 #![cfg_attr(docsrs, allow(unused_attributes))]
 
 pub mod transport;
+
+pub mod storage;
+
+#[cfg(any(feature = "test", test))]
+pub mod tests {
+  pub use super::storage::tests::*;
+  pub use ruraft_core::tests::*;
+}

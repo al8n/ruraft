@@ -1,9 +1,6 @@
 #![allow(missing_docs)]
 
-use std::{mem, time::Duration};
-
-use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
+use std::time::Duration;
 
 /// The version of the protocol (which includes RPC messages
 /// as well as Raft-specific log entries) that this server can _understand_. Use
@@ -49,6 +46,34 @@ impl SnapshotVersion {
   }
 }
 
+#[derive(Debug)]
+pub struct UnknownSnapshotVersion(u8);
+
+impl UnknownSnapshotVersion {
+  #[inline]
+  pub const fn version(&self) -> u8 {
+    self.0
+  }
+}
+
+impl core::fmt::Display for UnknownSnapshotVersion {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "unknown snapshot version {}", self.0)
+  }
+}
+
+impl TryFrom<u8> for SnapshotVersion {
+  type Error = UnknownSnapshotVersion;
+
+  #[inline]
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match value {
+      1 => Ok(SnapshotVersion::V1),
+      val => Err(UnknownSnapshotVersion(val)),
+    }
+  }
+}
+
 /// Provides any necessary configuration for the Raft server.
 #[viewit::viewit(
   vis_all = "pub(crate)",
@@ -68,19 +93,19 @@ pub struct Options {
   // can _understand_.
   protocol_version: ProtocolVersion,
 
-  #[serde(with = "humantime_serde")]
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   heartbeat_timeout: Duration,
 
   /// Specifies the time in candidate state without contact
   /// from a leader before we attempt an election.
-  #[serde(with = "humantime_serde")]
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   election_timeout: Duration,
 
   /// Specifies the time without an Apply operation before the
   /// leader sends an AppendEntry RPC to followers, to ensure a timely commit of
   /// log entries.
   /// Due to random staggering, may be delayed as much as 2x this value.
-  #[serde(with = "humantime_serde")]
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   commit_timeout: Duration,
 
   /// Controls the maximum number of append entries
@@ -113,7 +138,7 @@ pub struct Options {
   /// the entire cluster from performing a snapshot at once. The value passed
   /// here is the initial setting used. This can be tuned during operation using
   /// `reload_config`.
-  #[serde(with = "humantime_serde")]
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   snapshot_interval: Duration,
 
   /// Controls how many outstanding logs there must be before
@@ -126,7 +151,7 @@ pub struct Options {
   /// for being the leader without being able to contact a quorum
   /// of nodes. If we reach this interval without contact, we will
   /// step down as leader.
-  #[serde(with = "humantime_serde")]
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   leader_lease_timeout: Duration,
 
   /// Controls if raft will restore a snapshot to the
@@ -207,7 +232,8 @@ impl DurationNoUninit {
   }
 }
 
-impl Serialize for DurationNoUninit {
+#[cfg(feature = "serde")]
+impl serde::Serialize for DurationNoUninit {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: serde::Serializer,
@@ -216,7 +242,8 @@ impl Serialize for DurationNoUninit {
   }
 }
 
-impl<'de> Deserialize<'de> for DurationNoUninit {
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for DurationNoUninit {
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where
     D: serde::Deserializer<'de>,
