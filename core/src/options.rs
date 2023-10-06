@@ -46,6 +46,34 @@ impl SnapshotVersion {
   }
 }
 
+#[derive(Debug)]
+pub struct UnknownSnapshotVersion(u8);
+
+impl UnknownSnapshotVersion {
+  #[inline]
+  pub const fn version(&self) -> u8 {
+    self.0
+  }
+}
+
+impl core::fmt::Display for UnknownSnapshotVersion {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "unknown snapshot version {}", self.0)
+  }
+}
+
+impl TryFrom<u8> for SnapshotVersion {
+  type Error = UnknownSnapshotVersion;
+
+  #[inline]
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match value {
+      1 => Ok(SnapshotVersion::V1),
+      val => Err(UnknownSnapshotVersion(val)),
+    }
+  }
+}
+
 /// Provides any necessary configuration for the Raft server.
 #[viewit::viewit(
   vis_all = "pub(crate)",

@@ -31,8 +31,11 @@ pub struct MemorySnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
 }
 
 #[async_trait::async_trait]
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotStorage
-  for MemorySnapshotStorage<Id, Address, R>
+impl<Id, Address, R> SnapshotStorage for MemorySnapshotStorage<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+  R: Runtime,
 {
   type Error = io::Error;
   type Sink = MemorySnapshotSink<Self::NodeId, Self::NodeAddress, R>;
@@ -69,12 +72,13 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotStorage
     }
 
     let mut lock = self.latest.write().await;
+    let id = SnapshotId::new(index, term);
 
     self.has_snapshot.store(true, Ordering::Release);
     *lock = MemorySnapshot {
       meta: SnapshotMeta {
         version,
-        id: SnapshotId::new(index, term),
+        timestamp: id.timestamp(),
         membership,
         membership_index,
         size: 0,
@@ -168,8 +172,11 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncWrite
 }
 
 #[async_trait::async_trait]
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSink
-  for MemorySnapshotSink<Id, Address, R>
+impl<Id, Address, R> SnapshotSink for MemorySnapshotSink<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+  R: Runtime,
 {
   type Runtime = R;
 

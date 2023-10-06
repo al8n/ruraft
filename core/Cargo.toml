@@ -24,6 +24,7 @@ bytemuck = { version = "1", features = ["derive"] }
 
 crossbeam-skiplist = "0.1"
 futures = { workspace = true }
+nodecraft = { workspace = true, features = ["resolver", "agnostic"] }
 humantime = "2.1"
 indexmap = { version = "2", features = ["serde"] }
 once_cell = "1.18"

@@ -28,9 +28,6 @@ pub mod utils;
 
 mod commitment;
 
-mod transformable;
-pub use transformable::*;
-
 /// All unit test fns are exported in the `tests` module.
 /// This module is used for users want to use other async runtime,
 /// and want to use the test if ruraft also works with their runtime.

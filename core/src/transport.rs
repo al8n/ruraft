@@ -1,37 +1,17 @@
-use std::net::SocketAddr;
-
 use agnostic::Runtime;
 use futures::AsyncRead;
-
-mod address;
-pub use address::*;
 
 mod command;
 pub use command::*;
 
-mod id;
-pub use id::*;
-
-/// Used to resolve a [`SocketAddr`] from a node address.
-#[async_trait::async_trait]
-pub trait NodeAddressResolver: Send + Sync + 'static {
-  /// The address type used to identify nodes.
-  type NodeAddress: NodeAddress;
-  /// The error type returned by the resolver.
-  type Error: std::error::Error + Send + Sync + 'static;
-  /// The runtime used by the transport.
-  type Runtime: Runtime;
-
-  /// Resolves the given node address to a [`SocketAddr`].
-  async fn resolve(&self, address: &Self::NodeAddress) -> Result<SocketAddr, Self::Error>;
-}
+pub use nodecraft::{resolver::NodeAddressResolver, NodeAddress, NodeId, Transformable};
 
 /// Used to encode [`Request`] and [`Response`] to bytes for transmission.
 pub trait Encoder: Send + Sync + 'static {
   /// The error type returned by the encoder.
   type Error: std::error::Error
-    + From<<Self::NodeId as NodeId>::Error>
-    + From<<Self::NodeAddress as NodeAddress>::Error>
+    + From<<Self::NodeId as Transformable>::Error>
+    + From<<Self::NodeAddress as Transformable>::Error>
     + Send
     + Sync
     + 'static;
@@ -58,8 +38,8 @@ pub trait Encoder: Send + Sync + 'static {
 pub trait Decoder: Send + Sync + 'static {
   /// The error type returned by the encoder.
   type Error: std::error::Error
-    + From<<Self::NodeId as NodeId>::Error>
-    + From<<Self::NodeAddress as NodeAddress>::Error>
+    + From<<Self::NodeId as Transformable>::Error>
+    + From<<Self::NodeAddress as Transformable>::Error>
     + Send
     + Sync
     + 'static;

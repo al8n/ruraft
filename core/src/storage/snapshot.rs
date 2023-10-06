@@ -4,78 +4,8 @@ use crate::{
   transport::{NodeAddress, NodeId},
 };
 
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  getters(vis_all = "pub"),
-  setters(vis_all = "pub", style = "ref")
-)]
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SnapshotId {
-  index: u64,
-  term: u64,
-  timestamp: u64,
-}
-
-impl SnapshotId {
-  #[inline]
-  pub fn new(index: u64, term: u64) -> Self {
-    let now = std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_millis() as u64;
-
-    Self {
-      index,
-      term,
-      timestamp: now,
-    }
-  }
-}
-
-/// Metadata of a snapshot.
-#[viewit::viewit(getters(vis_all = "pub"), setters(vis_all = "pub", style = "ref"))]
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SnapshotMeta<Id: NodeId, Address: NodeAddress> {
-  /// The version number of the snapshot metadata. This does not cover
-  /// the application's data in the snapshot, that should be versioned
-  /// separately.
-  version: SnapshotVersion,
-
-  /// id is opaque to the store, and is used for opening.
-  id: SnapshotId,
-
-  /// The index when the snapshot was taken.
-  index: u64,
-  /// The term when the snapshot was taken.
-  term: u64,
-
-  /// Membership at the time of the snapshot.
-  #[viewit(getter(style = "ref", const))]
-  membership: Membership<Id, Address>,
-  /// The index of the membership that was taken
-  membership_index: u64,
-
-  /// The size of the snapshot, in bytes.
-  size: u64,
-}
-
-impl<Id: NodeId, Address: NodeAddress> Default for SnapshotMeta<Id, Address> {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl<Id: NodeId, Address: NodeAddress> SnapshotMeta<Id, Address> {
-  /// Create a snapshot meta.
-  #[inline]
-  pub fn new() -> Self {
-    Self {
-      ..Default::default()
-    }
-  }
-}
+mod meta;
+pub use meta::*;
 
 /// Used to allow for flexible implementations
 /// of snapshot storage and retrieval. For example, a client could implement
@@ -121,7 +51,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   /// It should return then in descending order, with the highest index first.
   async fn list(&self) -> Result<Vec<SnapshotMeta<Self::NodeId, Self::NodeAddress>>, Self::Error>;
 
-  /// Open takes a snapshot ID and provides a ReadCloser.
+  /// Open takes a snapshot ID and provides a reader.
   async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error>;
 }
 

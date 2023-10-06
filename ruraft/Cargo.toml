@@ -41,6 +41,7 @@ bytes = { workspace = true }
 crc32fast = "1.3"
 crossbeam-skiplist = "0.1"
 futures = { workspace = true }
+nodecraft = { workspace = true, features = ["async", "resolver", "dns"] }
 once_cell = "1.18"
 ruraft-core = { path = "../core" }
 rand = "0.8"

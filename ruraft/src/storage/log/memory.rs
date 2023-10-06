@@ -59,7 +59,12 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> MemoryLogStorage<Id, Address,
 }
 
 #[async_trait::async_trait]
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> LogStorage for MemoryLogStorage<Id, Address, R> {
+impl<Id, Address, R> LogStorage for MemoryLogStorage<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+  R: Runtime,
+{
   /// The error type returned by the log storage.
   type Error = Infallible;
   /// The async runtime used by the storage.

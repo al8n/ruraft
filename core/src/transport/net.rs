@@ -25,9 +25,6 @@ use crate::options::ProtocolVersion;
 
 use super::*;
 
-mod resolver;
-pub use resolver::*;
-
 /// The default TimeoutScale in a [`NetworkTransport`].
 pub const DEFAULT_TIMEOUT_SCALE: usize = 256 * 1024; // 256KB
 

@@ -2,6 +2,7 @@ use std::{
   fs::{self, File},
   hash::Hasher,
   io::{self, BufReader, BufWriter, Read, Seek, Write},
+  mem,
   path::{Path, PathBuf},
   pin::Pin,
   sync::Arc,
@@ -9,6 +10,7 @@ use std::{
 };
 
 use agnostic::Runtime;
+use nodecraft::Transformable;
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
@@ -210,13 +212,17 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotStorage<Id, Addre
     let mut fh = BufReader::new(File::open(metapath)?);
 
     // Read the meta data
-    serde_json::from_reader(&mut fh).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    <FileSnapshotMeta<Id, Address> as Transformable>::decode_from_reader(&mut fh)
+      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
 }
 
 #[async_trait::async_trait]
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotStorage
-  for FileSnapshotStorage<Id, Address, R>
+impl<Id, Address, R> SnapshotStorage for FileSnapshotStorage<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+  R: Runtime,
 {
   type Error = FileSnapshotStorageError;
   type Sink = FileSnapshotSink<Self::NodeId, Self::NodeAddress, R>;
@@ -281,7 +287,7 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotStorage
     let meta = FileSnapshotMeta {
       meta: SnapshotMeta {
         version,
-        id,
+        timestamp: id.timestamp(),
         index,
         term,
         membership,
@@ -385,8 +391,9 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotStorage
 
 /// Stored on disk. We also put a CRC
 /// on disk so that we can verify the snapshot.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct FileSnapshotMeta<Id: NodeId, Address: NodeAddress> {
-  #[serde(flatten)]
+  #[cfg_attr(feature = "serde", serde(flatten))]
   meta: SnapshotMeta<Id, Address>,
   crc: u64,
 }
@@ -530,10 +537,9 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotSink<Id, Address,
   ) -> io::Result<()> {
     // Open the meta file
     let metapath = dir.as_ref().join(META_FILE_PATH.as_path());
-    let mut fh = BufWriter::new(File::create(metapath)?);
+    let mut fh = BufWriter::with_capacity(meta.encoded_len(), File::create(metapath)?);
 
-    serde_json::to_writer(&mut fh, meta)?;
-
+    meta.encode_to_writer(&mut fh)?;
     fh.flush()?;
 
     if !no_sync {
@@ -545,8 +551,11 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotSink<Id, Address,
 }
 
 #[async_trait::async_trait]
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSink
-  for FileSnapshotSink<Id, Address, R>
+impl<Id, Address, R> SnapshotSink for FileSnapshotSink<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+  R: Runtime,
 {
   type Runtime = R;
 
@@ -570,6 +579,93 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSink
         e
       })
       .and_then(|_| fs::remove_dir_all(&self.dir))
+  }
+}
+
+const CRC_SIZE: usize = mem::size_of::<u64>();
+
+#[async_trait::async_trait]
+impl<Id, Address> Transformable for FileSnapshotMeta<Id, Address>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+{
+  type Error = <SnapshotMeta<Id, Address> as Transformable>::Error;
+
+  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    let encoded_len = self.encoded_len();
+    if dst.len() < encoded_len {
+      return Err(Self::Error::EncodeBufferTooSmall);
+    }
+
+    self.meta.encode(dst)?;
+    dst[encoded_len..encoded_len + CRC_SIZE].copy_from_slice(&self.crc.to_be_bytes());
+
+    Ok(())
+  }
+
+  fn encode_to_writer<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+    self.meta.encode_to_writer(writer)?;
+    writer.write_all(&self.crc.to_be_bytes())
+  }
+
+  async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
+    &self,
+    writer: &mut W,
+  ) -> std::io::Result<()> {
+    use futures::AsyncWriteExt;
+
+    self.meta.encode_to_async_writer(writer).await?;
+    writer.write_all(&self.crc.to_be_bytes()).await
+  }
+
+  fn encoded_len(&self) -> usize {
+    self.meta.encoded_len() + CRC_SIZE
+  }
+
+  fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
+  where
+    Self: Sized,
+  {
+    <SnapshotMeta<Id, Address> as Transformable>::decode(src).and_then(|(readed, meta)| {
+      if src.len() < readed + CRC_SIZE {
+        return Err(Self::Error::Corrupted);
+      }
+      let crc = u64::from_be_bytes(src[readed..readed + CRC_SIZE].try_into().unwrap());
+      Ok((readed + CRC_SIZE, Self { meta, crc }))
+    })
+  }
+
+  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    <SnapshotMeta<Id, Address> as Transformable>::decode_from_reader(reader).and_then(
+      |(readed, meta)| {
+        let mut crc_buf = [0u8; CRC_SIZE];
+        reader.read_exact(&mut crc_buf)?;
+        let crc = u64::from_be_bytes(crc_buf);
+        Ok((readed + CRC_SIZE, Self { meta, crc }))
+      },
+    )
+  }
+
+  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
+    reader: &mut R,
+  ) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    use futures::AsyncReadExt;
+
+    <SnapshotMeta<Id, Address> as Transformable>::decode_from_async_reader(reader)
+      .await
+      .and_then(|(readed, meta)| {
+        let mut crc_buf = [0u8; CRC_SIZE];
+        reader.read_exact(&mut crc_buf)?;
+        let crc = u64::from_be_bytes(crc_buf);
+        Ok((readed + CRC_SIZE, Self { meta, crc }))
+      })
   }
 }
 
@@ -733,7 +829,9 @@ pub(crate) mod tests {
     perm.set_mode(0o000);
     fs::set_permissions(&dir2, perm).unwrap();
 
-    let Err(err) = FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir2, 3)).await
+    let Err(err) =
+      FileSnapshotStorage::<String, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
+        .await
     else {
       panic!("should fail to use dir with bad perms");
     };
