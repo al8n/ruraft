@@ -13,6 +13,3 @@ pub mod tests {
   pub use super::storage::tests::*;
   pub use ruraft_core::tests::*;
 }
-
-#[test]
-fn test_() {}

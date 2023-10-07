@@ -37,6 +37,12 @@ impl SnapshotId {
   }
 }
 
+impl<Id: NodeId, Address: NodeAddress> PartialEq<SnapshotId> for SnapshotMeta<Id, Address> {
+  fn eq(&self, other: &SnapshotId) -> bool {
+    self.index == other.index && self.term == other.term && self.timestamp == other.timestamp
+  }
+}
+
 /// Metadata of a snapshot.
 #[viewit::viewit(
   getters(vis_all = "pub"),
@@ -81,7 +87,22 @@ impl<Id: NodeId, Address: NodeAddress> SnapshotMeta<Id, Address> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64,
-      ..Default::default()
+      version: SnapshotVersion::V1,
+      term: 0,
+      index: 0,
+      size: 0,
+      membership_index: 0,
+      membership: Default::default(),
+    }
+  }
+
+  /// Returns the id of the snapshot.
+  #[inline]
+  pub const fn id(&self) -> SnapshotId {
+    SnapshotId {
+      index: self.index,
+      term: self.term,
+      timestamp: self.timestamp,
     }
   }
 }

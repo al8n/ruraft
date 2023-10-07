@@ -33,8 +33,8 @@ pub struct MemorySnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
 #[async_trait::async_trait]
 impl<Id, Address, R> SnapshotStorage for MemorySnapshotStorage<Id, Address, R>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Error = io::Error;
@@ -89,7 +89,7 @@ where
     };
 
     Ok(MemorySnapshotSink {
-      id: lock.meta.id,
+      id: lock.meta.id(),
       snap: self.latest.clone(),
       _runtime: std::marker::PhantomData,
     })
@@ -106,13 +106,12 @@ where
 
   async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
     let lock = self.latest.read().await;
-    if lock.meta.id.ne(id) {
+    if lock.meta.id().ne(id) {
       return Err(io::Error::new(
         io::ErrorKind::NotFound,
         format!(
           "failed to open snapshot id (term: {}, index: {})",
-          lock.meta.id.term(),
-          lock.meta.id.index()
+          lock.meta.term, lock.meta.index
         ),
       ));
     }
@@ -152,8 +151,11 @@ pub struct MemorySnapshotSink<Id: NodeId, Address: NodeAddress, R: Runtime> {
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncWrite
-  for MemorySnapshotSink<Id, Address, R>
+impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncWrite for MemorySnapshotSink<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
 {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     let mut snap = futures::ready!(self.snap.write().poll_unpin(cx));
@@ -174,14 +176,14 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncWrite
 #[async_trait::async_trait]
 impl<Id, Address, R> SnapshotSink for MemorySnapshotSink<Id, Address, R>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Runtime = R;
 
-  fn id(&self) -> &SnapshotId {
-    &self.id
+  fn id(&self) -> SnapshotId {
+    self.id
   }
 
   async fn cancel(&mut self) -> std::io::Result<()> {
@@ -199,8 +201,11 @@ pub struct MemorySnapshotSource<Id: NodeId, Address: NodeAddress, R: Runtime> {
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncRead
-  for MemorySnapshotSource<Id, Address, R>
+impl<Id, Address, R> AsyncRead for MemorySnapshotSource<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
 {
   fn poll_read(
     mut self: Pin<&mut Self>,
@@ -216,6 +221,10 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncRead
 
 impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSource
   for MemorySnapshotSource<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
 {
   type Runtime = R;
   type NodeId = Id;
@@ -266,13 +275,13 @@ pub(super) mod tests {
 
     // check the latest
     let latest = snaps.first().unwrap();
-    assert_eq!(latest.id.index(), 10, "expected index 10");
-    assert_eq!(latest.id.term(), 3, "expected term 3");
+    assert_eq!(latest.index, 10, "expected index 10");
+    assert_eq!(latest.term, 3, "expected term 3");
     assert_eq!(latest.membership_index, 2, "expected membership index 2");
     assert_eq!(latest.size, 13, "expected size 13");
 
     // Read the snapshot
-    let mut source = snap.open(&latest.id).await.unwrap();
+    let mut source = snap.open(&latest.id()).await.unwrap();
     let mut buf = vec![];
     source.read_to_end(&mut buf).await.unwrap();
 
@@ -296,7 +305,7 @@ pub(super) mod tests {
     sink.close().await.unwrap();
 
     // Read the snapshot a first time
-    let mut source = snap.open(sink.id()).await.unwrap();
+    let mut source = snap.open(&sink.id()).await.unwrap();
 
     // Read out everything
     let mut buf = vec![];
@@ -306,7 +315,7 @@ pub(super) mod tests {
     assert_eq!(buf, b"data\n", "expected contents to match");
 
     // Read the snapshot a second time
-    let mut source = snap.open(sink.id()).await.unwrap();
+    let mut source = snap.open(&sink.id()).await.unwrap();
     // Read out everything
     let mut buf = vec![];
     source.read_to_end(&mut buf).await.unwrap();

@@ -62,7 +62,7 @@ pub trait SnapshotSink: futures::io::AsyncWrite {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
-  fn id(&self) -> &SnapshotId;
+  fn id(&self) -> SnapshotId;
 
   async fn cancel(&mut self) -> std::io::Result<()>;
 }

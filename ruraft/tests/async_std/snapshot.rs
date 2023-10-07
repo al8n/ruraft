@@ -1,6 +1,6 @@
 #[cfg(unix)]
-use ruraft_core::tests::test_file_snapshot_storage_bad_perm;
-use ruraft_core::tests::{
+use ruraft::tests::test_file_snapshot_storage_bad_perm;
+use ruraft::tests::{
   test_file_snapshot_storage_cancel_snapshot, test_file_snapshot_storage_create_snapshot,
   test_file_snapshot_storage_create_snapshot_missing_parent_dir,
   test_file_snapshot_storage_missing_parent_dir, test_file_snapshot_storage_ordering,

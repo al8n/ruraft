@@ -95,11 +95,11 @@ impl<R: AsyncRead, H: Hasher> AsyncChecksumableReader<R, H> {
 
 impl<R: AsyncRead, H: Hasher> AsyncRead for AsyncChecksumableReader<R, H> {
   fn poll_read(
-    mut self: Pin<&mut Self>,
+    self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &mut [u8],
   ) -> Poll<io::Result<usize>> {
-    let mut this = self.project();
+    let this = self.project();
     match this.reader.poll_read(cx, buf) {
       Poll::Ready(Ok(n)) => {
         this.hasher.write(&buf[..n]);

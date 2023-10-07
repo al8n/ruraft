@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use std::{mem, time::Duration};
+use std::time::Duration;
 
 /// The version of the protocol (which includes RPC messages
 /// as well as Raft-specific log entries) that this server can _understand_. Use

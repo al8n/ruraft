@@ -122,7 +122,12 @@ pub struct FileSnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
   _runtime: std::marker::PhantomData<(Id, Address, R)>,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotStorage<Id, Address, R> {
+impl<Id, Address, R> FileSnapshotStorage<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
+{
   /// Reaps any snapshots beyond the retain count.
   pub fn reap_snapshots(&self) -> io::Result<()> {
     let snapshots = self.get_snapshots().map_err(|e| {
@@ -131,7 +136,7 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotStorage<Id, Addre
     })?;
 
     for snap in snapshots.iter().skip(self.retain) {
-      let path = self.path.join(snap.id.name());
+      let path = self.path.join(snap.id().name());
       tracing::info!(target = "ruraft", path = %path.display(), "reaping snapshot");
       fs::remove_dir_all(&path).map_err(|e| {
         tracing::error!(target = "ruraft", path = %path.display(), err = %e, "failed to reap snapshot");
@@ -199,7 +204,7 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotStorage<Id, Addre
       a.term.cmp(&b.term).then_with(|| {
         a.index
           .cmp(&b.index)
-          .then_with(|| a.id.timestamp().cmp(&b.id.timestamp()))
+          .then_with(|| a.timestamp().cmp(&b.timestamp))
       })
     });
     res.reverse();
@@ -213,6 +218,7 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotStorage<Id, Addre
 
     // Read the meta data
     <FileSnapshotMeta<Id, Address> as Transformable>::decode_from_reader(&mut fh)
+      .map(|(_, meta)| meta)
       .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
 }
@@ -220,8 +226,8 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotStorage<Id, Addre
 #[async_trait::async_trait]
 impl<Id, Address, R> SnapshotStorage for FileSnapshotStorage<Id, Address, R>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Error = FileSnapshotStorageError;
@@ -406,6 +412,10 @@ pub struct FileSnapshotSource<Id: NodeId, Address: NodeAddress, R: Runtime> {
 
 impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncRead
   for FileSnapshotSource<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
 {
   fn poll_read(
     mut self: Pin<&mut Self>,
@@ -416,8 +426,11 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncRead
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSource
-  for FileSnapshotSource<Id, Address, R>
+impl<Id, Address, R> SnapshotSource for FileSnapshotSource<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
 {
   type Runtime = R;
   type NodeId = Id;
@@ -440,17 +453,21 @@ pub struct FileSnapshotSink<Id: NodeId, Address: NodeAddress, R: Runtime> {
 
 impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncWrite
   for FileSnapshotSink<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  R: Runtime,
 {
   fn poll_write(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
     buf: &[u8],
   ) -> Poll<io::Result<usize>> {
-    Poll::Ready(self.file.write(buf))
+    Poll::Ready(self.as_mut().file.write(buf))
   }
 
   fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-    Poll::Ready(self.file.flush())
+    Poll::Ready(self.as_mut().file.flush())
   }
 
   fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -459,10 +476,10 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncWrite
       return Poll::Ready(Ok(()));
     }
 
-    self.closed = true;
+    self.as_mut().closed = true;
 
     // Close the open handles
-    if let Err(e) = self.finalize() {
+    if let Err(e) = self.as_mut().finalize() {
       tracing::error!(target = "ruraft", err = %e, "failed to finalize snapshot");
       if let Err(e) = fs::remove_dir_all(&self.dir) {
         tracing::error!(target = "ruraft", err = %e, "failed to delete temporary snapshot directory");
@@ -512,7 +529,12 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncWrite
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotSink<Id, Address, R> {
+impl<Id, Address, R> FileSnapshotSink<Id, Address, R>
+where
+  Id: NodeId + Send + Sync + 'static,
+  Address: NodeAddress + Send + Sync + 'static,
+  R: Runtime,
+{
   fn finalize(&mut self) -> io::Result<()> {
     // Flush any remaining data
     self.file.flush()?;
@@ -553,14 +575,14 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> FileSnapshotSink<Id, Address,
 #[async_trait::async_trait]
 impl<Id, Address, R> SnapshotSink for FileSnapshotSink<Id, Address, R>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  Id: NodeId + Send + Sync + Unpin + 'static,
+  Address: NodeAddress + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Runtime = R;
 
-  fn id(&self) -> &SnapshotId {
-    &self.meta.meta.id
+  fn id(&self) -> SnapshotId {
+    self.meta.meta.id()
   }
 
   async fn cancel(&mut self) -> io::Result<()> {
@@ -658,14 +680,13 @@ where
   {
     use futures::AsyncReadExt;
 
-    <SnapshotMeta<Id, Address> as Transformable>::decode_from_async_reader(reader)
-      .await
-      .and_then(|(readed, meta)| {
-        let mut crc_buf = [0u8; CRC_SIZE];
-        reader.read_exact(&mut crc_buf)?;
-        let crc = u64::from_be_bytes(crc_buf);
-        Ok((readed + CRC_SIZE, Self { meta, crc }))
-      })
+    let (readed, meta) =
+      <SnapshotMeta<Id, Address> as Transformable>::decode_from_async_reader(reader).await?;
+
+    let mut crc_buf = [0u8; CRC_SIZE];
+    reader.read_exact(&mut crc_buf).await?;
+    let crc = u64::from_be_bytes(crc_buf);
+    Ok((readed + CRC_SIZE, Self { meta, crc }))
   }
 }
 
@@ -743,7 +764,7 @@ pub(crate) mod tests {
     assert_eq!(latest.size, 13);
 
     // Read the snapshot
-    let mut src = snap.open(&latest.id).await.unwrap();
+    let mut src = snap.open(&latest.id()).await.unwrap();
 
     // Read out everything
     let mut buf = Vec::new();

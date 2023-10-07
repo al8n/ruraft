@@ -63,3 +63,7 @@ rmp-serde = { version = "1.1", optional = true }
 
 # test features related dependencies
 tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
+tokio = { version = "1.32", features = ["full"] }
