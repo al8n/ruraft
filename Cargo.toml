@@ -28,7 +28,8 @@ async-lock = "2.8"
 async-trait = "0.1"
 bytes = "1.5"
 futures = { version = "0.3" }
-nodecraft = { version = "0.1.6" }
+nodecraft = { path = "../nodecraft" }
+pollster = "0.3"
 smol_str = { version = "0.2" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"

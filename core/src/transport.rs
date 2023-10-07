@@ -1,8 +1,13 @@
+use std::net::SocketAddr;
+
 use agnostic::Runtime;
 use futures::AsyncRead;
 
 mod command;
 pub use command::*;
+
+mod error;
+pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
@@ -109,14 +114,12 @@ pub trait AppendFuture:
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync + 'static {
   /// Errors returned by the transport.
-  type Error: std::error::Error
-    + From<<Self::Pipeline as AppendPipeline>::Error>
-    + From<<Self::Resolver as AddressResolver>::Error>
-    + From<<Self::Encoder as Encoder>::Error>
-    + From<<Self::Decoder as Decoder>::Error>
-    + Send
-    + Sync
-    + 'static;
+  type Error: Error<
+    Id = Self::Id,
+    Resolver = Self::Resolver,
+    Encoder = Self::Encoder,
+    Decoder = Self::Decoder,
+  >;
 
   /// The runtime used by the transport.
   type Runtime: Runtime;
@@ -127,13 +130,13 @@ pub trait Transport: Send + Sync + 'static {
   /// The id type used to identify nodes.
   type Id: Id;
 
-  /// The pipeline used to increase the replication throughput by masking latency and better
-  /// utilizing bandwidth.
-  type Pipeline: AppendPipeline<
-    Runtime = Self::Runtime,
-    Id = Self::Id,
-    Address = <Self::Resolver as AddressResolver>::Address,
-  >;
+  // /// The pipeline used to increase the replication throughput by masking latency and better
+  // /// utilizing bandwidth.
+  // type Pipeline: AppendPipeline<
+  //   Runtime = Self::Runtime,
+  //   Id = Self::Id,
+  //   Address = <Self::Resolver as AddressResolver>::Address,
+  // >;
 
   /// The node address resolver used to resolve a node address to a [`SocketAddr`].
   ///
@@ -157,6 +160,9 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to return our local id to distinguish from our peers.
   fn local_id(&self) -> &Self::Id;
 
+  /// Used to return the advertise addr of the node.
+  fn advertise_addr(&self) -> SocketAddr;
+
   /// Returns the node address resolver for the transport
   fn resolver(&self) -> &Self::Resolver;
 
@@ -165,13 +171,13 @@ pub trait Transport: Send + Sync + 'static {
   where
     Self: Sized;
 
-  /// Returns a [`AppendPipeline`] that can be used to pipeline
-  /// [`AppendEntriesRequest`]s.
-  async fn append_entries_pipeline(
-    &self,
-    id: Self::Id,
-    target: <Self::Resolver as AddressResolver>::Address,
-  ) -> Result<Self::Pipeline, Self::Error>;
+  // /// Returns a [`AppendPipeline`] that can be used to pipeline
+  // /// [`AppendEntriesRequest`]s.
+  // async fn append_entries_pipeline(
+  //   &self,
+  //   id: Self::Id,
+  //   target: <Self::Resolver as AddressResolver>::Address,
+  // ) -> Result<Self::Pipeline, Self::Error>;
 
   /// Sends the append entries requrest to the target node.
   async fn append_entries(
