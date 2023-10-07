@@ -71,12 +71,11 @@ impl<W: Write, H: Hasher> Write for ChecksumableWriter<W, H> {
   }
 }
 
-pin_project_lite::pin_project! {
-  pub struct AsyncChecksumableReader<R: AsyncRead, H: Hasher> {
-    #[pin]
-    reader: R,
-    hasher: H,
-  }
+#[pin_project::pin_project]
+pub struct AsyncChecksumableReader<R: AsyncRead, H: Hasher> {
+  #[pin]
+  reader: R,
+  hasher: H,
 }
 
 impl<R: AsyncRead, H: Hasher> AsyncChecksumableReader<R, H> {
@@ -111,12 +110,11 @@ impl<R: AsyncRead, H: Hasher> AsyncRead for AsyncChecksumableReader<R, H> {
   }
 }
 
-pin_project_lite::pin_project! {
-  pub struct AsyncChecksumableWriter<W: AsyncWrite, H: Hasher> {
-    #[pin]
-    writer: W,
-    hasher: H,
-  }
+#[pin_project::pin_project]
+pub struct AsyncChecksumableWriter<W: AsyncWrite, H: Hasher> {
+  #[pin]
+  writer: W,
+  hasher: H,
 }
 
 impl<W: AsyncWrite, H: Hasher> AsyncChecksumableWriter<W, H> {

@@ -18,7 +18,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{Address, AddressResolver, Id, RequestConsumer, Transport},
+  transport::{Address, AddressResolver, Id, RpcConsumer, Transport},
 };
 
 mod candidate;
