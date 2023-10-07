@@ -6,7 +6,7 @@ use futures::FutureExt;
 
 use crate::{
   membership::Membership,
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
   utils::now_timestamp,
 };
 
@@ -14,7 +14,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
-pub enum LogKind<Id: NodeId, Address: NodeAddress> {
+pub enum LogKind<I: Id, A: Address> {
   /// Holds end-user data and extension.
   User {
     /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
@@ -44,7 +44,7 @@ pub enum LogKind<Id: NodeId, Address: NodeAddress> {
   Barrier,
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Memberhsip(Membership<Id, Address>),
+  Memberhsip(Membership<I, A>),
 }
 
 // impl<Id:> LogKind {
@@ -71,7 +71,7 @@ pub enum LogKind<Id: NodeId, Address: NodeAddress> {
 )]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Log<Id: NodeId, Address: NodeAddress> {
+pub struct Log<I: Id, A: Address> {
   /// Holds the kind of the log entry.
   #[viewit(
     getter(
@@ -82,7 +82,7 @@ pub struct Log<Id: NodeId, Address: NodeAddress> {
     ),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
   )]
-  kind: LogKind<Id, Address>,
+  kind: LogKind<I, A>,
 
   /// Holds the index of the log entry.
   #[viewit(
@@ -129,7 +129,7 @@ pub struct Log<Id: NodeId, Address: NodeAddress> {
   appended_at: u64,
 }
 
-impl<Id: NodeId, Address: NodeAddress> Log<Id, Address> {
+impl<I: Id, A: Address> Log<I, A> {
   /// Create a [`Log`]
   #[inline]
   pub const fn new(data: Bytes) -> Self {
@@ -156,7 +156,7 @@ impl<Id: NodeId, Address: NodeAddress> Log<Id, Address> {
   }
 
   #[inline]
-  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<Id, Address>) -> Self {
+  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A>) -> Self {
     Self {
       index,
       term,
@@ -178,9 +178,9 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
   /// Returns the first index written. 0 for no entries.
   async fn first_index(&self) -> Result<u64, Self::Error>;
@@ -189,19 +189,13 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   async fn last_index(&self) -> Result<u64, Self::Error>;
 
   /// Gets a log entry at a given index.
-  async fn get_log(
-    &self,
-    index: u64,
-  ) -> Result<Option<Log<Self::NodeId, Self::NodeAddress>>, Self::Error>;
+  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error>;
 
   /// Stores a log entry
-  async fn store_log(&self, log: &Log<Self::NodeId, Self::NodeAddress>) -> Result<(), Self::Error>;
+  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error>;
 
   /// Stores multiple log entries. By default the logs stored may not be contiguous with previous logs (i.e. may have a gap in Index since the last log written). If an implementation can't tolerate this it may optionally implement `MonotonicLogStore` to indicate that this is not allowed. This changes Raft's behaviour after restoring a user snapshot to remove all previous logs instead of relying on a "gap" to signal the discontinuity between logs before the snapshot and logs after.
-  async fn store_logs(
-    &self,
-    logs: &[Log<Self::NodeId, Self::NodeAddress>],
-  ) -> Result<(), Self::Error>;
+  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error>;
 
   /// Removes a range of log entries.
   async fn remove_range(&self, range: impl RangeBounds<u64> + Send) -> Result<(), Self::Error>;
@@ -231,7 +225,7 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
 pub(crate) trait LogStorageExt: LogStorage {
   async fn oldest_log(
     &self,
-  ) -> Result<Log<Self::NodeId, Self::NodeAddress>, LogStorageExtError<Self::Error>> {
+  ) -> Result<Log<Self::Id, Self::Address>, LogStorageExtError<Self::Error>> {
     // We might get unlucky and have a truncate right between getting first log
     // index and fetching it so keep trying until we succeed or hard fail.
     let mut last_fail_idx = 0;
@@ -304,7 +298,7 @@ pub(super) mod tests {
     want_err: bool,
   }
 
-  pub async fn test_oldest_log<S: LogStorage<NodeId = String, NodeAddress = SocketAddr>>(store: S) {
+  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr>>(store: S) {
     let cases = vec![
       TestCase {
         name: "empty logs",

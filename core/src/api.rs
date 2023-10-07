@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
   raft::{Node, Role},
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
 };
 
 /// Raft is the API for the Raft consensus algorithm.
@@ -15,10 +15,10 @@ pub trait Raft {
   type Log: Send + Sync + 'static;
 
   /// The id node.
-  type Id: NodeId;
+  type Id: Id;
 
   /// The address of the node.
-  type Address: NodeAddress;
+  type Address: Address;
 
   /// Used to return the current leader of the cluster.
   async fn leader(&self) -> Option<Node<Self::Id, Self::Address>>;

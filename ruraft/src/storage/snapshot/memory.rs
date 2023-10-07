@@ -16,7 +16,7 @@ use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
   storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
 };
 
 /// Implements the [`SnapshotStorage`] trait in memory and
@@ -24,26 +24,26 @@ use ruraft_core::{
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug)]
-pub struct MemorySnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
-  latest: Arc<RwLock<MemorySnapshot<Id, Address>>>,
+pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
+  latest: Arc<RwLock<MemorySnapshot<I, A>>>,
   has_snapshot: AtomicBool,
   _runtime: std::marker::PhantomData<R>,
 }
 
 #[async_trait::async_trait]
-impl<Id, Address, R> SnapshotStorage for MemorySnapshotStorage<Id, Address, R>
+impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Error = io::Error;
-  type Sink = MemorySnapshotSink<Self::NodeId, Self::NodeAddress, R>;
-  type Source = MemorySnapshotSource<Self::NodeId, Self::NodeAddress, R>;
+  type Sink = MemorySnapshotSink<Self::Id, Self::Address, R>;
+  type Source = MemorySnapshotSource<Self::Id, Self::Address, R>;
   type Options = ();
   type Runtime = R;
-  type NodeId = Id;
-  type NodeAddress = Address;
+  type Id = I;
+  type Address = A;
 
   async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
   where
@@ -61,7 +61,7 @@ where
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership<Self::NodeId, Self::NodeAddress>,
+    membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error> {
     if !version.valid() {
@@ -95,7 +95,7 @@ where
     })
   }
 
-  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::NodeId, Self::NodeAddress>>, Self::Error> {
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error> {
     let lock = self.latest.read().await;
     if !self.has_snapshot.load(Ordering::Acquire) {
       return Ok(vec![]);
@@ -127,12 +127,12 @@ where
 }
 
 #[derive(Debug)]
-struct MemorySnapshot<Id: NodeId, Address: NodeAddress> {
-  meta: SnapshotMeta<Id, Address>,
+struct MemorySnapshot<I: Id, A: Address> {
+  meta: SnapshotMeta<I, A>,
   contents: Vec<u8>,
 }
 
-impl<Id: NodeId, Address: NodeAddress> Default for MemorySnapshot<Id, Address> {
+impl<I: Id, A: Address> Default for MemorySnapshot<I, A> {
   fn default() -> Self {
     Self {
       meta: Default::default(),
@@ -145,16 +145,16 @@ impl<Id: NodeId, Address: NodeAddress> Default for MemorySnapshot<Id, Address> {
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSink<Id: NodeId, Address: NodeAddress, R: Runtime> {
-  snap: Arc<RwLock<MemorySnapshot<Id, Address>>>,
+pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
+  snap: Arc<RwLock<MemorySnapshot<I, A>>>,
   id: SnapshotId,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> AsyncWrite for MemorySnapshotSink<Id, Address, R>
+impl<I: Id, A: Address, R: Runtime> AsyncWrite for MemorySnapshotSink<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
@@ -174,10 +174,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Id, Address, R> SnapshotSink for MemorySnapshotSink<Id, Address, R>
+impl<I, A, R> SnapshotSink for MemorySnapshotSink<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Runtime = R;
@@ -195,16 +195,16 @@ where
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSource<Id: NodeId, Address: NodeAddress, R: Runtime> {
-  meta: SnapshotMeta<Id, Address>,
+pub struct MemorySnapshotSource<I: Id, A: Address, R: Runtime> {
+  meta: SnapshotMeta<I, A>,
   contents: Vec<u8>,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<Id, Address, R> AsyncRead for MemorySnapshotSource<Id, Address, R>
+impl<I, A, R> AsyncRead for MemorySnapshotSource<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   fn poll_read(
@@ -219,18 +219,17 @@ where
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> SnapshotSource
-  for MemorySnapshotSource<Id, Address, R>
+impl<I: Id, A: Address, R: Runtime> SnapshotSource for MemorySnapshotSource<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Runtime = R;
-  type NodeId = Id;
-  type NodeAddress = Address;
+  type Id = I;
+  type Address = A;
 
-  fn meta(&self) -> &SnapshotMeta<Self::NodeId, Self::NodeAddress> {
+  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
     &self.meta
   }
 }

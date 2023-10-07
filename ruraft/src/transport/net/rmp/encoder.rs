@@ -1,6 +1,6 @@
 // use super::encode_message_header;
 // use rmp_serde::encode::write;
-// use ruraft_core::transport::{Encoder, NodeId, Request, Response};
+// use ruraft_core::transport::{Encoder, Id, Request, Response};
 
 // #[derive(Debug, thiserror::Error)]
 // pub enum EncodeError {}
@@ -10,14 +10,14 @@
 // impl Encoder for RmpEncoder {
 //   type Error = EncodeError;
 
-//   type NodeId;
+//   type Id;
 
-//   type NodeAddress;
+//   type Address;
 
 //   type Bytes;
 
 //   fn encode_request(
-//     req: &Request<Self::NodeId, Self::NodeAddress>,
+//     req: &Request<Self::Id, Self::Address>,
 //   ) -> Result<Self::Bytes, Self::Error> {
 //     let header = req.header();
 //     let id = header.id();
@@ -29,7 +29,7 @@
 //   }
 
 //   fn encode_response(
-//     resp: &Response<Self::NodeId, Self::NodeAddress>,
+//     resp: &Response<Self::Id, Self::Address>,
 //   ) -> Result<Self::Bytes, Self::Error> {
 //     let header = resp.header();
 //     let id = header.id();

@@ -16,7 +16,7 @@ use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
   storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
   utils::{checksumable::ChecksumableWriter, make_dir_all},
 };
 
@@ -111,7 +111,7 @@ impl FileSnapshotStorageOptions {
 /// Implements the [`SnapshotStorage`] trait and allows
 /// snapshots to be made on the local disk.
 #[derive(Clone)]
-pub struct FileSnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
+pub struct FileSnapshotStorage<I: Id, A: Address, R: Runtime> {
   path: Arc<PathBuf>,
   retain: usize,
 
@@ -119,13 +119,13 @@ pub struct FileSnapshotStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
   /// It's a private field, only used in testing
   no_sync: bool,
 
-  _runtime: std::marker::PhantomData<(Id, Address, R)>,
+  _runtime: std::marker::PhantomData<(I, A, R)>,
 }
 
-impl<Id, Address, R> FileSnapshotStorage<Id, Address, R>
+impl<I, A, R> FileSnapshotStorage<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   /// Reaps any snapshots beyond the retain count.
@@ -155,7 +155,7 @@ where
     fs::remove_file(&path)
   }
 
-  fn get_snapshots(&self) -> io::Result<Vec<SnapshotMeta<Id, Address>>> {
+  fn get_snapshots(&self) -> io::Result<Vec<SnapshotMeta<I, A>>> {
     // Get the eligible snapshots
     let snapshots = fs::read_dir(self.path.as_path()).map_err(|e| {
       tracing::error!(target = "ruraft", err = %e, "failed to scan snapshot directory");
@@ -211,31 +211,31 @@ where
     Ok(res)
   }
 
-  fn read_meta(&self, name: &str) -> io::Result<FileSnapshotMeta<Id, Address>> {
+  fn read_meta(&self, name: &str) -> io::Result<FileSnapshotMeta<I, A>> {
     // Open the meta file
     let metapath = self.path.join(name).join(META_FILE_PATH.as_path());
     let mut fh = BufReader::new(File::open(metapath)?);
 
     // Read the meta data
-    <FileSnapshotMeta<Id, Address> as Transformable>::decode_from_reader(&mut fh)
+    <FileSnapshotMeta<I, A> as Transformable>::decode_from_reader(&mut fh)
       .map(|(_, meta)| meta)
       .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
   }
 }
 
 #[async_trait::async_trait]
-impl<Id, Address, R> SnapshotStorage for FileSnapshotStorage<Id, Address, R>
+impl<I, A, R> SnapshotStorage for FileSnapshotStorage<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Error = FileSnapshotStorageError;
-  type Sink = FileSnapshotSink<Self::NodeId, Self::NodeAddress, R>;
-  type NodeId = Id;
-  type NodeAddress = Address;
+  type Sink = FileSnapshotSink<Self::Id, Self::Address, R>;
+  type Id = I;
+  type Address = A;
   type Runtime = R;
-  type Source = FileSnapshotSource<Self::NodeId, Self::NodeAddress, R>;
+  type Source = FileSnapshotSource<Self::Id, Self::Address, R>;
   type Options = FileSnapshotStorageOptions;
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -270,7 +270,7 @@ where
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership<Self::NodeId, Self::NodeAddress>,
+    membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error> {
     // Create a new path
@@ -303,7 +303,7 @@ where
       crc: 0,
     };
 
-    FileSnapshotSink::<Self::NodeId, Self::NodeAddress, Self::Runtime>::write_meta(
+    FileSnapshotSink::<Self::Id, Self::Address, Self::Runtime>::write_meta(
       &path,
       &meta,
       self.no_sync,
@@ -339,7 +339,7 @@ where
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
-  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::NodeId, Self::NodeAddress>>, Self::Error> {
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error> {
     // Get the eligible snapshots
     let mut snapshots = self.get_snapshots().map_err(|e| {
       tracing::error!(target = "ruraft", err = %e, "failed to get snapshots");
@@ -398,23 +398,22 @@ where
 /// Stored on disk. We also put a CRC
 /// on disk so that we can verify the snapshot.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-struct FileSnapshotMeta<Id: NodeId, Address: NodeAddress> {
+struct FileSnapshotMeta<I: Id, A: Address> {
   #[cfg_attr(feature = "serde", serde(flatten))]
-  meta: SnapshotMeta<Id, Address>,
+  meta: SnapshotMeta<I, A>,
   crc: u64,
 }
 
-pub struct FileSnapshotSource<Id: NodeId, Address: NodeAddress, R: Runtime> {
-  meta: FileSnapshotMeta<Id, Address>,
+pub struct FileSnapshotSource<I: Id, A: Address, R: Runtime> {
+  meta: FileSnapshotMeta<I, A>,
   file: BufReader<File>,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncRead
-  for FileSnapshotSource<Id, Address, R>
+impl<I: Id, A: Address, R: Runtime> futures::io::AsyncRead for FileSnapshotSource<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   fn poll_read(
@@ -426,36 +425,35 @@ where
   }
 }
 
-impl<Id, Address, R> SnapshotSource for FileSnapshotSource<Id, Address, R>
+impl<I, A, R> SnapshotSource for FileSnapshotSource<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Runtime = R;
-  type NodeId = Id;
-  type NodeAddress = Address;
-  fn meta(&self) -> &SnapshotMeta<Self::NodeId, Self::NodeAddress> {
+  type Id = I;
+  type Address = A;
+  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
     &self.meta.meta
   }
 }
 
-pub struct FileSnapshotSink<Id: NodeId, Address: NodeAddress, R: Runtime> {
-  store: FileSnapshotStorage<Id, Address, R>,
+pub struct FileSnapshotSink<I: Id, A: Address, R: Runtime> {
+  store: FileSnapshotStorage<I, A, R>,
   dir: PathBuf,
 
   no_sync: bool,
 
   file: BufWriter<ChecksumableWriter<File, crc32fast::Hasher>>,
-  meta: FileSnapshotMeta<Id, Address>,
+  meta: FileSnapshotMeta<I, A>,
   closed: bool,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> futures::io::AsyncWrite
-  for FileSnapshotSink<Id, Address, R>
+impl<I: Id, A: Address, R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   fn poll_write(
@@ -490,7 +488,7 @@ where
 
     // Write out the meta data
     if let Err(e) =
-      FileSnapshotSink::<Id, Address, R>::write_meta(&self.dir, &self.meta, self.store.no_sync)
+      FileSnapshotSink::<I, A, R>::write_meta(&self.dir, &self.meta, self.store.no_sync)
     {
       tracing::error!(target = "ruraft", err = %e, "failed to write snapshot metadata");
       return Poll::Ready(Err(e));
@@ -529,10 +527,10 @@ where
   }
 }
 
-impl<Id, Address, R> FileSnapshotSink<Id, Address, R>
+impl<I, A, R> FileSnapshotSink<I, A, R>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
   R: Runtime,
 {
   fn finalize(&mut self) -> io::Result<()> {
@@ -554,7 +552,7 @@ where
 
   fn write_meta<P: AsRef<Path>>(
     dir: &P,
-    meta: &FileSnapshotMeta<Id, Address>,
+    meta: &FileSnapshotMeta<I, A>,
     no_sync: bool,
   ) -> io::Result<()> {
     // Open the meta file
@@ -573,10 +571,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Id, Address, R> SnapshotSink for FileSnapshotSink<Id, Address, R>
+impl<I, A, R> SnapshotSink for FileSnapshotSink<I, A, R>
 where
-  Id: NodeId + Send + Sync + Unpin + 'static,
-  Address: NodeAddress + Send + Sync + Unpin + 'static,
+  I: Id + Send + Sync + Unpin + 'static,
+  A: Address + Send + Sync + Unpin + 'static,
   R: Runtime,
 {
   type Runtime = R;
@@ -607,12 +605,12 @@ where
 const CRC_SIZE: usize = mem::size_of::<u64>();
 
 #[async_trait::async_trait]
-impl<Id, Address> Transformable for FileSnapshotMeta<Id, Address>
+impl<I, A> Transformable for FileSnapshotMeta<I, A>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
 {
-  type Error = <SnapshotMeta<Id, Address> as Transformable>::Error;
+  type Error = <SnapshotMeta<I, A> as Transformable>::Error;
 
   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
     let encoded_len = self.encoded_len();
@@ -649,7 +647,7 @@ where
   where
     Self: Sized,
   {
-    <SnapshotMeta<Id, Address> as Transformable>::decode(src).and_then(|(readed, meta)| {
+    <SnapshotMeta<I, A> as Transformable>::decode(src).and_then(|(readed, meta)| {
       if src.len() < readed + CRC_SIZE {
         return Err(Self::Error::Corrupted);
       }
@@ -662,14 +660,12 @@ where
   where
     Self: Sized,
   {
-    <SnapshotMeta<Id, Address> as Transformable>::decode_from_reader(reader).and_then(
-      |(readed, meta)| {
-        let mut crc_buf = [0u8; CRC_SIZE];
-        reader.read_exact(&mut crc_buf)?;
-        let crc = u64::from_be_bytes(crc_buf);
-        Ok((readed + CRC_SIZE, Self { meta, crc }))
-      },
-    )
+    <SnapshotMeta<I, A> as Transformable>::decode_from_reader(reader).and_then(|(readed, meta)| {
+      let mut crc_buf = [0u8; CRC_SIZE];
+      reader.read_exact(&mut crc_buf)?;
+      let crc = u64::from_be_bytes(crc_buf);
+      Ok((readed + CRC_SIZE, Self { meta, crc }))
+    })
   }
 
   async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
@@ -681,7 +677,7 @@ where
     use futures::AsyncReadExt;
 
     let (readed, meta) =
-      <SnapshotMeta<Id, Address> as Transformable>::decode_from_async_reader(reader).await?;
+      <SnapshotMeta<I, A> as Transformable>::decode_from_async_reader(reader).await?;
 
     let mut crc_buf = [0u8; CRC_SIZE];
     reader.read_exact(&mut crc_buf).await?;

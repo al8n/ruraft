@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use nodecraft::Transformable;
 
 use crate::{
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
   utils::invalid_data,
 };
 
@@ -73,16 +73,16 @@ impl ServerSuffrage {
 #[viewit::viewit]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Server<Id: NodeId, Address: NodeAddress> {
+pub struct Server<I: Id, A: Address> {
   /// A unique string identifying this server for all time.
-  id: Id,
+  id: I,
   /// The network address that a transport can contact.
-  addr: Address,
+  addr: A,
   /// Determines whether the server gets a vote.
   suffrage: ServerSuffrage,
 }
 
-impl<Id: NodeId, Address: NodeAddress> PartialEq for Server<Id, Address> {
+impl<I: Id, A: Address> PartialEq for Server<I, A> {
   fn eq(&self, other: &Self) -> bool {
     if self.id == other.id {
       return true;
@@ -96,12 +96,12 @@ impl<Id: NodeId, Address: NodeAddress> PartialEq for Server<Id, Address> {
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress> Eq for Server<Id, Address> {}
+impl<I: Id, A: Address> Eq for Server<I, A> {}
 
-impl<Id: NodeId, Address: NodeAddress> Server<Id, Address> {
+impl<I: Id, A: Address> Server<I, A> {
   /// Creates a new `Server`.
   #[inline]
-  pub fn new(id: Id, addr: Address, suffrage: ServerSuffrage) -> Self {
+  pub fn new(id: I, addr: A, suffrage: ServerSuffrage) -> Self {
     Self { id, addr, suffrage }
   }
 }
@@ -111,13 +111,13 @@ impl<Id: NodeId, Address: NodeAddress> Server<Id, Address> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
-pub enum MembershipChangeCommand<Id: NodeId, Address: NodeAddress> {
+pub enum MembershipChangeCommand<I: Id, A: Address> {
   /// Adds a server with [`ServerSuffrage`] of Voter.
   AddVoter {
     /// The server to execute the command on.
-    id: Id,
+    id: I,
     /// The server address.
-    addr: Address,
+    addr: A,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -126,9 +126,9 @@ pub enum MembershipChangeCommand<Id: NodeId, Address: NodeAddress> {
   /// Makes a server [`ServerSuffrage::Nonvoter`] unless its [`ServerSuffrage::Staging`] or [`ServerSuffrage::Voter`].
   AddNonvoter {
     /// The server to execute the command on.
-    id: Id,
+    id: I,
     /// The server address.
-    addr: Address,
+    addr: A,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -137,7 +137,7 @@ pub enum MembershipChangeCommand<Id: NodeId, Address: NodeAddress> {
   /// Makes a server [`ServerSuffrage::Nonvoter`] unless its absent.
   DemoteVoter {
     /// The server to execute the command on.
-    id: Id,
+    id: I,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -146,7 +146,7 @@ pub enum MembershipChangeCommand<Id: NodeId, Address: NodeAddress> {
   /// Removes a server entirely from the cluster membership.
   RemoveServer {
     /// The server to execute the command on.
-    id: Id,
+    id: I,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -154,7 +154,7 @@ pub enum MembershipChangeCommand<Id: NodeId, Address: NodeAddress> {
   },
 }
 
-impl<Id: NodeId, Address: NodeAddress> MembershipChangeCommand<Id, Address> {
+impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
   /// Returns a string representation of the command.
   #[inline]
   pub const fn as_str(&self) -> &'static str {
@@ -168,7 +168,7 @@ impl<Id: NodeId, Address: NodeAddress> MembershipChangeCommand<Id, Address> {
 
   /// Returns [`MembershipChangeCommand::AddVoter`].
   #[inline]
-  pub const fn add_voter(id: Id, addr: Address, prev_index: u64) -> Self {
+  pub const fn add_voter(id: I, addr: A, prev_index: u64) -> Self {
     Self::AddNonvoter {
       id,
       addr,
@@ -178,7 +178,7 @@ impl<Id: NodeId, Address: NodeAddress> MembershipChangeCommand<Id, Address> {
 
   /// Returns [`MembershipChangeCommand::AddNonvoter`].
   #[inline]
-  pub const fn add_nonvoter(id: Id, addr: Address, prev_index: u64) -> Self {
+  pub const fn add_nonvoter(id: I, addr: A, prev_index: u64) -> Self {
     Self::AddNonvoter {
       id,
       addr,
@@ -188,30 +188,30 @@ impl<Id: NodeId, Address: NodeAddress> MembershipChangeCommand<Id, Address> {
 
   /// Returns [`MembershipChangeCommand::DemoteVoter`].
   #[inline]
-  pub const fn demote_voter(id: Id, prev_index: u64) -> Self {
+  pub const fn demote_voter(id: I, prev_index: u64) -> Self {
     Self::DemoteVoter { id, prev_index }
   }
 
   /// Returns [`MembershipChangeCommand::RemoveServer`].
   #[inline]
-  pub const fn remove_server(id: Id, prev_index: u64) -> Self {
+  pub const fn remove_server(id: I, prev_index: u64) -> Self {
     Self::RemoveServer { id, prev_index }
   }
 }
 
 /// The error type returned when encoding [`Membership`] to bytes or decoding a [`Membership`] from bytes.
 #[derive(thiserror::Error)]
-pub enum MembershipTransformableError<Id: NodeId, Address: NodeAddress> {
+pub enum MembershipTransformableError<I: Id, A: Address> {
   /// Returned when the encode or decode id fails.
   #[error("id error: {0}")]
-  Id(Id::Error),
+  Id(I::Error),
   /// Returned when the encode or decode address fails.
   #[error("address error: {0}")]
-  Address(Address::Error),
+  Address(A::Error),
   #[error("the encoded size of id({0}) is too large")]
-  IdTooLarge(Id),
+  IdTooLarge(I),
   #[error("the encoded size of address({0}) is too large")]
-  AddressTooLarge(Address),
+  AddressTooLarge(A),
   /// Returned when the number of nodes is too large.
   #[error("membership too large, too many servers({0})")]
   TooLarge(usize),
@@ -226,9 +226,7 @@ pub enum MembershipTransformableError<Id: NodeId, Address: NodeAddress> {
   UnknownServerSuffrage(#[from] UnknownServerSuffrage),
 }
 
-impl<Id: NodeId, Address: NodeAddress> core::fmt::Debug
-  for MembershipTransformableError<Id, Address>
-{
+impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     core::fmt::Display::fmt(&self, f)
   }
@@ -239,11 +237,11 @@ impl<Id: NodeId, Address: NodeAddress> core::fmt::Debug
 /// The servers are listed no particular order, but each should only appear once.
 /// These entries are appended to the log during membership changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Membership<Id: NodeId, Address: NodeAddress> {
-  servers: IndexMap<Id, (Address, ServerSuffrage)>,
+pub struct Membership<I: Id, A: Address> {
+  servers: IndexMap<I, (A, ServerSuffrage)>,
 }
 
-impl<Id: NodeId, Address: NodeAddress> Default for Membership<Id, Address> {
+impl<I: Id, A: Address> Default for Membership<I, A> {
   fn default() -> Self {
     Self::new()
   }
@@ -252,12 +250,12 @@ impl<Id: NodeId, Address: NodeAddress> Default for Membership<Id, Address> {
 const U32_SIZE: usize = mem::size_of::<u32>();
 
 #[async_trait::async_trait]
-impl<Id, Address> Transformable for Membership<Id, Address>
+impl<I, A> Transformable for Membership<I, A>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
 {
-  type Error = MembershipTransformableError<Id, Address>;
+  type Error = MembershipTransformableError<I, A>;
 
   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
     let dst_len = dst.len();
@@ -426,9 +424,9 @@ where
 
     let mut servers = IndexMap::with_capacity(total_servers);
     while servers.len() < total_servers {
-      let (readed, id) = Id::decode(&src[cur..]).map_err(Self::Error::Id)?;
+      let (readed, id) = I::decode(&src[cur..]).map_err(Self::Error::Id)?;
       cur += readed;
-      let (readed, addr) = Address::decode(&src[cur..]).map_err(Self::Error::Address)?;
+      let (readed, addr) = A::decode(&src[cur..]).map_err(Self::Error::Address)?;
       cur += readed;
       let suffrage: ServerSuffrage = src[cur].try_into()?;
       cur += ServerSuffrage::SIZE;
@@ -461,10 +459,10 @@ where
     reader.read_exact(&mut src)?;
     let mut servers = IndexMap::with_capacity(total_servers);
     while servers.len() < total_servers {
-      let (readed, id) = Id::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
+      let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
       cur += readed;
       let (readed, addr) =
-        Address::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
+        A::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
       cur += readed;
       let suffrage: ServerSuffrage = src[cur]
         .try_into()
@@ -502,10 +500,10 @@ where
     reader.read_exact(&mut src).await?;
     let mut servers = IndexMap::with_capacity(total_servers);
     while servers.len() < total_servers {
-      let (readed, id) = Id::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
+      let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
       cur += readed;
       let (readed, addr) =
-        Address::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
+        A::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
       cur += readed;
       let suffrage: ServerSuffrage = src[cur]
         .try_into()
@@ -518,8 +516,8 @@ where
 }
 
 #[cfg(feature = "serde")]
-impl<Id: NodeId + serde::Serialize, Address: NodeAddress + serde::Serialize> serde::Serialize
-  for Membership<Id, Address>
+impl<I: Id + serde::Serialize, A: Address + serde::Serialize> serde::Serialize
+  for Membership<I, A>
 {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
@@ -548,14 +546,14 @@ impl<Id: NodeId + serde::Serialize, Address: NodeAddress + serde::Serialize> ser
 }
 
 #[cfg(feature = "serde")]
-impl<'de, Id: NodeId + serde::Deserialize<'de>, Address: NodeAddress + serde::Deserialize<'de>>
-  serde::Deserialize<'de> for Membership<Id, Address>
+impl<'de, I: Id + serde::Deserialize<'de>, A: Address + serde::Deserialize<'de>>
+  serde::Deserialize<'de> for Membership<I, A>
 {
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where
     D: serde::Deserializer<'de>,
   {
-    let servers = Vec::<Server<Id, Address>>::deserialize(deserializer)?;
+    let servers = Vec::<Server<I, A>>::deserialize(deserializer)?;
     let mut membership = Membership::new();
     membership
       .insert_many(servers.into_iter())
@@ -564,10 +562,10 @@ impl<'de, Id: NodeId + serde::Deserialize<'de>, Address: NodeAddress + serde::De
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress> FromIterator<Server<Id, Address>>
-  for Result<Membership<Id, Address>, MembershipError<Id, Address>>
+impl<I: Id, A: Address> FromIterator<Server<I, A>>
+  for Result<Membership<I, A>, MembershipError<I, A>>
 {
-  fn from_iter<T: IntoIterator<Item = Server<Id, Address>>>(iter: T) -> Self {
+  fn from_iter<T: IntoIterator<Item = Server<I, A>>>(iter: T) -> Self {
     let mut membership = Membership::new();
     membership
       .insert_many(iter.into_iter())
@@ -575,7 +573,7 @@ impl<Id: NodeId, Address: NodeAddress> FromIterator<Server<Id, Address>>
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
+impl<I: Id, A: Address> Membership<I, A> {
   /// Create a new membership.
   pub fn new() -> Self {
     Self {
@@ -588,10 +586,7 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
   /// # Errors
   /// - If the server address is already in the membership.
   /// - If the server id is already in the membership.
-  pub fn insert(
-    &mut self,
-    server: Server<Id, Address>,
-  ) -> Result<(), MembershipError<Id, Address>> {
+  pub fn insert(&mut self, server: Server<I, A>) -> Result<(), MembershipError<I, A>> {
     if self.servers.contains_key(&server.id) {
       return Err(MembershipError::DuplicateId(server.id));
     }
@@ -613,18 +608,18 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
   /// - If the one of the server id is already in the membership.
   pub fn insert_many(
     &mut self,
-    mut servers: impl Iterator<Item = Server<Id, Address>>,
-  ) -> Result<(), MembershipError<Id, Address>> {
+    mut servers: impl Iterator<Item = Server<I, A>>,
+  ) -> Result<(), MembershipError<I, A>> {
     servers.try_for_each(|server| self.insert(server))
   }
 
   /// Returns an iterator over the membership
-  pub fn iter(&self) -> impl Iterator<Item = (&Id, &(Address, ServerSuffrage))> {
+  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
     self.servers.iter()
   }
 
   /// Returns an iterator that allows modifying each value.
-  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Id, &mut (Address, ServerSuffrage))> {
+  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
     self.servers.iter_mut()
   }
 
@@ -640,7 +635,7 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
 
   /// Validates a cluster membership configuration for common
   /// errors.
-  pub fn validate(&self) -> Result<(), MembershipError<Id, Address>> {
+  pub fn validate(&self) -> Result<(), MembershipError<I, A>> {
     self
       .servers
       .values()
@@ -652,7 +647,7 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
   where
-    Id: Borrow<Q>,
+    I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
   {
     self
@@ -671,7 +666,7 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
   /// provided [`Memberhsip`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
   where
-    Id: Borrow<Q>,
+    I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
   {
     self.servers.contains_key(id)
@@ -681,16 +676,16 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
   /// provided [`Memberhsip`].
   pub fn contains_addr<Q>(&self, addr: &Q) -> bool
   where
-    Address: std::borrow::Borrow<Q>,
+    A: std::borrow::Borrow<Q>,
     Q: ?Sized + Eq,
   {
     self.servers.values().any(|s| s.0.borrow() == addr)
   }
 
   /// Remove a server from the membership and return its address and suffrage.
-  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<Id, Address>>
+  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
   where
-    Id: Borrow<Q>,
+    I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
   {
     self
@@ -705,9 +700,9 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
   pub(crate) fn next(
     &self,
     current_index: u64,
-    change: MembershipChangeCommand<Id, Address>,
-  ) -> Result<Self, MembershipError<Id, Address>> {
-    let check = |prev_index: u64| -> Result<(), MembershipError<Id, Address>> {
+    change: MembershipChangeCommand<I, A>,
+  ) -> Result<Self, MembershipError<I, A>> {
+    let check = |prev_index: u64| -> Result<(), MembershipError<I, A>> {
       if prev_index > 0 && prev_index != current_index {
         return Err(MembershipError::AlreadyChanged {
           since: prev_index,
@@ -784,39 +779,39 @@ impl<Id: NodeId, Address: NodeAddress> Membership<Id, Address> {
 /// log.
 // TODO(al8n): Implement a WAL for membership changes.
 #[viewit::viewit(setters(skip), getters(skip))]
-pub(crate) struct Memberships<Id: NodeId, Address: NodeAddress> {
+pub(crate) struct Memberships<I: Id, A: Address> {
   /// committed is the latest membership in the log/snapshot that has been
   /// committed (the one with the largest index).
-  committed: ArcSwapAny<Arc<(u64, Membership<Id, Address>)>>,
+  committed: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
   /// latest is the latest membership in the log/snapshot (may be committed
   /// or uncommitted)
-  latest: ArcSwapAny<Arc<(u64, Membership<Id, Address>)>>,
+  latest: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
 }
 
-impl<Id: NodeId, Address: NodeAddress> Memberships<Id, Address> {
-  pub(crate) fn set_latest(&self, membership: Membership<Id, Address>, index: u64) {
+impl<I: Id, A: Address> Memberships<I, A> {
+  pub(crate) fn set_latest(&self, membership: Membership<I, A>, index: u64) {
     self.latest.store(Arc::new((index, membership)))
   }
 
-  pub(crate) fn set_committed(&self, membership: Membership<Id, Address>, index: u64) {
+  pub(crate) fn set_committed(&self, membership: Membership<I, A>, index: u64) {
     self.committed.store(Arc::new((index, membership)))
   }
 
-  pub(crate) fn latest(&self) -> arc_swap::Guard<Arc<(u64, Membership<Id, Address>)>> {
+  pub(crate) fn latest(&self) -> arc_swap::Guard<Arc<(u64, Membership<I, A>)>> {
     self.latest.load()
   }
 
-  pub(crate) fn committed(&self) -> arc_swap::Guard<Arc<(u64, Membership<Id, Address>)>> {
+  pub(crate) fn committed(&self) -> arc_swap::Guard<Arc<(u64, Membership<I, A>)>> {
     self.committed.load()
   }
 }
 
 #[derive(PartialEq, Eq, thiserror::Error)]
-pub enum MembershipError<Id: NodeId, Address: NodeAddress> {
+pub enum MembershipError<I: Id, A: Address> {
   #[error("found duplicate server address {0}")]
-  DuplicateAddress(Address),
+  DuplicateAddress(A),
   #[error("found duplicate server id {0}")]
-  DuplicateId(Id),
+  DuplicateId(I),
   #[error("server id cannot be empty")]
   EmptyServerId,
   #[error("no voter in the membership")]
@@ -825,7 +820,7 @@ pub enum MembershipError<Id: NodeId, Address: NodeAddress> {
   AlreadyChanged { since: u64, latest: u64 },
 }
 
-impl<Id: NodeId, Address: NodeAddress> core::fmt::Debug for MembershipError<Id, Address> {
+impl<I: Id, A: Address> core::fmt::Debug for MembershipError<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     core::fmt::Display::fmt(&self, f)
   }

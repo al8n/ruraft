@@ -1,7 +1,7 @@
 use core::mem;
 use ruraft_core::{
   options::ProtocolVersion,
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
 };
 
 /// Network encoder and decoder based on [`rmp_serde`].
@@ -12,11 +12,11 @@ const ENCODED_HEADER_SIZE: usize = mem::size_of::<ProtocolVersion>()
   + mem::size_of::<u32>() // header length
   + mem::size_of::<u32>(); // req/resp length
 
-fn encode_message_header<Id: NodeId, Address: NodeAddress>(
+fn encode_message_header<I: Id, A: Address>(
   protocol_version: ProtocolVersion,
   tag: u8,
-  id: &Id,
-  address: &Address,
+  id: &I,
+  address: &A,
 ) -> [u8; ENCODED_HEADER_SIZE] {
   let id_encoded_len = id.encoded_len();
   let address_encoded_len = address.encoded_len();

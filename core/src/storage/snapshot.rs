@@ -1,7 +1,7 @@
 use crate::{
   membership::Membership,
   options::SnapshotVersion,
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
 };
 
 mod meta;
@@ -19,16 +19,12 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
   type Sink: SnapshotSink<Runtime = Self::Runtime>;
-  type Source: SnapshotSource<
-    NodeId = Self::NodeId,
-    NodeAddress = Self::NodeAddress,
-    Runtime = Self::Runtime,
-  >;
+  type Source: SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
   type Options;
 
   async fn new(opts: Self::Options) -> Result<Self, Self::Error>
@@ -43,13 +39,13 @@ pub trait SnapshotStorage: Send + Sync + 'static {
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership<Self::NodeId, Self::NodeAddress>,
+    membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error>;
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
-  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::NodeId, Self::NodeAddress>>, Self::Error>;
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error>;
 
   /// Open takes a snapshot ID and provides a reader.
   async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error>;
@@ -73,9 +69,9 @@ pub trait SnapshotSource: futures::io::AsyncRead {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
-  fn meta(&self) -> &SnapshotMeta<Self::NodeId, Self::NodeAddress>;
+  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address>;
 }

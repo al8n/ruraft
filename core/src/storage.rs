@@ -5,7 +5,7 @@ pub use log::*;
 mod stable;
 pub use stable::*;
 
-use crate::transport::{NodeAddress, NodeId};
+use crate::transport::{Address, Id};
 
 /// Storage is a trait that must be implemented by the user to provide the persistent storage for the Raft.
 pub trait Storage: Send + Sync + 'static {
@@ -16,26 +16,18 @@ pub trait Storage: Send + Sync + 'static {
     + From<<Self::Log as LogStorage>::Error>;
 
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
   /// Stable storage
   type Stable: StableStorage<Runtime = Self::Runtime>;
 
   /// Snapshot storage
-  type Snapshot: SnapshotStorage<
-    NodeId = Self::NodeId,
-    NodeAddress = Self::NodeAddress,
-    Runtime = Self::Runtime,
-  >;
+  type Snapshot: SnapshotStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// Log storage
-  type Log: LogStorage<
-    NodeId = Self::NodeId,
-    NodeAddress = Self::NodeAddress,
-    Runtime = Self::Runtime,
-  >;
+  type Log: LogStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;

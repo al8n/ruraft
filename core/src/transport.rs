@@ -4,33 +4,29 @@ use futures::AsyncRead;
 mod command;
 pub use command::*;
 
-pub use nodecraft::{resolver::NodeAddressResolver, NodeAddress, NodeId, Transformable};
+pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
 /// Used to encode [`Request`] and [`Response`] to bytes for transmission.
 pub trait Encoder: Send + Sync + 'static {
   /// The error type returned by the encoder.
   type Error: std::error::Error
-    + From<<Self::NodeId as Transformable>::Error>
-    + From<<Self::NodeAddress as Transformable>::Error>
+    + From<<Self::Id as Transformable>::Error>
+    + From<<Self::Address as Transformable>::Error>
     + Send
     + Sync
     + 'static;
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
   /// The encoded result for sending
   type Bytes: AsRef<[u8]>;
 
   /// Encodes [`Request`] to [`Encoder::Bytes`] for transmission
-  fn encode_request(
-    req: &Request<Self::NodeId, Self::NodeAddress>,
-  ) -> Result<Self::Bytes, Self::Error>;
+  fn encode_request(req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes [`Response`] to [`Encoder::Bytes`] for transmission
-  fn encode_response(
-    resp: &Response<Self::NodeId, Self::NodeAddress>,
-  ) -> Result<Self::Bytes, Self::Error>;
+  fn encode_response(resp: &Response<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
 }
 
 /// Used to decode [`Request`] and [`Response`] from a reader.
@@ -38,25 +34,25 @@ pub trait Encoder: Send + Sync + 'static {
 pub trait Decoder: Send + Sync + 'static {
   /// The error type returned by the encoder.
   type Error: std::error::Error
-    + From<<Self::NodeId as Transformable>::Error>
-    + From<<Self::NodeAddress as Transformable>::Error>
+    + From<<Self::Id as Transformable>::Error>
+    + From<<Self::Address as Transformable>::Error>
     + Send
     + Sync
     + 'static;
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
   /// Decodes [`Request`] from a reader.
   async fn decode_request(
     reader: impl AsyncRead + Unpin,
-  ) -> Result<Request<Self::NodeId, Self::NodeAddress>, Self::Error>;
+  ) -> Result<Request<Self::Id, Self::Address>, Self::Error>;
 
   /// Decodes [`Response`] from a reader.
   async fn decode_response(
     reader: impl AsyncRead + Unpin,
-  ) -> Result<Response<Self::NodeId, Self::NodeAddress>, Self::Error>;
+  ) -> Result<Response<Self::Id, Self::Address>, Self::Error>;
 }
 
 /// Used for pipelining [`AppendEntriesRequest`]s. It is used
@@ -69,12 +65,12 @@ pub trait AppendPipeline {
   /// The runtime used by the transport.
   type Runtime: Runtime;
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
   /// The append entries response yield by the pipeline.
-  type Item: AppendFuture<NodeId = Self::NodeId, NodeAddress = Self::NodeAddress>;
+  type Item: AppendFuture<Id = Self::Id, Address = Self::Address>;
 
   /// Returns a stream that can be used to consume
   /// response futures when they are ready.
@@ -85,8 +81,8 @@ pub trait AppendPipeline {
   /// Sends the append entries requrest to the target node.
   async fn append_entries(
     &self,
-    req: AppendEntriesRequest<Self::NodeId, Self::NodeAddress>,
-  ) -> Result<AppendEntriesResponse<Self::NodeId, Self::NodeAddress>, Self::Error>;
+    req: AppendEntriesRequest<Self::Id, Self::Address>,
+  ) -> Result<AppendEntriesResponse<Self::Id, Self::Address>, Self::Error>;
 
   /// Closes the pipeline and cancels all inflight requests
   async fn close(&self) -> Result<(), Self::Error>;
@@ -94,16 +90,15 @@ pub trait AppendPipeline {
 
 /// Used to return information about a pipelined [`AppendEntriesRequest`].
 pub trait AppendFuture:
-  std::future::Future<
-    Output = std::io::Result<AppendEntriesResponse<Self::NodeId, Self::NodeAddress>>,
-  > + Send
+  std::future::Future<Output = std::io::Result<AppendEntriesResponse<Self::Id, Self::Address>>>
+  + Send
   + Sync
   + 'static
 {
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
   /// The address type of node.
-  type NodeAddress: NodeAddress;
+  type Address: Address;
 
   /// Returns the time that the append request was started.
   /// It is always OK to call this method.
@@ -116,7 +111,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Errors returned by the transport.
   type Error: std::error::Error
     + From<<Self::Pipeline as AppendPipeline>::Error>
-    + From<<Self::Resolver as NodeAddressResolver>::Error>
+    + From<<Self::Resolver as AddressResolver>::Error>
     + From<<Self::Encoder as Encoder>::Error>
     + From<<Self::Decoder as Decoder>::Error>
     + Send
@@ -130,21 +125,21 @@ pub trait Transport: Send + Sync + 'static {
   type Options: Send + Sync + 'static;
 
   /// The id type used to identify nodes.
-  type NodeId: NodeId;
+  type Id: Id;
 
   /// The pipeline used to increase the replication throughput by masking latency and better
   /// utilizing bandwidth.
   type Pipeline: AppendPipeline<
     Runtime = Self::Runtime,
-    NodeId = Self::NodeId,
-    NodeAddress = <Self::Resolver as NodeAddressResolver>::NodeAddress,
+    Id = Self::Id,
+    Address = <Self::Resolver as AddressResolver>::Address,
   >;
 
   /// The node address resolver used to resolve a node address to a [`SocketAddr`].
   ///
   /// e.g., you can implement a DNS resolver, then the raft node can accept a domain like `www.foo.com`
   /// as the node address.
-  type Resolver: NodeAddressResolver<Runtime = Self::Runtime>;
+  type Resolver: AddressResolver<Runtime = Self::Runtime>;
 
   /// The encoder used to encode [`Request`] or [`Response`] for data transmission.
   type Encoder: Encoder;
@@ -154,15 +149,13 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Returns a stream that can be used to
   /// consume and respond to RPC requests.
-  fn consumer(
-    &self,
-  ) -> RequestConsumer<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>;
+  fn consumer(&self) -> RequestConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address>;
 
   /// Used to return our local addr to distinguish from our peers.
-  fn local_addr(&self) -> &<Self::Resolver as NodeAddressResolver>::NodeAddress;
+  fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
 
   /// Used to return our local id to distinguish from our peers.
-  fn local_id(&self) -> &Self::NodeId;
+  fn local_id(&self) -> &Self::Id;
 
   /// Returns the node address resolver for the transport
   fn resolver(&self) -> &Self::Resolver;
@@ -176,55 +169,46 @@ pub trait Transport: Send + Sync + 'static {
   /// [`AppendEntriesRequest`]s.
   async fn append_entries_pipeline(
     &self,
-    id: Self::NodeId,
-    target: <Self::Resolver as NodeAddressResolver>::NodeAddress,
+    id: Self::Id,
+    target: <Self::Resolver as AddressResolver>::Address,
   ) -> Result<Self::Pipeline, Self::Error>;
 
   /// Sends the append entries requrest to the target node.
   async fn append_entries(
     &self,
-    req: AppendEntriesRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<
-    AppendEntriesResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
   >;
 
   /// Sends the vote request to the target node.
   async fn vote(
     &self,
-    req: VoteRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
-  ) -> Result<
-    VoteResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
-    Self::Error,
-  >;
+    req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+  ) -> Result<VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>;
 
   /// Used to push a snapshot down to a follower.
   async fn install_snapshot(
     &self,
-    req: InstallSnapshotRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     source: impl AsyncRead + Send,
   ) -> Result<
-    InstallSnapshotResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
+    InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
   >;
 
   /// Used to start a leadership transfer to the target node.
   async fn timeout_now(
     &self,
-    req: TimeoutNowRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
-  ) -> Result<
-    TimeoutNowResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
-    Self::Error,
-  >;
+    req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+  ) -> Result<TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>;
 
   /// Used to send a heartbeat to the target node.
   async fn heartbeat(
     &self,
-    req: HeartbeatRequest<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
-  ) -> Result<
-    HeartbeatResponse<Self::NodeId, <Self::Resolver as NodeAddressResolver>::NodeAddress>,
-    Self::Error,
-  >;
+    req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+  ) -> Result<HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>;
 
   /// Shutdown the transport.
   async fn shutdown(&self) -> Result<(), Self::Error>;

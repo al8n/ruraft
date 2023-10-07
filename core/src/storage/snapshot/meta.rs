@@ -37,7 +37,7 @@ impl SnapshotId {
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress> PartialEq<SnapshotId> for SnapshotMeta<Id, Address> {
+impl<I: Id, A: Address> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
   fn eq(&self, other: &SnapshotId) -> bool {
     self.index == other.index && self.term == other.term && self.timestamp == other.timestamp
   }
@@ -50,7 +50,7 @@ impl<Id: NodeId, Address: NodeAddress> PartialEq<SnapshotId> for SnapshotMeta<Id
 )]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SnapshotMeta<Id: NodeId, Address: NodeAddress> {
+pub struct SnapshotMeta<I: Id, A: Address> {
   /// The version number of the snapshot metadata. This does not cover
   /// the application's data in the snapshot, that should be versioned
   /// separately.
@@ -67,10 +67,10 @@ pub struct SnapshotMeta<Id: NodeId, Address: NodeAddress> {
   membership_index: u64,
   /// Membership at the time of the snapshot.
   #[viewit(getter(style = "ref", const))]
-  membership: Membership<Id, Address>,
+  membership: Membership<I, A>,
 }
 
-impl<Id: NodeId, Address: NodeAddress> Default for SnapshotMeta<Id, Address> {
+impl<I: Id, A: Address> Default for SnapshotMeta<I, A> {
   fn default() -> Self {
     Self::new()
   }
@@ -78,7 +78,7 @@ impl<Id: NodeId, Address: NodeAddress> Default for SnapshotMeta<Id, Address> {
 
 const META_FIXED_FIELDS_SIZE: usize = mem::size_of::<SnapshotVersion>() + 5 * mem::size_of::<u64>();
 
-impl<Id: NodeId, Address: NodeAddress> SnapshotMeta<Id, Address> {
+impl<I: Id, A: Address> SnapshotMeta<I, A> {
   /// Create a snapshot meta.
   #[inline]
   pub fn new() -> Self {
@@ -108,13 +108,13 @@ impl<Id: NodeId, Address: NodeAddress> SnapshotMeta<Id, Address> {
 }
 
 #[derive(thiserror::Error)]
-pub enum SnapshotMetaTransformableError<Id: NodeId, Address: NodeAddress> {
+pub enum SnapshotMetaTransformableError<I: Id, A: Address> {
   #[error(
     "encode buffer too small, use `Transformable::encoded_len()` to pre-allocate the required size"
   )]
   EncodeBufferTooSmall,
   #[error("{0}")]
-  Membership(#[from] MembershipTransformableError<Id, Address>),
+  Membership(#[from] MembershipTransformableError<I, A>),
   #[error("corrupted")]
   Corrupted,
   #[error("{0}")]
@@ -123,9 +123,7 @@ pub enum SnapshotMetaTransformableError<Id: NodeId, Address: NodeAddress> {
   Custom(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
-impl<Id: NodeId, Address: NodeAddress> core::fmt::Debug
-  for SnapshotMetaTransformableError<Id, Address>
-{
+impl<I: Id, A: Address> core::fmt::Debug for SnapshotMetaTransformableError<I, A> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     core::fmt::Display::fmt(&self, f)
   }
@@ -134,12 +132,12 @@ impl<Id: NodeId, Address: NodeAddress> core::fmt::Debug
 const U64_SIZE: usize = mem::size_of::<u64>();
 
 #[async_trait::async_trait]
-impl<Id, Address> Transformable for SnapshotMeta<Id, Address>
+impl<I, A> Transformable for SnapshotMeta<I, A>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
 {
-  type Error = SnapshotMetaTransformableError<Id, Address>;
+  type Error = SnapshotMetaTransformableError<I, A>;
 
   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
     let encoded_len = self.encoded_len();

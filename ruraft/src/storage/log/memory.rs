@@ -4,16 +4,16 @@ use agnostic::Runtime;
 use async_lock::Mutex;
 use ruraft_core::{
   storage::{Log, LogStorage},
-  transport::{NodeAddress, NodeId},
+  transport::{Address, Id},
 };
 
-struct Inner<Id: NodeId, Address: NodeAddress> {
+struct Inner<I: Id, A: Address> {
   low_index: u64,
   high_index: u64,
-  logs: HashMap<u64, Log<Id, Address>>,
+  logs: HashMap<u64, Log<I, A>>,
 }
 
-impl<Id: NodeId, Address: NodeAddress> Default for Inner<Id, Address> {
+impl<I: Id, A: Address> Default for Inner<I, A> {
   fn default() -> Self {
     Self {
       low_index: 0,
@@ -27,18 +27,18 @@ impl<Id: NodeId, Address: NodeAddress> Default for Inner<Id, Address> {
 ///
 /// **N.B.** It should NOT EVER be used for production. It is used only for
 /// unit tests.
-pub struct MemoryLogStorage<Id: NodeId, Address: NodeAddress, R: Runtime> {
-  store: Arc<Mutex<Inner<Id, Address>>>,
+pub struct MemoryLogStorage<I: Id, A: Address, R: Runtime> {
+  store: Arc<Mutex<Inner<I, A>>>,
   _runtime: core::marker::PhantomData<R>,
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> Default for MemoryLogStorage<Id, Address, R> {
+impl<I: Id, A: Address, R: Runtime> Default for MemoryLogStorage<I, A, R> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> Clone for MemoryLogStorage<Id, Address, R> {
+impl<I: Id, A: Address, R: Runtime> Clone for MemoryLogStorage<I, A, R> {
   fn clone(&self) -> Self {
     Self {
       store: self.store.clone(),
@@ -47,7 +47,7 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> Clone for MemoryLogStorage<Id
   }
 }
 
-impl<Id: NodeId, Address: NodeAddress, R: Runtime> MemoryLogStorage<Id, Address, R> {
+impl<I: Id, A: Address, R: Runtime> MemoryLogStorage<I, A, R> {
   /// Returns a new in-memory backend. Do not ever
   /// use for production. Only for testing.
   pub fn new() -> Self {
@@ -59,18 +59,18 @@ impl<Id: NodeId, Address: NodeAddress, R: Runtime> MemoryLogStorage<Id, Address,
 }
 
 #[async_trait::async_trait]
-impl<Id, Address, R> LogStorage for MemoryLogStorage<Id, Address, R>
+impl<I, A, R> LogStorage for MemoryLogStorage<I, A, R>
 where
-  Id: NodeId + Send + Sync + 'static,
-  Address: NodeAddress + Send + Sync + 'static,
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
   R: Runtime,
 {
   /// The error type returned by the log storage.
   type Error = Infallible;
   /// The async runtime used by the storage.
   type Runtime = R;
-  type NodeId = Id;
-  type NodeAddress = Address;
+  type Id = I;
+  type Address = A;
 
   async fn first_index(&self) -> Result<u64, Self::Error> {
     Ok(self.store.lock().await.low_index)
@@ -80,14 +80,11 @@ where
     Ok(self.store.lock().await.high_index)
   }
 
-  async fn get_log(
-    &self,
-    index: u64,
-  ) -> Result<Option<Log<Self::NodeId, Self::NodeAddress>>, Self::Error> {
+  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error> {
     Ok(self.store.lock().await.logs.get(&index).cloned())
   }
 
-  async fn store_log(&self, log: &Log<Self::NodeId, Self::NodeAddress>) -> Result<(), Self::Error> {
+  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error> {
     let mut store = self.store.lock().await;
     store.logs.insert(log.index(), log.clone());
     if store.low_index == 0 {
@@ -100,10 +97,7 @@ where
     Ok(())
   }
 
-  async fn store_logs(
-    &self,
-    logs: &[Log<Self::NodeId, Self::NodeAddress>],
-  ) -> Result<(), Self::Error> {
+  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error> {
     let mut store = self.store.lock().await;
     for l in logs {
       store.logs.insert(l.index(), l.clone());
