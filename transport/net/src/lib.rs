@@ -1,3 +1,7 @@
+//! 
+#![forbid(unsafe_code)]
+// #![deny(missing_docs)]
+
 use std::{
   collections::HashMap,
   future::Future,
@@ -6,7 +10,6 @@ use std::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
   },
-  task::{Context, Poll},
   time::{Duration, Instant},
 };
 
@@ -17,15 +20,13 @@ use agnostic::{
 use async_lock::Mutex;
 use futures::{
   io::{BufReader, BufWriter},
-  AsyncRead, AsyncReadExt, AsyncWriteExt, FutureExt,
+  AsyncRead, AsyncWriteExt, FutureExt,
 };
 use ruraft_core::{
   options::ProtocolVersion,
-  transport::{Address, Id},
+  transport::*,
 };
 use wg::AsyncWaitGroup;
-
-use super::*;
 
 /// Network [`Wire`](ruraft_core::transport::Wire) implementors.
 pub mod wire;
@@ -406,15 +407,15 @@ where
       .resolve(&header_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
-    let req = Request::append_entries(self.protocol_version, req);
+    let req = Request::append_entries(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
     let resp = <Self::Wire as Wire>::decode_response(&mut conn)
       .await
       .map_err(<Self::Error as TransportError>::wire)?;
-    match resp.into_kind() {
-      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
-      ResponseKind::AppendEntries(resp) => {
-        self.return_conn(conn.into_inner(), header_addr);
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::AppendEntries(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -434,15 +435,15 @@ where
       .resolve(&header_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
-    let req = Request::vote(self.protocol_version, req);
+    let req = Request::vote(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
     let resp = <Self::Wire as Wire>::decode_response(&mut conn)
       .await
       .map_err(<Self::Error as TransportError>::wire)?;
-    match resp.into_kind() {
-      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
-      ResponseKind::Vote(resp) => {
-        self.return_conn(conn.into_inner(), header_addr);
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::Vote(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -466,7 +467,7 @@ where
       .resolve(&header_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
-    let req = Request::install_snapshot(self.protocol_version, req);
+    let req = Request::install_snapshot(req);
     let conn = self.send(addr, req).await?;
     let mut w = BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, conn);
     futures::io::copy(source, &mut w).await?;
@@ -474,10 +475,10 @@ where
     let resp = <Self::Wire as Wire>::decode_response(&mut conn)
       .await
       .map_err(<Self::Error as TransportError>::wire)?;
-    match resp.into_kind() {
-      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
-      ResponseKind::InstallSnapshot(resp) => {
-        self.return_conn(conn.into_inner(), header_addr);
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::InstallSnapshot(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -498,15 +499,15 @@ where
       .resolve(&header_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
-    let req = Request::timeout_now(self.protocol_version, req);
+    let req = Request::timeout_now(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
     let resp = <Self::Wire as Wire>::decode_response(&mut conn)
       .await
       .map_err(<Self::Error as TransportError>::wire)?;
-    match resp.into_kind() {
-      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
-      ResponseKind::TimeoutNow(resp) => {
-        self.return_conn(conn.into_inner(), header_addr);
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::TimeoutNow(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -527,15 +528,15 @@ where
       .resolve(&header_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
-    let req = Request::heartbeat(self.protocol_version, req);
+    let req = Request::heartbeat(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
     let resp = <Self::Wire as Wire>::decode_response(&mut conn)
       .await
       .map_err(<Self::Error as TransportError>::wire)?;
-    match resp.into_kind() {
-      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
-      ResponseKind::Heartbeat(resp) => {
-        self.return_conn(conn.into_inner(), header_addr);
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::Heartbeat(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -747,8 +748,8 @@ where
     // TODO: metrics
 
     let _process_start = Instant::now();
-    let resp = if let RequestKind::Heartbeat(_) = req.kind() {
-      Response::heartbeat(local_header.protocol_version(), local_header)
+    let resp = if let Request::Heartbeat(_) = &req {
+      Response::heartbeat(HeartbeatResponse::new(local_header))
     } else {
       let (tx, handle) = Rpc::<I, A>::new(req);
       futures::select! {
@@ -761,7 +762,7 @@ where
                     Ok(resp) => resp,
                     Err(e) => {
                       tracing::error!(target = "ruraft.net.transport", err=%e, "canceled command");
-                      Response::error(local_header.protocol_version(), local_header, e.to_string())
+                      Response::error(ErrorResponse::new(local_header, e.to_string()))
                     },
                   }
                 },

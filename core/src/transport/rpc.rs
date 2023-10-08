@@ -1,6 +1,5 @@
 use std::{
   future::Future,
-  io,
   pin::Pin,
   task::{Context, Poll},
 };
@@ -266,6 +265,15 @@ pub struct HeartbeatResponse<I, A> {
   header: Header<I, A>,
 }
 
+impl<I: Id, A: Address> HeartbeatResponse<I, A> {
+  /// Create a new HeartbeatResponse
+  pub const fn new(header: Header<I, A>) -> Self {
+    Self {
+      header,
+    }
+  }
+}
+
 /// The response returned from an
 /// [`HeartbeatRequest`].
 #[viewit::viewit]
@@ -277,6 +285,16 @@ pub struct ErrorResponse<I, A> {
   header: Header<I, A>,
   /// The error message
   error: String,
+}
+
+impl<I: Id, A: Address> ErrorResponse<I, A> {
+  /// Create a new ErrorResponse
+  pub const fn new(header: Header<I, A>, error: String) -> Self {
+    Self {
+      header,
+      error,
+    }
+  }
 }
 
 // macro_rules! encode {
@@ -299,7 +317,7 @@ pub struct ErrorResponse<I, A> {
 /// Request to be sent to the Raft node.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum RequestKind<I: Id, A: Address> {
+pub enum Request<I: Id, A: Address> {
   AppendEntries(AppendEntriesRequest<I, A>),
   Vote(VoteRequest<I, A>),
   InstallSnapshot(InstallSnapshotRequest<I, A>),
@@ -307,7 +325,7 @@ pub enum RequestKind<I: Id, A: Address> {
   Heartbeat(HeartbeatRequest<I, A>),
 }
 
-impl<I: Id, A: Address> RequestKind<I, A> {
+impl<I: Id, A: Address> Request<I, A> {
   /// Returns the tag of this request kind for encoding/decoding.
   #[inline]
   pub const fn tag(&self) -> u8 {
@@ -321,103 +339,80 @@ impl<I: Id, A: Address> RequestKind<I, A> {
   }
 }
 
-impl<I: Id, A: Address> From<AppendEntriesRequest<I, A>> for RequestKind<I, A> {
+impl<I: Id, A: Address> From<AppendEntriesRequest<I, A>> for Request<I, A> {
   fn from(req: AppendEntriesRequest<I, A>) -> Self {
     Self::AppendEntries(req)
   }
 }
 
-impl<I: Id, A: Address> From<VoteRequest<I, A>> for RequestKind<I, A> {
+impl<I: Id, A: Address> From<VoteRequest<I, A>> for Request<I, A> {
   fn from(req: VoteRequest<I, A>) -> Self {
     Self::Vote(req)
   }
 }
 
-impl<I: Id, A: Address> From<InstallSnapshotRequest<I, A>> for RequestKind<I, A> {
+impl<I: Id, A: Address> From<InstallSnapshotRequest<I, A>> for Request<I, A> {
   fn from(req: InstallSnapshotRequest<I, A>) -> Self {
     Self::InstallSnapshot(req)
   }
 }
 
-impl<I: Id, A: Address> From<TimeoutNowRequest<I, A>> for RequestKind<I, A> {
+impl<I: Id, A: Address> From<TimeoutNowRequest<I, A>> for Request<I, A> {
   fn from(req: TimeoutNowRequest<I, A>) -> Self {
     Self::TimeoutNow(req)
   }
 }
 
-impl<I: Id, A: Address> From<HeartbeatRequest<I, A>> for RequestKind<I, A> {
+impl<I: Id, A: Address> From<HeartbeatRequest<I, A>> for Request<I, A> {
   fn from(req: HeartbeatRequest<I, A>) -> Self {
     Self::Heartbeat(req)
   }
 }
 
-#[derive(Debug)]
-pub struct Request<I: Id, A: Address> {
-  pub(crate) protocol_version: ProtocolVersion,
-  pub(crate) kind: RequestKind<I, A>,
-}
+// #[derive(Debug)]
+// pub struct Request<I: Id, A: Address> {
+//   pub(crate) kind: Request<I, A>,
+// }
 
 impl<I: Id, A: Address> Request<I, A> {
-  pub const fn append_entries(version: ProtocolVersion, req: AppendEntriesRequest<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: RequestKind::AppendEntries(req),
-    }
+  pub const fn append_entries(req: AppendEntriesRequest<I, A>) -> Self {
+    Self::AppendEntries(req)
   }
 
-  pub const fn vote(version: ProtocolVersion, req: VoteRequest<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: RequestKind::Vote(req),
-    }
+  pub const fn vote(req: VoteRequest<I, A>) -> Self {
+    Self::Vote(req)
   }
 
   pub const fn install_snapshot(
-    version: ProtocolVersion,
     req: InstallSnapshotRequest<I, A>,
   ) -> Self {
-    Self {
-      protocol_version: version,
-      kind: RequestKind::InstallSnapshot(req),
-    }
+    Self::InstallSnapshot(req)
   }
 
-  pub const fn timeout_now(version: ProtocolVersion, req: TimeoutNowRequest<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: RequestKind::TimeoutNow(req),
-    }
+  pub const fn timeout_now(req: TimeoutNowRequest<I, A>) -> Self {
+    Self::TimeoutNow(req)
   }
 
-  pub const fn heartbeat(version: ProtocolVersion, req: HeartbeatRequest<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: RequestKind::Heartbeat(req),
-    }
+  pub const fn heartbeat(req: HeartbeatRequest<I, A>) -> Self {
+    Self::Heartbeat(req)
   }
 
   /// Returns the header of the request
   pub const fn header(&self) -> &Header<I, A> {
-    match &self.kind {
-      RequestKind::AppendEntries(req) => req.header(),
-      RequestKind::Vote(req) => req.header(),
-      RequestKind::InstallSnapshot(req) => req.header(),
-      RequestKind::TimeoutNow(req) => req.header(),
-      RequestKind::Heartbeat(req) => req.header(),
+    match self {
+      Self::AppendEntries(req) => req.header(),
+      Self::Vote(req) => req.header(),
+      Self::InstallSnapshot(req) => req.header(),
+      Self::TimeoutNow(req) => req.header(),
+      Self::Heartbeat(req) => req.header(),
     }
   }
 
   /// Returns the protocol version of the request.
   #[inline]
   pub const fn protocol_version(&self) -> ProtocolVersion {
-    self.protocol_version
-  }
-
-  /// Returns the kind of the request.
-  #[inline]
-  pub const fn kind(&self) -> &RequestKind<I, A> {
-    &self.kind
-  }
+    self.header().protocol_version
+  } 
 
   // pub(super) fn encode(&self) -> io::Result<Vec<u8>> {
   //   match self.protocol_version {
@@ -425,20 +420,20 @@ impl<I: Id, A: Address> Request<I, A> {
   //       const OFFSET: usize = ProtocolVersion::V1.header_offset();
 
   //       match &self.kind {
-  //         RequestKind::AppendEntries(req) => encode!(v1::req { CommandKind::AppendEntries as u8 }),
-  //         RequestKind::Vote(req) => encode!(v1::req {CommandKind::Vote as u8 }),
-  //         RequestKind::InstallSnapshot(req) => {
+  //         Request::AppendEntries(req) => encode!(v1::req { CommandKind::AppendEntries as u8 }),
+  //         Request::Vote(req) => encode!(v1::req {CommandKind::Vote as u8 }),
+  //         Request::InstallSnapshot(req) => {
   //           encode!(v1::req { CommandKind::InstallSnapshot as u8 })
   //         }
-  //         RequestKind::TimeoutNow(req) => encode!(v1::req { CommandKind::TimeoutNow as u8 }),
-  //         RequestKind::Heartbeat(req) => encode!(v1::req { CommandKind::Heartbeat as u8 }),
+  //         Request::TimeoutNow(req) => encode!(v1::req { CommandKind::TimeoutNow as u8 }),
+  //         Request::Heartbeat(req) => encode!(v1::req { CommandKind::Heartbeat as u8 }),
   //       }
   //     }
   //   }
   // }
 }
 
-// pub(super) fn decode<T>(protocol_version: ProtocolVersion, src: &[u8]) -> io::Result<T>
+// pub(super) fn decode<T>(protocol_src: &[u8]) -> io::Result<T>
 // where
 //   T: serde::de::DeserializeOwned,
 // {
@@ -452,7 +447,7 @@ impl<I: Id, A: Address> Request<I, A> {
 /// Response from the Raft node
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum ResponseKind<I, A> {
+pub enum Response<I, A> {
   AppendEntries(AppendEntriesResponse<I, A>),
   Vote(VoteResponse<I, A>),
   InstallSnapshot(InstallSnapshotResponse<I, A>),
@@ -461,7 +456,7 @@ pub enum ResponseKind<I, A> {
   Error(ErrorResponse<I, A>),
 }
 
-impl<I: Id, A: Address> ResponseKind<I, A> {
+impl<I: Id, A: Address> Response<I, A> {
   /// Returns the tag of this request kind for encoding/decoding.
   #[inline]
   pub const fn tag(&self) -> u8 {
@@ -488,116 +483,79 @@ impl<I: Id, A: Address> ResponseKind<I, A> {
   }
 }
 
-impl<I: Id, A: Address> From<AppendEntriesResponse<I, A>> for ResponseKind<I, A> {
+impl<I: Id, A: Address> From<AppendEntriesResponse<I, A>> for Response<I, A> {
   fn from(resp: AppendEntriesResponse<I, A>) -> Self {
     Self::AppendEntries(resp)
   }
 }
 
-impl<I: Id, A: Address> From<VoteResponse<I, A>> for ResponseKind<I, A> {
+impl<I: Id, A: Address> From<VoteResponse<I, A>> for Response<I, A> {
   fn from(resp: VoteResponse<I, A>) -> Self {
     Self::Vote(resp)
   }
 }
 
-impl<I: Id, A: Address> From<InstallSnapshotResponse<I, A>> for ResponseKind<I, A> {
+impl<I: Id, A: Address> From<InstallSnapshotResponse<I, A>> for Response<I, A> {
   fn from(resp: InstallSnapshotResponse<I, A>) -> Self {
     Self::InstallSnapshot(resp)
   }
 }
 
-impl<I: Id, A: Address> From<TimeoutNowResponse<I, A>> for ResponseKind<I, A> {
+impl<I: Id, A: Address> From<TimeoutNowResponse<I, A>> for Response<I, A> {
   fn from(resp: TimeoutNowResponse<I, A>) -> Self {
     Self::TimeoutNow(resp)
   }
 }
 
-impl<I: Id, A: Address> From<HeartbeatResponse<I, A>> for ResponseKind<I, A> {
+impl<I: Id, A: Address> From<HeartbeatResponse<I, A>> for Response<I, A> {
   fn from(resp: HeartbeatResponse<I, A>) -> Self {
     Self::Heartbeat(resp)
   }
 }
 
-impl<I: Id, A: Address> From<ErrorResponse<I, A>> for ResponseKind<I, A> {
+impl<I: Id, A: Address> From<ErrorResponse<I, A>> for Response<I, A> {
   fn from(resp: ErrorResponse<I, A>) -> Self {
     Self::Error(resp)
   }
 }
 
-#[derive(Debug, Clone)]
-pub struct Response<I, A> {
-  protocol_version: ProtocolVersion,
-  kind: ResponseKind<I, A>,
-}
-
 impl<I: Id, A: Address> Response<I, A> {
-  pub const fn append_entries(version: ProtocolVersion, resp: AppendEntriesResponse<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::AppendEntries(resp),
-    }
+  pub const fn append_entries(resp: AppendEntriesResponse<I, A>) -> Self {
+    Self::AppendEntries(resp)
   }
 
-  pub const fn vote(version: ProtocolVersion, resp: VoteResponse<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::Vote(resp),
-    }
+  pub const fn vote(resp: VoteResponse<I, A>) -> Self {
+    Self::Vote(resp)
   }
 
   pub const fn install_snapshot(
-    version: ProtocolVersion,
     resp: InstallSnapshotResponse<I, A>,
   ) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::InstallSnapshot(resp),
-    }
+    Self::InstallSnapshot(resp)
   }
 
-  pub const fn timeout_now(version: ProtocolVersion, resp: TimeoutNowResponse<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::TimeoutNow(resp),
-    }
+  pub const fn timeout_now(resp: TimeoutNowResponse<I, A>) -> Self {
+    Self::TimeoutNow(resp)
   }
 
-  pub const fn heartbeat(version: ProtocolVersion, header: Header<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::Heartbeat(HeartbeatResponse { header }),
-    }
+  pub const fn heartbeat(resp: HeartbeatResponse<I, A>) -> Self {
+    Self::Heartbeat(resp)
   }
 
-  pub const fn error(version: ProtocolVersion, header: Header<I, A>, error: String) -> Self {
-    Self {
-      protocol_version: version,
-      kind: ResponseKind::Error(ErrorResponse { header, error }),
-    }
+  pub const fn error(resp: ErrorResponse<I, A>) -> Self {
+    Self::Error(resp)
   }
 
   /// Returns the header of the response.
   pub const fn header(&self) -> &Header<I, A> {
-    match &self.kind {
-      ResponseKind::AppendEntries(res) => res.header(),
-      ResponseKind::Vote(res) => res.header(),
-      ResponseKind::InstallSnapshot(res) => res.header(),
-      ResponseKind::TimeoutNow(res) => res.header(),
-      ResponseKind::Heartbeat(res) => res.header(),
-      ResponseKind::Error(res) => res.header(),
+    match self {
+      Self::AppendEntries(res) => res.header(),
+      Self::Vote(res) => res.header(),
+      Self::InstallSnapshot(res) => res.header(),
+      Self::TimeoutNow(res) => res.header(),
+      Self::Heartbeat(res) => res.header(),
+      Self::Error(res) => res.header(),
     }
-  }
-
-  /// Returns the kind of the response.
-  #[inline]
-  pub const fn kind(&self) -> &ResponseKind<I, A> {
-    &self.kind
-  }
-
-  /// Returns the kind of the response.
-  #[inline]
-  pub fn into_kind(self) -> ResponseKind<I, A> {
-    self.kind
   }
 
   // pub fn encode(&self) -> io::Result<Vec<u8>> {
@@ -607,18 +565,18 @@ impl<I: Id, A: Address> Response<I, A> {
   //         mem::size_of::<CommandKind>() + mem::size_of::<ProtocolVersion>() + mem::size_of::<u32>();
 
   //       match &self.kind {
-  //         ResponseKind::AppendEntries(res) => {
-  //           encode!(v1::res { CommandResponseKind::AppendEntries as u8 })
+  //         Response::AppendEntries(res) => {
+  //           encode!(v1::res { CommandResponse::AppendEntries as u8 })
   //         }
-  //         ResponseKind::Vote(res) => encode!(v1::res { CommandResponseKind::Vote as u8 }),
-  //         ResponseKind::InstallSnapshot(res) => {
-  //           encode!(v1::res { CommandResponseKind::InstallSnapshot as u8 })
+  //         Response::Vote(res) => encode!(v1::res { CommandResponse::Vote as u8 }),
+  //         Response::InstallSnapshot(res) => {
+  //           encode!(v1::res { CommandResponse::InstallSnapshot as u8 })
   //         }
-  //         ResponseKind::TimeoutNow(res) => {
-  //           encode!(v1::res { CommandResponseKind::TimeoutNow as u8 })
+  //         Response::TimeoutNow(res) => {
+  //           encode!(v1::res { CommandResponse::TimeoutNow as u8 })
   //         }
-  //         ResponseKind::Heartbeat(res) => encode!(v1::res { CommandResponseKind::Heartbeat as u8 }),
-  //         ResponseKind::Error(res) => encode!(v1::res { CommandResponseKind::Err as u8 }),
+  //         Response::Heartbeat(res) => encode!(v1::res { CommandResponse::Heartbeat as u8 }),
+  //         Response::Error(res) => encode!(v1::res { CommandResponse::Err as u8 }),
   //       }
   //     }
   //   }
