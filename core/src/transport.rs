@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use agnostic::Runtime;
 use futures::AsyncRead;
 
-mod command;
-pub use command::*;
+mod rpc;
+pub use rpc::*;
 
 mod error;
 pub use error::*;

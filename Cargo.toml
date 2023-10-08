@@ -3,8 +3,13 @@ members = [
   "autopilot",
   "core",
   "ruraft",
-  "storage",
-  "transport",
+  "storage/snapshot",
+  "storage/bolt",
+  "storage/redb",
+  "storage/sled",
+  "transport/tcp",
+  "transport/grpc",
+  "transport/quic"
 ]
 resolver = "2"
 
@@ -25,7 +30,8 @@ async-channel = "1.9"
 async-lock = "2.8"
 async-trait = "0.1"
 bytes = "1.5"
-futures = { version = "0.3" }
+futures = "0.3"
+humantime-serde = "1.1"
 nodecraft = { path = "../nodecraft" }
 pin-project = "1.1"
 pollster = "0.3"
@@ -34,3 +40,4 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tracing = { version = "0.1" }
 viewit = { version = "0.1.5" }
+wg = { version = "0.4", features = ["async"] }

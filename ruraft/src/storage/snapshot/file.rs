@@ -10,13 +10,12 @@ use std::{
 };
 
 use agnostic::Runtime;
-use nodecraft::Transformable;
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
   storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
-  transport::{Address, Id},
+  transport::{Address, Id, Transformable},
   utils::{checksumable::ChecksumableWriter, make_dir_all},
 };
 
@@ -131,15 +130,15 @@ where
   /// Reaps any snapshots beyond the retain count.
   pub fn reap_snapshots(&self) -> io::Result<()> {
     let snapshots = self.get_snapshots().map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to get snapshots");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to get snapshots");
       e
     })?;
 
     for snap in snapshots.iter().skip(self.retain) {
       let path = self.path.join(snap.id().name());
-      tracing::info!(target = "ruraft", path = %path.display(), "reaping snapshot");
+      tracing::info!(target = "ruraft.snapshot.file", path = %path.display(), "reaping snapshot");
       fs::remove_dir_all(&path).map_err(|e| {
-        tracing::error!(target = "ruraft", path = %path.display(), err = %e, "failed to reap snapshot");
+        tracing::error!(target = "ruraft.snapshot.file", path = %path.display(), err = %e, "failed to reap snapshot");
         e
       })?;
     }
@@ -158,7 +157,7 @@ where
   fn get_snapshots(&self) -> io::Result<Vec<SnapshotMeta<I, A>>> {
     // Get the eligible snapshots
     let snapshots = fs::read_dir(self.path.as_path()).map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to scan snapshot directory");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to scan snapshot directory");
       e
     })?;
     let mut res = Vec::with_capacity(snapshots.size_hint().0);
@@ -175,7 +174,7 @@ where
       let dirname = snap.file_name();
       let dirname_str = dirname.to_string_lossy();
       if dirname_str.ends_with(TEMP_SUFFIX) {
-        tracing::warn!(target = "ruraft", name = %dirname_str, "found temporary snapshot");
+        tracing::warn!(target = "ruraft.snapshot.file", name = %dirname_str, "found temporary snapshot");
         continue;
       }
 
@@ -183,7 +182,7 @@ where
       let meta = match self.read_meta(dirname_str.as_ref()) {
         Ok(meta) => meta,
         Err(e) => {
-          tracing::error!(target = "ruraft", name = %dirname_str, err = %e, "failed to read snapshot metadata");
+          tracing::error!(target = "ruraft.snapshot.file", name = %dirname_str, err = %e, "failed to read snapshot metadata");
           continue;
         }
       };
@@ -191,7 +190,7 @@ where
       // Make sure we can understand this version.
       if !meta.meta.version.valid() {
         let version = meta.meta.version as u8;
-        tracing::warn!(target = "ruraft", name = %dirname_str, version = %version, "snapshot version not supported");
+        tracing::warn!(target = "ruraft.snapshot.file", name = %dirname_str, version = %version, "snapshot version not supported");
         continue;
       }
 
@@ -278,14 +277,14 @@ where
     let path = self.path.join(id.temp_name());
 
     tracing::info!(
-      target = "ruraft",
+      target = "ruraft.snapshot.file",
       "creating new snapshot at {}",
       path.display()
     );
 
     // make the directory
     make_dir_all(&path, 0o755).map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to make snapshot directly");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to make snapshot directly");
       e
     })?;
 
@@ -309,7 +308,7 @@ where
       self.no_sync,
     )
     .map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to write metadata");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to write metadata");
       e
     })?;
 
@@ -317,7 +316,7 @@ where
 
     let state_path = path.join(STATE_FILE_PATH.as_path());
     let state_file = File::create(state_path).map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to create state file");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to create state file");
       e
     })?;
     let w = BufWriter::new(ChecksumableWriter::new(
@@ -342,7 +341,7 @@ where
   async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error> {
     // Get the eligible snapshots
     let mut snapshots = self.get_snapshots().map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to get snapshots");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to get snapshots");
       e
     })?;
 
@@ -357,7 +356,7 @@ where
     let filename = id.name();
     // Get the metadata
     let meta = self.read_meta(filename.as_str()).map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to get meta data to open snapshot");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to get meta data to open snapshot");
       e
     })?;
 
@@ -365,7 +364,7 @@ where
     let state_path = self.path.join(&filename).join(STATE_FILE_PATH.as_path());
 
     let mut state_file = File::open(state_path).map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "failed to open state file");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to open state file");
       e
     })?;
 
@@ -377,13 +376,13 @@ where
     let crc = hash.finish();
 
     if meta.crc != crc {
-      tracing::error!(target = "ruraft", stored = %meta.crc, computed = %crc, "checksum mismatch");
+      tracing::error!(target = "ruraft.snapshot.file", stored = %meta.crc, computed = %crc, "checksum mismatch");
       return Err(FileSnapshotStorageError::ChecksumMismatch);
     }
 
     // Seek to the start
     state_file.seek(io::SeekFrom::Start(0)).map_err(|e| {
-      tracing::error!(target = "ruraft", err = %e, "state file seek failed");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "state file seek failed");
       e
     })?;
 
@@ -478,9 +477,9 @@ where
 
     // Close the open handles
     if let Err(e) = self.as_mut().finalize() {
-      tracing::error!(target = "ruraft", err = %e, "failed to finalize snapshot");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to finalize snapshot");
       if let Err(e) = fs::remove_dir_all(&self.dir) {
-        tracing::error!(target = "ruraft", err = %e, "failed to delete temporary snapshot directory");
+        tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to delete temporary snapshot directory");
         return Poll::Ready(Err(e));
       }
       return Poll::Ready(Err(e));
@@ -490,14 +489,14 @@ where
     if let Err(e) =
       FileSnapshotSink::<I, A, R>::write_meta(&self.dir, &self.meta, self.store.no_sync)
     {
-      tracing::error!(target = "ruraft", err = %e, "failed to write snapshot metadata");
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to write snapshot metadata");
       return Poll::Ready(Err(e));
     }
 
     // Move the directory into place
     let new_path = self.dir.to_str().unwrap().replace(TEMP_SUFFIX, "");
     if let Err(e) = fs::rename(&self.dir, &new_path) {
-      tracing::error!(target = "ruraft", old = %self.dir.display(), new = %new_path, err = %e, "failed to move snapshot directory into place");
+      tracing::error!(target = "ruraft.snapshot.file", old = %self.dir.display(), new = %new_path, err = %e, "failed to move snapshot directory into place");
       return Poll::Ready(Err(e));
     }
 
@@ -506,12 +505,12 @@ where
         match fs::File::open(parent) {
           Ok(parent_fd) => {
             if let Err(e) = parent_fd.sync_all() {
-              tracing::error!(target = "ruraft", path = %parent.display(), err = %e, "failed syncing parent directory");
+              tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed syncing parent directory");
               return Poll::Ready(Err(e));
             }
           }
           Err(e) => {
-            tracing::error!(target = "ruraft", path = %parent.display(), err = %e, "failed to open snapshot parent directory");
+            tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed to open snapshot parent directory");
             return Poll::Ready(Err(e));
           }
         }
@@ -595,7 +594,7 @@ where
     self
       .finalize()
       .map_err(|e| {
-        tracing::error!(target = "ruraft", err=%e, "failed to finalize snapshot");
+        tracing::error!(target = "ruraft.snapshot.file", err=%e, "failed to finalize snapshot");
         e
       })
       .and_then(|_| fs::remove_dir_all(&self.dir))

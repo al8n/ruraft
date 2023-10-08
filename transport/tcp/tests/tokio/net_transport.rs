@@ -10,3 +10,7 @@
 // fn net_transport_append_entries() {
 //   run(test_net_transport_append_entries::<TokioRuntime>())
 // }
+
+#[test]
+fn test() {
+}
