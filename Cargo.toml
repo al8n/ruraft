@@ -3,9 +3,13 @@ members = [
   "autopilot",
   "core",
   "ruraft",
-  "storage",
-  "transport/net",
-  "transport/grpc"
+  "storage/snapshot",
+  "storage/bolt",
+  "storage/redb",
+  "storage/sled",
+  "transport/tcp",
+  "transport/grpc",
+  "transport/quic"
 ]
 resolver = "2"
 
@@ -36,3 +40,4 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tracing = { version = "0.1" }
 viewit = { version = "0.1.5" }
+wg = { version = "0.4", features = ["async"] }

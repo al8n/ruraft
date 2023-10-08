@@ -1,5 +1,5 @@
 [package]
-name = "ruraft-net"
+name = "ruraft-tcp"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -33,7 +33,7 @@ scopeguard = "1.1"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 viewit = { workspace = true }
-wg = { version = "0.4", features = ["async"] }
+wg = { workspace = true }
 
 humantime-serde = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
