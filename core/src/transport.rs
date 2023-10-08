@@ -11,159 +11,196 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-/// Used to encode [`Request`] and [`Response`] to bytes for transmission.
-pub trait Encoder: Send + Sync + 'static {
-  /// The error type returned by the encoder.
-  type Error: std::error::Error
-    + From<<Self::Id as Transformable>::Error>
-    + From<<Self::Address as Transformable>::Error>
-    + Send
-    + Sync
-    + 'static;
-  /// The id type used to identify nodes.
+/// Represents errors that can arise during the wire encoding or decoding processes.
+///
+/// `WireError` provides a standard interface to wrap and differentiate between
+/// errors related to node identifiers (`Id`), node addresses (`Address`), and custom error messages.
+pub trait WireError: std::error::Error + Send + Sync + 'static {
+  /// Represents the unique identifier for nodes.
   type Id: Id;
-  /// The address type of node.
+
+  /// Represents the network address associated with nodes.
   type Address: Address;
-  /// The encoded result for sending
-  type Bytes: AsRef<[u8]>;
 
-  /// Encodes [`Request`] to [`Encoder::Bytes`] for transmission
-  fn encode_request(req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
+  /// Constructs an error instance from an `Id` transformation error.
+  ///
+  /// # Parameters
+  /// * `err` - The error arising from the transformation of a node identifier.
+  fn id(err: <Self::Id as Transformable>::Error) -> Self;
 
-  /// Encodes [`Response`] to [`Encoder::Bytes`] for transmission
-  fn encode_response(resp: &Response<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
+  /// Constructs an error instance from an `Address` transformation error.
+  ///
+  /// # Parameters
+  /// * `err` - The error arising from the transformation of a node address.
+  fn address(err: <Self::Address as Transformable>::Error) -> Self;
+
+  /// Constructs a custom error instance from a provided message.
+  ///
+  /// # Parameters
+  /// * `msg` - The custom error message to be associated with the error instance.
+  fn custom<T>(msg: T) -> Self
+  where
+    T: core::fmt::Display;
 }
 
-/// Used to decode [`Request`] and [`Response`] from a reader.
+/// Represents the ability to convert between high-level [`Request`] and [`Response`] structures
+/// and their byte-array representations suitable for network transmission.
+///
+/// The trait ensures that implementations provide consistent encoding and decoding functionality,
+/// accompanied by appropriate error handling.
 #[async_trait::async_trait]
-pub trait Decoder: Send + Sync + 'static {
-  /// The error type returned by the encoder.
-  type Error: std::error::Error
-    + From<<Self::Id as Transformable>::Error>
-    + From<<Self::Address as Transformable>::Error>
-    + Send
-    + Sync
-    + 'static;
-  /// The id type used to identify nodes.
+pub trait Wire: Send + Sync + 'static {
+  /// Specifies the error type for encoding and decoding operations.
+  ///
+  /// This associated type provides detailed error categorization,
+  /// including transformations of the `Id` and `Address` types.
+  type Error: WireError<Id = Self::Id, Address = Self::Address>;
+
+  /// Represents the unique identifier associated with nodes.
   type Id: Id;
-  /// The address type of node.
+
+  /// Denotes the network address format or specification used for nodes.
   type Address: Address;
 
-  /// Decodes [`Request`] from a reader.
+  /// Represents the byte-array format produced after encoding,
+  /// which is then suitable for transmission over the network.
+  type Bytes: AsRef<[u8]> + Send + Sync + 'static;
+
+  /// Encodes a [`Request`] into its byte-array representation.
+  ///
+  /// # Parameters
+  /// * `req` - The `Request` instance to be encoded.
+  ///
+  /// # Returns
+  /// * `Result` - Returns the encoded byte array or an error if the encoding process fails.
+  fn encode_request(req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
+
+  /// Encodes a [`Response`] into its byte-array representation.
+  ///
+  /// # Parameters
+  /// * `resp` - The `Response` instance to be encoded.
+  ///
+  /// # Returns
+  /// * `Result` - Returns the encoded byte array or an error if the encoding process fails.
+  fn encode_response(resp: &Response<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
+
+  /// Decodes a [`Request`] instance from a provided asynchronous reader.
+  ///
+  /// # Parameters
+  /// * `reader` - The asynchronous reader source containing the byte data of the `Request`.
+  ///
+  /// # Returns
+  /// * `Result` - Returns the decoded `Request` or an error if the decoding process encounters issues.
   async fn decode_request(
     reader: impl AsyncRead + Unpin,
   ) -> Result<Request<Self::Id, Self::Address>, Self::Error>;
 
-  /// Decodes [`Response`] from a reader.
+  /// Decodes a [`Response`] instance from a provided asynchronous reader.
+  ///
+  /// # Parameters
+  /// * `reader` - The asynchronous reader source containing the byte data of the `Response`.
+  ///
+  /// # Returns
+  /// * `Result` - Returns the decoded `Response` or an error if the decoding process encounters issues.
   async fn decode_response(
     reader: impl AsyncRead + Unpin,
   ) -> Result<Response<Self::Id, Self::Address>, Self::Error>;
 }
 
-/// Used for pipelining [`AppendEntriesRequest`]s. It is used
-/// to increase the replication throughput by masking latency and better
-/// utilizing bandwidth.
+/// Provides utilities to pipeline [`AppendEntriesRequest`]s, aiming to
+/// enhance replication throughput by minimizing latency and maximizing bandwidth utilization.
 #[async_trait::async_trait]
 pub trait AppendPipeline {
-  /// The error type returned by the resolver.
+  /// Specifies potential errors that can occur within the pipeline.
   type Error: std::error::Error + Send + Sync + 'static;
-  /// The runtime used by the transport.
+
+  /// The runtime environment or context in which the transport operations occur.
   type Runtime: Runtime;
-  /// The id type used to identify nodes.
+
+  /// Unique identifier associated with nodes.
   type Id: Id;
-  /// The address type of node.
+
+  /// Network address representation of nodes.
   type Address: Address;
 
-  /// The append entries response yield by the pipeline.
+  /// Represents the pipeline's output or response to an appended entry.
   type Item: AppendFuture<Id = Self::Id, Address = Self::Address>;
 
-  /// Returns a stream that can be used to consume
-  /// response futures when they are ready.
+  /// Retrieves a stream for consuming response futures once they are ready.
   // TODO(al8n): change the return type to `impl Stream<Item = Self::Item>
   // when `RPITIT` is stable
   fn consumer(&self) -> async_channel::Receiver<Self::Item>;
 
-  /// Sends the append entries requrest to the target node.
+  /// Asynchronously appends entries to the target node and returns the associated response.
   async fn append_entries(
     &self,
     req: AppendEntriesRequest<Self::Id, Self::Address>,
   ) -> Result<AppendEntriesResponse<Self::Id, Self::Address>, Self::Error>;
 
-  /// Closes the pipeline and cancels all inflight requests
+  /// Gracefully closes the pipeline and terminates any in-flight requests.
   async fn close(&self) -> Result<(), Self::Error>;
 }
 
-/// Used to return information about a pipelined [`AppendEntriesRequest`].
+/// Represents the anticipated response following an appended entry in the pipeline.
 pub trait AppendFuture:
   std::future::Future<Output = std::io::Result<AppendEntriesResponse<Self::Id, Self::Address>>>
   + Send
   + Sync
   + 'static
 {
-  /// The id type used to identify nodes.
+  /// Unique identifier associated with nodes.
   type Id: Id;
-  /// The address type of node.
+
+  /// Network address representation of nodes.
   type Address: Address;
 
-  /// Returns the time that the append request was started.
-  /// It is always OK to call this method.
+  /// Retrieves the timestamp indicating when the append request was initiated.
   fn start(&self) -> std::time::Instant;
 }
 
-/// Communicating with other nodes through the network.
+/// Defines the capabilities and requirements for communication with other nodes across a network.
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync + 'static {
-  /// Errors returned by the transport.
-  type Error: Error<
-    Id = Self::Id,
-    Resolver = Self::Resolver,
-    Encoder = Self::Encoder,
-    Decoder = Self::Decoder,
-  >;
+  /// Errors that the transport can potentially return during operations.
+  type Error: TransportError<Id = Self::Id, Resolver = Self::Resolver, Wire = Self::Wire>;
 
-  /// The runtime used by the transport.
+  /// Specifies the runtime environment for transport operations.
   type Runtime: Runtime;
 
   /// The configuration used to construct the transport.
   type Options: Send + Sync + 'static;
 
-  /// The id type used to identify nodes.
+  /// Unique identifier for nodes.
   type Id: Id;
 
   // /// The pipeline used to increase the replication throughput by masking latency and better
   // /// utilizing bandwidth.
   // type Pipeline: AppendPipeline<
+  //   Error = Self::Error,
   //   Runtime = Self::Runtime,
   //   Id = Self::Id,
   //   Address = <Self::Resolver as AddressResolver>::Address,
   // >;
 
-  /// The node address resolver used to resolve a node address to a [`SocketAddr`].
-  ///
-  /// e.g., you can implement a DNS resolver, then the raft node can accept a domain like `www.foo.com`
-  /// as the node address.
+  /// Resolves node addresses to concrete network addresses, like mapping a domain name to an IP.
   type Resolver: AddressResolver<Runtime = Self::Runtime>;
 
-  /// The encoder used to encode [`Request`] or [`Response`] for data transmission.
-  type Encoder: Encoder;
+  /// Mechanism to encode and decode data for network transmission.
+  type Wire: Wire<Id = Self::Id, Address = <Self::Resolver as AddressResolver>::Address>;
 
-  /// The decoder used to decode [`Request`] or [`Response`] from data transmission.
-  type Decoder: Decoder;
+  /// Consumes and responds to incoming RPC requests.
+  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address>;
 
-  /// Returns a stream that can be used to
-  /// consume and respond to RPC requests.
-  fn consumer(&self) -> RequestConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address>;
-
-  /// Used to return our local addr to distinguish from our peers.
+  /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
 
-  /// Used to return our local id to distinguish from our peers.
+  /// Provides the local unique identifier, helping in distinguishing this node from its peers.
   fn local_id(&self) -> &Self::Id;
 
-  /// Used to return the advertise addr of the node.
+  /// Provides the concrete network address for peers in the Raft cluster to communicate with.
   fn advertise_addr(&self) -> SocketAddr;
 
-  /// Returns the node address resolver for the transport
+  /// Provides access to the node's address resolver.
   fn resolver(&self) -> &Self::Resolver;
 
   /// Returns a transport

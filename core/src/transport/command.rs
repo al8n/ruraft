@@ -1,4 +1,5 @@
 use std::{
+  future::Future,
   io,
   pin::Pin,
   task::{Context, Poll},
@@ -24,6 +25,16 @@ use super::{Address, Id};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header<I, A> {
+  /// The protocol version of the request or response
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get the protocol version of the request or response"),
+    ),
+    setter(attrs(doc = "Set the protocol version of the request or response"),)
+  )]
+  protocol_version: ProtocolVersion,
+
   /// The id of the node sending the RPC Request or Response
   #[viewit(
     getter(
@@ -49,8 +60,12 @@ pub struct Header<I, A> {
 impl<I: Id, A: Address> Header<I, A> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
-  pub const fn new(id: I, addr: A) -> Self {
-    Self { id, addr }
+  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+    Self {
+      protocol_version: version,
+      id,
+      addr,
+    }
   }
 }
 
@@ -105,9 +120,9 @@ pub struct AppendEntriesResponse<I, A> {
 }
 
 impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
-  pub const fn new(id: I, addr: A) -> Self {
+  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
-      header: Header::new(id, addr),
+      header: Header::new(version, id, addr),
       term: 0,
       last_log: 0,
       success: false,
@@ -340,47 +355,46 @@ impl<I: Id, A: Address> From<HeartbeatRequest<I, A>> for RequestKind<I, A> {
 pub struct Request<I: Id, A: Address> {
   pub(crate) protocol_version: ProtocolVersion,
   pub(crate) kind: RequestKind<I, A>,
-  pub(crate) tx: oneshot::Sender<Response<I, A>>,
 }
 
 impl<I: Id, A: Address> Request<I, A> {
-  // pub const fn append_entries(version: ProtocolVersion, req: AppendEntriesRequest) -> Self {
-  //   Self {
-  //     protocol_version: version,
-  //     kind: RequestKind::AppendEntries(req),
-  //   }
-  // }
+  pub const fn append_entries(version: ProtocolVersion, req: AppendEntriesRequest<I, A>) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::AppendEntries(req),
+    }
+  }
 
-  // pub const fn vote(version: ProtocolVersion, req: VoteRequest) -> Self {
-  //   Self {
-  //     protocol_version: version,
-  //     kind: RequestKind::Vote(req),
-  //   }
-  // }
+  pub const fn vote(version: ProtocolVersion, req: VoteRequest<I, A>) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::Vote(req),
+    }
+  }
 
-  // pub const fn install_snapshot(
-  //   version: ProtocolVersion,
-  //   req: InstallSnapshotRequest,
-  // ) -> Self {
-  //   Self {
-  //     protocol_version: version,
-  //     kind: RequestKind::InstallSnapshot(req),
-  //   }
-  // }
+  pub const fn install_snapshot(
+    version: ProtocolVersion,
+    req: InstallSnapshotRequest<I, A>,
+  ) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::InstallSnapshot(req),
+    }
+  }
 
-  // pub const fn timeout_now(version: ProtocolVersion, req: TimeoutNowRequest) -> Self {
-  //   Self {
-  //     protocol_version: version,
-  //     kind: RequestKind::TimeoutNow(req),
-  //   }
-  // }
+  pub const fn timeout_now(version: ProtocolVersion, req: TimeoutNowRequest<I, A>) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::TimeoutNow(req),
+    }
+  }
 
-  // pub const fn heartbeat(version: ProtocolVersion, req: HeartbeatRequest) -> Self {
-  //   Self {
-  //     protocol_version: version,
-  //     kind: RequestKind::Heartbeat(req),
-  //   }
-  // }
+  pub const fn heartbeat(version: ProtocolVersion, req: HeartbeatRequest<I, A>) -> Self {
+    Self {
+      protocol_version: version,
+      kind: RequestKind::Heartbeat(req),
+    }
+  }
 
   /// Returns the header of the request
   pub const fn header(&self) -> &Header<I, A> {
@@ -403,16 +417,6 @@ impl<I: Id, A: Address> Request<I, A> {
   #[inline]
   pub const fn kind(&self) -> &RequestKind<I, A> {
     &self.kind
-  }
-
-  /// Respond to the request, if the remote half is closed
-  /// then the response will be returned back as an error.
-  pub fn respond(self, resp: Response<I, A>) -> Result<(), Response<I, A>> {
-    self.tx.send(resp)
-  }
-
-  pub(crate) fn into_components(self) -> (oneshot::Sender<Response<I, A>>, RequestKind<I, A>) {
-    (self.tx, self.kind)
   }
 
   // pub(super) fn encode(&self) -> io::Result<Vec<u8>> {
@@ -468,6 +472,18 @@ impl<I: Id, A: Address> ResponseKind<I, A> {
       Self::TimeoutNow(_) => 3,
       Self::Heartbeat(_) => 4,
       Self::Error(_) => 255,
+    }
+  }
+
+  #[inline]
+  pub const fn description(&self) -> &'static str {
+    match self {
+      Self::AppendEntries(_) => "AppendEntries",
+      Self::Vote(_) => "Vote",
+      Self::InstallSnapshot(_) => "InstallSnapshot",
+      Self::TimeoutNow(_) => "TimeoutNow",
+      Self::Heartbeat(_) => "Heartbeat",
+      Self::Error(_) => "Error",
     }
   }
 }
@@ -578,6 +594,12 @@ impl<I: Id, A: Address> Response<I, A> {
     &self.kind
   }
 
+  /// Returns the kind of the response.
+  #[inline]
+  pub fn into_kind(self) -> ResponseKind<I, A> {
+    self.kind
+  }
+
   // pub fn encode(&self) -> io::Result<Vec<u8>> {
   //   match self.protocol_version {
   //     ProtocolVersion::V1 => {
@@ -603,82 +625,82 @@ impl<I: Id, A: Address> Response<I, A> {
   // }
 }
 
-// /// Errors returned by the [`CommandHandle`].
-// #[derive(Debug, thiserror::Error)]
-// pub enum CommandHandleError {
-//   /// Returned when the command is cancelled
-//   #[error("{0}")]
-//   Canceled(#[from] oneshot::Canceled),
-// }
+/// Errors returned by the [`RpcHandle`].
+#[derive(Debug, thiserror::Error)]
+pub enum RpcHandleError {
+  /// Returned when the command is cancelled
+  #[error("{0}")]
+  Canceled(#[from] oneshot::Canceled),
+}
 
-// /// A future for getting the corresponding response from the Raft.
-// #[pin_project::pin_project]
-// #[repr(transparent)]
-// pub(super) struct CommandHandle<I, A> {
-//   #[pin]
-//   rx: oneshot::Receiver<Response<I, A>>,
-// }
+/// A future for getting the corresponding response from the Raft.
+#[pin_project::pin_project]
+#[repr(transparent)]
+pub struct RpcHandle<I, A> {
+  #[pin]
+  rx: oneshot::Receiver<Response<I, A>>,
+}
 
-// impl<I: Id, A: Address> CommandHandle<I, A> {
-//   pub(crate) fn new(rx: oneshot::Receiver<Response<I, A>>) -> Self {
-//     Self { rx }
-//   }
-// }
+impl<I: Id, A: Address> RpcHandle<I, A> {
+  fn new(rx: oneshot::Receiver<Response<I, A>>) -> Self {
+    Self { rx }
+  }
+}
 
-// impl<I: Id, A: Address> Future for CommandHandle<I, A> {
-//   type Output = Result<Response<I, A>, CommandHandleError>;
+impl<I: Id, A: Address> Future for RpcHandle<I, A> {
+  type Output = Result<Response<I, A>, RpcHandleError>;
 
-//   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-//     // Using Pin::as_mut to get a Pin<&mut Receiver>.
-//     let this = self.project();
+  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    // Using Pin::as_mut to get a Pin<&mut Receiver>.
+    let this = self.project();
 
-//     // Now, poll the receiver directly
-//     this.rx.poll(cx).map(|res| match res {
-//       Ok(res) => Ok(res),
-//       Err(e) => Err(From::from(e)),
-//     })
-//   }
-// }
+    // Now, poll the receiver directly
+    this.rx.poll(cx).map(|res| match res {
+      Ok(res) => Ok(res),
+      Err(e) => Err(From::from(e)),
+    })
+  }
+}
 
-// /// The struct is used to interact with the Raft.
-// pub struct Command {
-//   req: Request,
-//   tx: oneshot::Sender<Response>,
-// }
+/// The struct is used to interact with the Raft.
+pub struct Rpc<I: Id, A: Address> {
+  req: Request<I, A>,
+  tx: oneshot::Sender<Response<I, A>>,
+}
 
-// impl Command {
-//   /// Create a new command from the given request.
-//   pub(super) fn new(req: Request) -> (Self, CommandHandle) {
-//     let (tx, rx) = oneshot::channel();
-//     (Self { req, tx }, CommandHandle::new(rx))
-//   }
+impl<I: Id, A: Address> Rpc<I, A> {
+  /// Create a new command from the given request.
+  pub fn new(req: Request<I, A>) -> (Self, RpcHandle<I, A>) {
+    let (tx, rx) = oneshot::channel();
+    (Self { req, tx }, RpcHandle::new(rx))
+  }
 
-//   /// Returns the header of the request.
-//   pub fn header(&self) -> &Header {
-//     self.req.header()
-//   }
+  /// Returns the header of the request.
+  pub fn header(&self) -> &Header<I, A> {
+    self.req.header()
+  }
 
-//   /// Respond to the request, if the remote half is closed
-//   /// then the response will be returned back as an error.
-//   pub fn respond(self, resp: Response) -> Result<(), Response> {
-//     self.tx.send(resp)
-//   }
+  /// Respond to the request, if the remote half is closed
+  /// then the response will be returned back as an error.
+  pub fn respond(self, resp: Response<I, A>) -> Result<(), Response<I, A>> {
+    self.tx.send(resp)
+  }
 
-//   pub(crate) fn into_components(self) -> (oneshot::Sender<Response>, Request) {
-//     (self.tx, self.req)
-//   }
-// }
+  pub(crate) fn into_components(self) -> (oneshot::Sender<Response<I, A>>, Request<I, A>) {
+    (self.tx, self.req)
+  }
+}
 
 /// Command stream is a consumer for Raft node to consume requests
 /// from remote nodes
 #[pin_project::pin_project]
 #[derive(Debug)]
-pub struct RequestConsumer<I: Id, A: Address> {
+pub struct RpcConsumer<I: Id, A: Address> {
   #[pin]
-  rx: async_channel::Receiver<Request<I, A>>,
+  rx: async_channel::Receiver<Rpc<I, A>>,
 }
 
-impl<I: Id, A: Address> Clone for RequestConsumer<I, A> {
+impl<I: Id, A: Address> Clone for RpcConsumer<I, A> {
   fn clone(&self) -> Self {
     Self {
       rx: self.rx.clone(),
@@ -686,20 +708,20 @@ impl<I: Id, A: Address> Clone for RequestConsumer<I, A> {
   }
 }
 
-impl<I: Id, A: Address> Stream for RequestConsumer<I, A> {
-  type Item = <async_channel::Receiver<Request<I, A>> as Stream>::Item;
+impl<I: Id, A: Address> Stream for RpcConsumer<I, A> {
+  type Item = <async_channel::Receiver<Rpc<I, A>> as Stream>::Item;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    <async_channel::Receiver<Request<I, A>> as Stream>::poll_next(self.project().rx, cx)
+    <async_channel::Receiver<Rpc<I, A>> as Stream>::poll_next(self.project().rx, cx)
   }
 }
 
-/// A producer for [`Request`]s
-pub struct RequestProducer<I: Id, A: Address> {
-  tx: async_channel::Sender<Request<I, A>>,
+/// A producer for [`Rpc`]s
+pub struct RpcProducer<I: Id, A: Address> {
+  tx: async_channel::Sender<Rpc<I, A>>,
 }
 
-impl<I: Id, A: Address> Clone for RequestProducer<I, A> {
+impl<I: Id, A: Address> Clone for RpcProducer<I, A> {
   fn clone(&self) -> Self {
     Self {
       tx: self.tx.clone(),
@@ -707,18 +729,15 @@ impl<I: Id, A: Address> Clone for RequestProducer<I, A> {
   }
 }
 
-impl<I: Id, A: Address> RequestProducer<I, A> {
+impl<I: Id, A: Address> RpcProducer<I, A> {
   /// Produce a command for processing
-  pub async fn send(
-    &self,
-    command: Request<I, A>,
-  ) -> Result<(), async_channel::SendError<Request<I, A>>> {
-    self.tx.send(command).await
+  pub async fn send(&self, req: Rpc<I, A>) -> Result<(), async_channel::SendError<Rpc<I, A>>> {
+    self.tx.send(req).await
   }
 }
 
 /// Returns unbounded command producer and command consumer.
-pub fn command<I: Id, A: Address>() -> (RequestProducer<I, A>, RequestConsumer<I, A>) {
+pub fn rpc<I: Id, A: Address>() -> (RpcProducer<I, A>, RpcConsumer<I, A>) {
   let (tx, rx) = async_channel::unbounded();
-  (RequestProducer { tx }, RequestConsumer { rx })
+  (RpcProducer { tx }, RpcConsumer { rx })
 }

@@ -1,14 +1,12 @@
-use core::mem;
-
 use std::{
   collections::HashMap,
   future::Future,
-  io,
   net::SocketAddr,
   sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
   },
+  task::{Context, Poll},
   time::{Duration, Instant},
 };
 
@@ -29,39 +27,11 @@ use wg::AsyncWaitGroup;
 
 use super::*;
 
-/// Network encoder and decoder based on [`rmp_serde`].
-pub mod rmp;
+/// Network [`Wire`](ruraft_core::transport::Wire) implementors.
+pub mod wire;
 
 mod pipeline;
 pub use pipeline::*;
-
-const ENCODED_HEADER_SIZE: usize = mem::size_of::<ProtocolVersion>()
-  + 1 // kind tag
-  + mem::size_of::<u32>() // header length
-  + mem::size_of::<u32>(); // req/resp length
-
-fn encode_message_header<I: Id, A: Address>(
-  protocol_version: ProtocolVersion,
-  tag: u8,
-  id: &I,
-  address: &A,
-) -> [u8; ENCODED_HEADER_SIZE] {
-  let id_encoded_len = id.encoded_len();
-  let address_encoded_len = address.encoded_len();
-  let header_len = ENCODED_HEADER_SIZE + id_encoded_len + address_encoded_len;
-
-  let mut buf = [0u8; ENCODED_HEADER_SIZE];
-  let mut cur = 0;
-  buf[0] = protocol_version as u8;
-  cur += 1;
-  buf[1] = tag;
-  cur += 1;
-  buf[cur..cur + mem::size_of::<u32>()].copy_from_slice(&(header_len as u32).to_be_bytes());
-  cur += mem::size_of::<u32>();
-  // We do not add req/resp length here, because we do not know the length of req/resp yet.
-  // req/resp length will be updated by the caller.
-  buf
-}
 
 /// The default TimeoutScale in a [`NetworkTransport`].
 pub const DEFAULT_TIMEOUT_SCALE: usize = 256 * 1024; // 256KB
@@ -90,100 +60,104 @@ const CONN_SEND_BUFFER_SIZE: usize = 256 * 1024; // 256KB
 /// avoid panics etc.
 const MIN_IN_FLIGHT_FOR_PIPELINING: usize = 2;
 
-/// The error returned by the [`NetTransport`].
+/// Represents errors specific to the [`NetTransport`].
+///
+/// This enum captures a comprehensive set of errors that can arise when using the `NetTransport`.
+/// It categorizes these errors based on their origin, whether from the `Id`, `AddressResolver`,
+/// `Wire` operations or more general transport-level concerns.
 #[derive(thiserror::Error)]
-pub enum Error<I: Id, R: AddressResolver, E: Encoder, D: Decoder> {
+pub enum Error<I: Id, R: AddressResolver, W: Wire> {
+  /// Errors arising from the node identifier (`Id`) operations.
   #[error("{0}")]
   Id(I::Error),
+
+  /// Errors originating from the transformation of node addresses.
   #[error("{0}")]
   Address(<R::Address as Transformable>::Error),
+
+  /// Errors from the address resolver operations.
   #[error("{0}")]
   Resolver(R::Error),
+
+  /// Errors related to encoding and decoding using the `Wire` trait.
   #[error("{0}")]
-  Encode(E::Error),
-  #[error("{0}")]
-  Decode(D::Error),
-  /// Returned when operations on a transport are
-  /// invoked after it's been terminated.
+  Wire(W::Error),
+
+  /// Error thrown when trying to operate on a transport that has already been terminated.
   #[error("transport already shutdown")]
   AlreadyShutdown,
-  /// Returned when the pipeline is closed
+
+  /// Error signifying that the append pipeline has been closed.
   #[error("append pipeline closed")]
   PipelingShutdown,
-  /// Returned when fail to forward the request to the raft
+
+  /// Error indicating a failure to forward the request to the raft system.
   #[error("failed to forward request to raft")]
   Dispatch,
-  /// Returned when the response is unexpected
+
+  /// Error indicating that the received response was not as expected.
   #[error("unexpected response {actual}, expected {expected}")]
   UnexpectedResponse {
     expected: &'static str,
     actual: &'static str,
   },
-  /// Returned when the remote response error
+
+  /// Error returned from a remote node during communication.
   #[error("remote: {0}")]
   Remote(String),
-  /// An error about the I/O
+
+  /// General I/O related errors.
   #[error("{0}")]
   IO(#[from] std::io::Error),
+
+  /// Allows defining custom error messages.
+  #[error("{0}")]
+  Custom(String),
 }
 
-impl<I: Id, R: AddressResolver, E: Encoder, D: Decoder> core::fmt::Debug for Error<I, R, E, D> {
+impl<I: Id, R: AddressResolver, W: Wire> core::fmt::Debug for Error<I, R, W> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     core::fmt::Display::fmt(&self, f)
   }
 }
 
-impl<I: Id, R: AddressResolver, E: Encoder, D: Decoder> ruraft_core::transport::Error
-  for Error<I, R, E, D>
-{
+impl<I: Id, R: AddressResolver, W: Wire> TransportError for Error<I, R, W> {
   type Id = I;
 
   type Resolver = R;
 
-  type Encoder = E;
-
-  type Decoder = D;
+  type Wire = W;
 
   fn id(err: <I as Transformable>::Error) -> Self
   where
     Self: Sized,
   {
-    todo!()
+    Self::Id(err)
   }
 
   fn address(err: <<R as AddressResolver>::Address as Transformable>::Error) -> Self
   where
     Self: Sized,
   {
-    todo!()
+    Self::Address(err)
   }
 
   fn resolver(err: <R as AddressResolver>::Error) -> Self
   where
     Self: Sized,
   {
-    todo!()
+    Self::Resolver(err)
   }
 
-  fn encoder(err: <E as Encoder>::Error) -> Self
-  where
-    Self: Sized,
-  {
-    todo!()
-  }
-
-  fn decoder(err: <D as Decoder>::Error) -> Self
-  where
-    Self: Sized,
-  {
-    todo!()
+  fn wire(err: <W as Wire>::Error) -> Self {
+    Self::Wire(err)
   }
 
   fn io(err: std::io::Error) -> Self
   where
     Self: Sized,
   {
-    todo!()
+    Self::IO(err)
   }
 
   fn custom<T>(msg: T) -> Self
@@ -191,7 +165,7 @@ impl<I: Id, R: AddressResolver, E: Encoder, D: Decoder> ruraft_core::transport::
     Self: Sized,
     T: core::fmt::Display,
   {
-    todo!()
+    Self::Custom(msg.to_string())
   }
 }
 
@@ -278,21 +252,20 @@ where
 /// InstallSnapshot is special, in that after the request we stream
 /// the entire state. That socket is not re-used as the connection state
 /// is not known if there is an error.
-pub struct NetTransport<I, R, E, D>
+pub struct NetTransport<I, R, W>
 where
   I: Id + Send + Sync + 'static,
   R: AddressResolver,
   R::Address: Send + Sync + 'static,
   <R as AddressResolver>::Runtime: Runtime,
   <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
-  E: Encoder,
-  D: Decoder,
+  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
 {
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <R as AddressResolver>::Address>,
   advertise_addr: SocketAddr,
-  consumer: RequestConsumer<I, <R as AddressResolver>::Address>,
+  consumer: RpcConsumer<I, <R as AddressResolver>::Address>,
   resolver: R,
   wg: AsyncWaitGroup,
   conn_pool: Mutex<
@@ -306,22 +279,20 @@ where
   max_pool: usize,
   max_inflight_requests: usize,
   timeout: Duration,
-  _encoder: std::marker::PhantomData<E>,
-  _decoder: std::marker::PhantomData<D>,
+  _w: std::marker::PhantomData<W>,
 }
 
 #[async_trait::async_trait]
-impl<I, R, E, D> Transport for NetTransport<I, R, E, D>
+impl<I, R, W> Transport for NetTransport<I, R, W>
 where
   I: Id + Send + Sync + 'static,
   R: AddressResolver,
   R::Address: Send + Sync + 'static,
   <R as AddressResolver>::Runtime: Runtime,
   <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
-  E: Encoder,
-  D: Decoder,
+  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
 {
-  type Error = Error<Self::Id, Self::Resolver, Self::Encoder, Self::Decoder>;
+  type Error = Error<Self::Id, Self::Resolver, Self::Wire>;
   type Runtime = <Self::Resolver as AddressResolver>::Runtime;
   type Options = NetTransportOptions<Self::Id, <Self::Resolver as AddressResolver>::Address>;
 
@@ -331,11 +302,9 @@ where
 
   type Resolver = R;
 
-  type Encoder = E;
+  type Wire = W;
 
-  type Decoder = D;
-
-  fn consumer(&self) -> RequestConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
+  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
     self.consumer.clone()
   }
 
@@ -361,28 +330,31 @@ where
       addr
     } else {
       tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
-      resolver.resolve(opts.header.addr()).await?
+      resolver
+        .resolve(opts.header.addr())
+        .await
+        .map_err(<Self::Error as TransportError>::resolver)?
     };
     let auto_port = advertise_addr.port() == 0;
 
-    let ln = <<<R as Runtime>::Net as Net>::TcpListener as TcpListener>::bind(opts.advertise_addr)
+    let ln = <<<<R as AddressResolver>::Runtime as Runtime>::Net as Net>::TcpListener as TcpListener>::bind(advertise_addr)
       .await
       .map_err(|e| {
         tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
         Error::IO(e)
       })?;
 
-    let addr = if auto_port {
+    let advertise_addr = if auto_port {
       let addr = ln.local_addr()?;
       tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
       addr
     } else {
-      opts.advertise_addr
+      advertise_addr
     };
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let wg = AsyncWaitGroup::from(1);
-    let (producer, consumer) = command();
+    let (producer, consumer) = rpc::<Self::Id, <Self::Resolver as AddressResolver>::Address>();
     let request_handler = RequestHandler {
       ln,
       local_header: opts.header.clone(),
@@ -395,7 +367,9 @@ where
       I,
       <Self::Resolver as AddressResolver>::Address,
       Self::Runtime,
-    >::run(request_handler));
+    >::run::<Self::Resolver, Self::Wire>(
+      request_handler
+    ));
 
     Ok(Self {
       shutdown,
@@ -415,8 +389,7 @@ where
         opts.max_inflight_requests
       },
       timeout: opts.timeout,
-      _encoder: std::marker::PhantomData,
-      _decoder: std::marker::PhantomData,
+      _w: std::marker::PhantomData,
     })
   }
 
@@ -427,23 +400,56 @@ where
     AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
   > {
-    let addr = req.header().addr();
-    let conn = self
-      .send(Request::append_entries(self.protocol_version, req))
-      .await?;
-    self
-      .receive(conn, addr, CommandResponseKind::AppendEntries)
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
       .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::append_entries(self.protocol_version, req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp.into_kind() {
+      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
+      ResponseKind::AppendEntries(resp) => {
+        self.return_conn(conn.into_inner(), header_addr);  
+        Ok(resp)
+      },
+      kind => Err(Error::UnexpectedResponse {
+        expected: "AppendEntries",
+        actual: kind.description(),
+      }),
+    }
   }
 
   async fn vote(
     &self,
     req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error> {
-    let addr = req.header().addr();
-    let conn: <<R as Runtime>::Net as Net>::TcpStream =
-      self.send(Request::vote(self.protocol_version, req)).await?;
-    self.receive(conn, addr, CommandResponseKind::Vote).await
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::vote(self.protocol_version, req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp.into_kind() {
+      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
+      ResponseKind::Vote(resp) => {
+        self.return_conn(conn.into_inner(), header_addr);
+        Ok(resp)
+      },
+      kind => Err(Error::UnexpectedResponse {
+        expected: "Vote",
+        actual: kind.description(),
+      }),
+    }
   }
 
   async fn install_snapshot(
@@ -454,15 +460,31 @@ where
     InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
   > {
-    let addr = req.header().addr();
-    let conn = self
-      .send(Request::install_snapshot(self.protocol_version, req))
-      .await?;
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::install_snapshot(self.protocol_version, req);
+    let conn = self.send(addr, req).await?;
     let mut w = BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, conn);
     futures::io::copy(source, &mut w).await?;
-    self
-      .receive(w.into_inner(), addr, CommandResponseKind::InstallSnapshot)
+    let mut conn = BufReader::new(w.into_inner());
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
       .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp.into_kind() {
+      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
+      ResponseKind::InstallSnapshot(resp) => {
+        self.return_conn(conn.into_inner(), header_addr);
+        Ok(resp)
+      },
+      kind => Err(Error::UnexpectedResponse {
+        expected: "InstallSnapshot",
+        actual: kind.description(),
+      }),
+    }
   }
 
   async fn timeout_now(
@@ -470,13 +492,28 @@ where
     req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>
   {
-    let addr = req.header().addr();
-    let conn = self
-      .send(Request::timeout_now(self.protocol_version, req))
-      .await?;
-    self
-      .receive(conn, addr, CommandResponseKind::TimeoutNow)
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
       .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::timeout_now(self.protocol_version, req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp.into_kind() {
+      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
+      ResponseKind::TimeoutNow(resp) => {
+        self.return_conn(conn.into_inner(), header_addr);
+        Ok(resp)
+      },
+      kind => Err(Error::UnexpectedResponse {
+        expected: "TimeoutNow",
+        actual: kind.description(),
+      }),
+    }
   }
 
   async fn heartbeat(
@@ -484,13 +521,28 @@ where
     req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>
   {
-    let addr = req.header().addr();
-    let conn = self
-      .send(Request::heartbeat(self.protocol_version, req))
-      .await?;
-    self
-      .receive(conn, addr, CommandResponseKind::Heartbeat)
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
       .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::heartbeat(self.protocol_version, req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp.into_kind() {
+      ResponseKind::Error(err) => Err(Error::Remote(err.error)),
+      ResponseKind::Heartbeat(resp) => {
+        self.return_conn(conn.into_inner(), header_addr);
+        Ok(resp)
+      },
+      kind => Err(Error::UnexpectedResponse {
+        expected: "Heartbeat",
+        actual: kind.description(),
+      }),
+    }
   }
 
   async fn shutdown(&self) -> Result<(), Self::Error> {
@@ -504,48 +556,15 @@ where
   }
 }
 
-impl<I, R, E, D> NetTransport<I, R, E, D>
+impl<I, R, W> NetTransport<I, R, W>
 where
   I: Id + Send + Sync + 'static,
   R: AddressResolver,
   R::Address: Send + Sync + 'static,
   <R as AddressResolver>::Runtime: Runtime,
   <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
-  E: Encoder,
-  D: Decoder,
+  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
 {
-  async fn receive<Res: serde::de::DeserializeOwned>(
-    &self,
-    conn: <<<R as AddressResolver>::Runtime as Runtime>::Net as Net>::TcpStream,
-    addr: SocketAddr,
-    expected_kind: CommandResponseKind,
-  ) -> Result<Res, <Self as Transport>::Error> {
-    // let mut r = BufReader::new(conn);
-    // let mut header = [0u8; HEADER_SIZE];
-    // r.read_exact(&mut header).await?;
-    // let kind = CommandResponseKind::try_from(header[0])?;
-    // let version = ProtocolVersion::from_u8(header[1])?;
-    // let len = u32::from_be_bytes([header[2], header[3], header[4], header[5]]) as usize;
-    // let mut data = vec![0; len];
-    // r.read_exact(&mut data).await?;
-    // match kind {
-    //   CommandResponseKind::Err => {
-    //     let res = decode::<ErrorResponse>(version, &data)?;
-    //     Err(Error::Remote(res.error))
-    //   }
-    //   kind if kind == expected_kind => {
-    //     let res = decode::<Res>(version, &data)?;
-    //     self.return_conn(r.into_inner(), addr).await;
-    //     Ok(res)
-    //   }
-    //   kind => Err(Error::UnexpectedResponse {
-    //     expected: expected_kind.as_str(),
-    //     actual: kind.as_str(),
-    //   }),
-    // }
-    todo!()
-  }
-
   async fn return_conn(
     &self,
     conn: <<<R as AddressResolver>::Runtime as Runtime>::Net as Net>::TcpStream,
@@ -570,6 +589,7 @@ where
 
   async fn send(
     &self,
+    target: SocketAddr,
     req: Request<I, <R as AddressResolver>::Address>,
   ) -> Result<
     <<<R as AddressResolver>::Runtime as Runtime>::Net as Net>::TcpStream,
@@ -584,8 +604,7 @@ where
           conn
         }
         None => {
-          let socket_addr = self.resolver.resolve(req.header().addr()).await?;
-          let conn = <<<<R as AddressResolver>::Runtime as Runtime>::Net as Net>::TcpStream as TcpStream>::connect(socket_addr).await?;
+          let conn = <<<<R as AddressResolver>::Runtime as Runtime>::Net as Net>::TcpStream as TcpStream>::connect(target).await?;
           if !self.timeout.is_zero() {
             conn.set_timeout(Some(self.timeout));
           }
@@ -594,24 +613,23 @@ where
       }
     };
 
-    // let data = req.encode()?;
-    // conn.write_all(&data).await?;
-    // conn.flush().await?;
+    let data = <<Self as Transport>::Wire as Wire>::encode_request(&req)
+      .map_err(<<Self as Transport>::Error as TransportError>::wire)?;
+    conn.write_all(data.as_ref()).await?;
+    conn.flush().await?;
 
-    // Ok(conn)
-    todo!()
+    Ok(conn)
   }
 }
 
-impl<I, R, E, D> Drop for NetTransport<I, R, E, D>
+impl<I, R, W> Drop for NetTransport<I, R, W>
 where
   I: Id + Send + Sync + 'static,
   R: AddressResolver,
   R::Address: Send + Sync + 'static,
   <R as AddressResolver>::Runtime: Runtime,
   <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
-  E: Encoder,
-  D: Decoder,
+  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
 {
   fn drop(&mut self) {
     use pollster::FutureExt as _;
@@ -623,7 +641,7 @@ where
 struct RequestHandler<I: Id, A: Address, R: Runtime> {
   ln: <R::Net as agnostic::net::Net>::TcpListener,
   local_header: Header<I, A>,
-  producer: RequestProducer<I, A>,
+  producer: RpcProducer<I, A>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   wg: AsyncWaitGroup,
@@ -636,7 +654,7 @@ where
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {
-  async fn run(self) {
+  async fn run<Resolver: AddressResolver<Runtime = R>, W: Wire<Id = I, Address = A>>(self) {
     const BASE_DELAY: Duration = Duration::from_millis(5);
     const MAX_DELAY: Duration = Duration::from_secs(1);
 
@@ -660,7 +678,7 @@ where
               let local_header = self.local_header.clone();
               let wg = self.wg.add(1);
               R::spawn_detach(async move {
-                if Self::handle_connection(conn, producer, shutdown_rx, local_header)
+                if Self::handle_connection::<Resolver, W>(conn, producer, shutdown_rx, local_header)
                   .await
                   .is_err()
                 {
@@ -703,221 +721,122 @@ where
     }
   }
 
-  async fn handle_connection(
+  async fn handle_connection<
+    Resolver: AddressResolver<Runtime = R>,
+    W: Wire<Id = I, Address = A>,
+  >(
     conn: <R::Net as agnostic::net::Net>::TcpStream,
-    producer: RequestProducer<I, A>,
+    producer: RpcProducer<I, A>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
-  ) -> Result<(), <Self as Transport>::Error> {
-    // let mut r = BufReader::with_capacity(CONN_RECEIVE_BUFFER_SIZE, conn);
+  ) -> Result<(), Error<I, Resolver, W>> {
+    let mut r = BufReader::with_capacity(CONN_RECEIVE_BUFFER_SIZE, conn);
 
-    // let _get_type_start = Instant::now();
+    let _get_type_start = Instant::now();
 
-    // // TODO: metrics
-    // // measuring the time to get the first byte separately because the heartbeat conn will hang out here
-    // // for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
+    // TODO: metrics
+    // measuring the time to get the first byte separately because the heartbeat conn will hang out here
+    // for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
 
-    // let _decode_start = Instant::now();
-    // // Get the request meta
-    // let mut header = [0u8; HEADER_SIZE];
-    // r.read_exact(&mut header).await?;
-    // let kind = CommandKind::try_from(header[0])?;
-    // let version = ProtocolVersion::from_u8(header[1])?;
-    // let msg_len = u32::from_be_bytes([header[2], header[3], header[4], header[5]]) as usize;
-    // let mut buf = vec![0; msg_len];
-    // r.read_exact(&mut buf).await?;
+    let _decode_start = Instant::now();
+    // Get the request meta
+    let req = <W as Wire>::decode_request(&mut r)
+      .await
+      .map_err(Error::Wire)?;
 
-    // let req = match kind {
-    //   CommandKind::AppendEntries => {
-    //     let req = decode(version, &buf)?;
-    //     // TODO: metrics
-    //     Request::append_entries(version, req)
-    //   }
-    //   CommandKind::Vote => {
-    //     let req = decode(version, &buf)?;
-    //     // TODO: metrics
-    //     Request::vote(version, req)
-    //   }
-    //   CommandKind::InstallSnapshot => {
-    //     let req = decode(version, &buf)?;
-    //     // TODO: metrics
-    //     Request::install_snapshot(version, req)
-    //   }
-    //   CommandKind::TimeoutNow => {
-    //     let req = decode(version, &buf)?;
-    //     // TODO: metrics
-    //     Request::timeout_now(version, req)
-    //   }
-    //   CommandKind::Heartbeat => {
-    //     let req = decode(version, &buf)?;
-    //     // TODO: metrics
-    //     Request::heartbeat(version, req)
-    //   }
-    //   _ => {
-    //     unreachable!();
-    //   }
-    // };
+    // TODO: metrics
 
-    // // TODO: metrics
+    let _process_start = Instant::now();
+    let resp = if let RequestKind::Heartbeat(_) = req.kind() {
+      Response::heartbeat(local_header.protocol_version(), local_header)
+    } else {
+      let (tx, handle) = Rpc::<I, A>::new(req);
+      futures::select! {
+        res = producer.send(tx).fuse() => {
+          match res {
+            Ok(_) => {
+              futures::select! {
+                res = handle.fuse() => {
+                  match res {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                      tracing::error!(target = "ruraft.net.transport", err=%e, "canceled command");
+                      Response::error(local_header.protocol_version(), local_header, e.to_string())
+                    },
+                  }
+                },
+                _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
+              }
+            },
+            Err(e) => {
+              tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send dispatch request");
+              return Err(Error::Dispatch);
+            },
+          }
+        },
+        _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
+      }
+    };
+    let resp = W::encode_response(&resp).map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to encode response");
+      Error::Wire(e)
+    })?;
 
-    // let _process_start = Instant::now();
-    // let resp = if let RequestKind::Heartbeat(_) = req.kind {
-    //   Response::heartbeat(version, local_header)
-    // } else {
-    //   let (tx, handle) = Command::new(req);
-    //   futures::select! {
-    //     res = producer.send(tx).fuse() => {
-    //       match res {
-    //         Ok(_) => {
-    //           futures::select! {
-    //             res = handle.fuse() => {
-    //               match res {
-    //                 Ok(resp) => resp,
-    //                 Err(e) => {
-    //                   tracing::error!(target = "ruraft.net.transport", err=%e, "canceled command");
-    //                   Response::error(version, local_header, e.to_string())
-    //                 },
-    //               }
-    //             },
-    //             _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
-    //           }
-    //         },
-    //         Err(e) => {
-    //           tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send dispatch request");
-    //           return Err(Error::Dispatch);
-    //         },
-    //       }
-    //     },
-    //     _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
-    //   }
-    // };
-    // let resp = resp.encode().map_err(|e| {
-    //   tracing::error!(target = "ruraft.net.transport", err=%e, "failed to encode response");
-    //   Error::IO(e)
-    // })?;
-
-    // r.into_inner().write_all(&resp).await.map_err(|e| {
-    //   tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
-    //   Error::IO(e)
-    // })
-    todo!()
-  }
-}
-
-#[repr(u8)]
-#[non_exhaustive]
-pub(super) enum CommandKind {
-  AppendEntries = 0,
-  Vote = 1,
-  InstallSnapshot = 2,
-  TimeoutNow = 3,
-  Heartbeat = 4,
-}
-
-impl TryFrom<u8> for CommandKind {
-  type Error = io::Error;
-
-  fn try_from(value: u8) -> Result<Self, Self::Error> {
-    match () {
-      () if CommandKind::AppendEntries as u8 == value => Ok(Self::AppendEntries),
-      () if CommandKind::Vote as u8 == value => Ok(Self::Vote),
-      () if CommandKind::InstallSnapshot as u8 == value => Ok(Self::InstallSnapshot),
-      () if CommandKind::TimeoutNow as u8 == value => Ok(Self::TimeoutNow),
-      () if CommandKind::Heartbeat as u8 == value => Ok(Self::Heartbeat),
-      _ => Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("unknown command type: {value}"),
-      )),
-    }
-  }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-#[non_exhaustive]
-pub(super) enum CommandResponseKind {
-  AppendEntries = 0,
-  Vote = 1,
-  InstallSnapshot = 2,
-  TimeoutNow = 3,
-  Heartbeat = 4,
-  Err = 5,
-}
-
-impl CommandResponseKind {
-  pub(super) const fn as_str(&self) -> &'static str {
-    match self {
-      Self::AppendEntries => "AppendEntries",
-      Self::Vote => "Vote",
-      Self::InstallSnapshot => "InstallSnapshot",
-      Self::TimeoutNow => "TimeoutNow",
-      Self::Heartbeat => "Heartbeat",
-      Self::Err => "Error",
-    }
-  }
-}
-
-impl core::fmt::Display for CommandResponseKind {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    match self {
-      Self::AppendEntries => write!(f, "AppendEntries"),
-      Self::Vote => write!(f, "Vote"),
-      Self::InstallSnapshot => write!(f, "InstallSnapshot"),
-      Self::TimeoutNow => write!(f, "TimeoutNow"),
-      Self::Heartbeat => write!(f, "Heartbeat"),
-      Self::Err => write!(f, "Error"),
-    }
-  }
-}
-
-impl TryFrom<u8> for CommandResponseKind {
-  type Error = io::Error;
-
-  fn try_from(value: u8) -> Result<Self, Self::Error> {
-    match () {
-      () if Self::AppendEntries as u8 == value => Ok(Self::AppendEntries),
-      () if Self::Vote as u8 == value => Ok(Self::Vote),
-      () if Self::InstallSnapshot as u8 == value => Ok(Self::InstallSnapshot),
-      () if Self::TimeoutNow as u8 == value => Ok(Self::TimeoutNow),
-      () if Self::Heartbeat as u8 == value => Ok(Self::Heartbeat),
-      () if Self::Err as u8 == value => Ok(Self::Err),
-      _ => Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("unknown command response type: {value}"),
-      )),
-    }
+    r.into_inner().write_all(resp.as_ref()).await.map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
+      Error::IO(e)
+    })
   }
 }
 
 // #[cfg(any(test, feature = "test"))]
 // pub(super) mod tests {
-//   use crate::storage::{Log, LogKind};
+//   use nodecraft::{NodeId, resolver::socket_addr::SocketAddrResolver};
+//   use ruraft_core::storage::{Log, LogKind};
 
 //   use super::*;
 
-//   async fn make_transport<R>() -> NetTransport<R>
+//   pub trait NodeIdExt {
+//     fn random() -> Self;
+//   }
+
+//   impl NodeIdExt for NodeId {
+//     fn random() -> Self {
+//       use rand::Rng;
+//       use rand::distributions::Alphanumeric;
+//       let rand_string: String = rand::thread_rng()
+//         .sample_iter(&Alphanumeric)
+//         .take(32) // Adjust this to the desired length
+//         .map(char::from)
+//         .collect();
+
+//       NodeId::new(rand_string)
+//     }
+//   }
+
+//   async fn make_transport<R>() -> NetTransport<NodeId, SocketAddrResolver<Runtime = R>, SomeWire>
 //   where
 //     R: Runtime,
 //     <R::Sleep as Future>::Output: Send,
 //   {
-//     let opts = NetTransportOptions::new(ServerId::random(), "127.0.0.1:0".parse().unwrap());
-//     NetTransport::<R>::new(opts).await.unwrap()
+//     let opts = NetTransportOptions::new(NodeId::random(), "127.0.0.1:0".parse().unwrap());
+//     NetTransport::<R>::new(SocketAddrResolver::default(), opts).await.unwrap()
 //   }
 
 //   fn make_append_req(id: ServerId, addr: SocketAddr) -> AppendEntriesRequest {
 //     AppendEntriesRequest {
-//       header: Header::new(id, addr),
+//       header: Header::new(ProtocolVersion::V1, id, addr),
 //       term: 10,
 //       prev_log_entry: 100,
 //       prev_log_term: 4,
-//       entries: vec![Log::crate_new(101, 4, LogKind::Noop)],
+//       entries: vec![Log::new(101, 4, LogKind::Noop)],
 //       leader_commit: 90,
 //     }
 //   }
 
 //   fn make_append_resp(id: ServerId, addr: SocketAddr) -> AppendEntriesResponse {
 //     AppendEntriesResponse {
-//       header: Header::new(id, addr),
+//       header: Header::new(ProtocolVersion::V1, id, addr),
 //       term: 4,
 //       last_log: 90,
 //       success: true,
@@ -930,7 +849,7 @@ impl TryFrom<u8> for CommandResponseKind {
 //     <R::Sleep as Future>::Output: Send,
 //   {
 //     let trans = NetTransport::<R>::new(NetTransportOptions::new(
-//       ServerId::random(),
+//       NodeId::random(),
 //       "127.0.0.1:0".parse().unwrap(),
 //     ))
 //     .await
@@ -945,7 +864,7 @@ impl TryFrom<u8> for CommandResponseKind {
 //     <R::Sleep as Future>::Output: Send,
 //   {
 //     let trans1 = NetTransport::<R>::new(NetTransportOptions::new(
-//       ServerId::random(),
+//       NodeId::random(),
 //       "127.0.0.1:0".parse().unwrap(),
 //     ))
 //     .await
@@ -974,7 +893,7 @@ impl TryFrom<u8> for CommandResponseKind {
 //     });
 
 //     let trans2 = NetTransport::<R>::new(NetTransportOptions::new(
-//       ServerId::random(),
+//       NodeId::random(),
 //       "127.0.0.1:0".parse().unwrap(),
 //     ))
 //     .await

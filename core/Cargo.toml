@@ -28,7 +28,7 @@ nodecraft = { workspace = true, features = ["resolver", "agnostic"] }
 humantime = "2.1"
 indexmap = { version = "2", features = ["serde"] }
 once_cell = "1.18"
-pin-project = "1.1"
+pin-project = { workspace = true }
 pin-project-lite = "0.2"
 rand = "0.8"
 rmp-serde = "1.1"

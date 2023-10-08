@@ -43,6 +43,7 @@ crossbeam-skiplist = "0.1"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "dns", "agnostic"] }
 once_cell = "1.18"
+pin-project = { workspace = true }
 pollster = { workspace = true }
 ruraft-core = { path = "../core" }
 rand = "0.8"
