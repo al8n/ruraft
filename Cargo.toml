@@ -4,9 +4,7 @@ members = [
   "core",
   "ruraft",
   "storage",
-  "traits",
   "transport",
-  "types",
 ]
 resolver = "2"
 

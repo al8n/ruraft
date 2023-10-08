@@ -13,10 +13,7 @@ async-std = ["agnostic/async-std"]
 smol = ["agnostic/smol"]
 
 # enable DNS node address resolver
-dns = ["trust-dns-resolver", "trust-dns-proto", "idna", "agnostic/dns"]
-
-# enable DNS node address resolver with WASI support
-dns-wasi = ["resolv-conf", "trust-dns-resolver", "trust-dns-proto", "idna", "agnostic/dns"]
+dns = ["agnostic/dns"]
 
 metrics = ["ruraft-core/metrics"]
 
@@ -55,11 +52,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 viewit = { workspace = true }
 wg = { version = "0.4", features = ["async"] }
-
-# dns related dependencies
-resolv-conf = { version = "0.7", default-features = false, optional = true }
-trust-dns-proto = { version = "0.23", default-features = false, optional = true }
-idna = { version = "0.4", optional = true }
 
 # encoder/decoder related dependencies
 rmp-serde = { version = "1.1", optional = true }

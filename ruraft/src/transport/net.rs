@@ -414,9 +414,9 @@ where
     match resp.into_kind() {
       ResponseKind::Error(err) => Err(Error::Remote(err.error)),
       ResponseKind::AppendEntries(resp) => {
-        self.return_conn(conn.into_inner(), header_addr);  
+        self.return_conn(conn.into_inner(), header_addr);
         Ok(resp)
-      },
+      }
       kind => Err(Error::UnexpectedResponse {
         expected: "AppendEntries",
         actual: kind.description(),
@@ -444,7 +444,7 @@ where
       ResponseKind::Vote(resp) => {
         self.return_conn(conn.into_inner(), header_addr);
         Ok(resp)
-      },
+      }
       kind => Err(Error::UnexpectedResponse {
         expected: "Vote",
         actual: kind.description(),
@@ -479,7 +479,7 @@ where
       ResponseKind::InstallSnapshot(resp) => {
         self.return_conn(conn.into_inner(), header_addr);
         Ok(resp)
-      },
+      }
       kind => Err(Error::UnexpectedResponse {
         expected: "InstallSnapshot",
         actual: kind.description(),
@@ -508,7 +508,7 @@ where
       ResponseKind::TimeoutNow(resp) => {
         self.return_conn(conn.into_inner(), header_addr);
         Ok(resp)
-      },
+      }
       kind => Err(Error::UnexpectedResponse {
         expected: "TimeoutNow",
         actual: kind.description(),
@@ -537,7 +537,7 @@ where
       ResponseKind::Heartbeat(resp) => {
         self.return_conn(conn.into_inner(), header_addr);
         Ok(resp)
-      },
+      }
       kind => Err(Error::UnexpectedResponse {
         expected: "Heartbeat",
         actual: kind.description(),
