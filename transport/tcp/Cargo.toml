@@ -11,32 +11,22 @@ description = "TCP transport layer implementation for ruraft"
 [features]
 default = ["dns"]
 
-serde = ["dep:serde", "humantime-serde", "ruraft-core/serde"]
+serde = ["ruraft-net/serde"]
 
 # enable DNS node address resolver
-dns = ["agnostic/dns", "nodecraft/dns"]
+dns = ["ruraft-net/dns"]
 
-metrics = ["ruraft-core/metrics"]
+metrics = ["ruraft-net/metrics"]
 
-test = ["ruraft-core/test", "tempfile"]
+test = ["ruraft-net/test", "tempfile"]
 
 [dependencies]
 agnostic = { workspace = true, features = ["net"] }
-async-channel = { workspace = true }
-async-lock = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
-pollster = { workspace = true }
-ruraft-core = { path = "../../core" }
-scopeguard = "1.1"
-thiserror = { workspace = true }
-tracing = { workspace = true }
-viewit = { workspace = true }
-wg = { workspace = true }
-
-humantime-serde = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
+pin-project = { workspace = true }
+ruraft-net = { path = "../net" }
 
 # test features related dependencies
 tempfile = { version = "3", optional = true }

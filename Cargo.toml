@@ -7,6 +7,7 @@ members = [
   "storage/bolt",
   "storage/redb",
   "storage/sled",
+  "transport/net",
   "transport/tcp",
   "transport/grpc",
   "transport/quic"
