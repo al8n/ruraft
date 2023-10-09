@@ -1,4 +1,4 @@
-use std::{ops::RangeBounds, time::Duration};
+use std::{future::Future, ops::RangeBounds, time::Duration};
 
 use async_channel::Receiver;
 use bytes::Bytes;
@@ -44,7 +44,7 @@ pub enum LogKind<I: Id, A: Address> {
   Barrier,
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Memberhsip(Membership<I, A>),
+  Membership(Membership<I, A>),
 }
 
 // impl<Id:> LogKind {
@@ -55,7 +55,7 @@ pub enum LogKind<I: Id, A: Address> {
 //       Self::User => "user",
 //       Self::Noop => "noop",
 //       Self::Barrier => "barrier",
-//       Self::Memberhsip => "membership",
+//       Self::Membership => "membership",
 //     }
 //   }
 // }
@@ -156,6 +156,11 @@ impl<I: Id, A: Address> Log<I, A> {
   }
 
   #[inline]
+  pub(crate) const fn is_membership(&self) -> bool {
+    matches!(self.kind, LogKind::Membership(_))
+  }
+
+  #[inline]
   pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A>) -> Self {
     Self {
       index,
@@ -170,7 +175,6 @@ impl<I: Id, A: Address> Log<I, A> {
 /// and retrieving logs in a durable fashion.
 ///
 /// **N.B.** The implementation of [`LogStorage`] must be thread-safe.
-#[async_trait::async_trait]
 pub trait LogStorage: Clone + Send + Sync + 'static {
   /// The error type returned by the log storage.
   type Error: std::error::Error + Send + Sync + 'static;
@@ -183,22 +187,34 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   type Address: Address;
 
   /// Returns the first index written. 0 for no entries.
-  async fn first_index(&self) -> Result<u64, Self::Error>;
+  fn first_index(&self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
 
   /// Returns the last index written. 0 for no entries.
-  async fn last_index(&self) -> Result<u64, Self::Error>;
+  fn last_index(&self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
 
   /// Gets a log entry at a given index.
-  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error>;
+  fn get_log(
+    &self,
+    index: u64,
+  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Stores a log entry
-  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error>;
+  fn store_log(
+    &self,
+    log: &Log<Self::Id, Self::Address>,
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Stores multiple log entries. By default the logs stored may not be contiguous with previous logs (i.e. may have a gap in Index since the last log written). If an implementation can't tolerate this it may optionally implement `MonotonicLogStore` to indicate that this is not allowed. This changes Raft's behaviour after restoring a user snapshot to remove all previous logs instead of relying on a "gap" to signal the discontinuity between logs before the snapshot and logs after.
-  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error>;
+  fn store_logs(
+    &self,
+    logs: &[Log<Self::Id, Self::Address>],
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Removes a range of log entries.
-  async fn remove_range(&self, range: impl RangeBounds<u64> + Send) -> Result<(), Self::Error>;
+  fn remove_range(
+    &self,
+    range: impl RangeBounds<u64> + Send,
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// An optional method for [`LogStorage`] implementations that
   /// cannot tolerate gaps in between the Index values of consecutive log entries. For example,
@@ -221,64 +237,72 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
   GiveMeADescriptiveName,
 }
 
-#[async_trait::async_trait]
 pub(crate) trait LogStorageExt: LogStorage {
-  async fn oldest_log(
+  fn oldest_log(
     &self,
-  ) -> Result<Log<Self::Id, Self::Address>, LogStorageExtError<Self::Error>> {
-    // We might get unlucky and have a truncate right between getting first log
-    // index and fetching it so keep trying until we succeed or hard fail.
-    let mut last_fail_idx = 0;
-    let mut last_err: Option<Self::Error> = None;
-    loop {
-      let first_idx = self
-        .first_index()
-        .await
-        .map_err(LogStorageExtError::LogStorageError)?;
-      if first_idx == 0 {
-        return Err(LogStorageExtError::NotFound);
-      }
-
-      if first_idx == last_fail_idx {
-        // Got same index as last time around which errored, don't bother trying
-        // to fetch it again just return the error.
-        if let Some(last_err) = last_err {
-          return Err(LogStorageExtError::LogStorageError(last_err));
-        } else {
-          return Err(LogStorageExtError::GiveMeADescriptiveName);
+  ) -> impl Future<Output = Result<Log<Self::Id, Self::Address>, LogStorageExtError<Self::Error>>> + Send
+  {
+    async move {
+      // We might get unlucky and have a truncate right between getting first log
+      // index and fetching it so keep trying until we succeed or hard fail.
+      let mut last_fail_idx = 0;
+      let mut last_err: Option<Self::Error> = None;
+      loop {
+        let first_idx = self
+          .first_index()
+          .await
+          .map_err(LogStorageExtError::LogStorageError)?;
+        if first_idx == 0 {
+          return Err(LogStorageExtError::NotFound);
         }
-      }
 
-      match self.get_log(first_idx).await {
-        Ok(Some(log)) => return Ok(log),
-        Ok(None) => return Err(LogStorageExtError::NotFound),
-        Err(err) => {
-          // We failed, keep trying to see if there is a new firstIndex
-          last_fail_idx = first_idx;
-          last_err = Some(err);
+        if first_idx == last_fail_idx {
+          // Got same index as last time around which errored, don't bother trying
+          // to fetch it again just return the error.
+          if let Some(last_err) = last_err {
+            return Err(LogStorageExtError::LogStorageError(last_err));
+          } else {
+            return Err(LogStorageExtError::GiveMeADescriptiveName);
+          }
+        }
+
+        match self.get_log(first_idx).await {
+          Ok(Some(log)) => return Ok(log),
+          Ok(None) => return Err(LogStorageExtError::NotFound),
+          Err(err) => {
+            // We failed, keep trying to see if there is a new firstIndex
+            last_fail_idx = first_idx;
+            last_err = Some(err);
+          }
         }
       }
     }
   }
 
   #[cfg(feature = "metrics")]
-  async fn emit_metrics(&self, interval: Duration, stop_rx: Receiver<()>)
+  fn emit_metrics(
+    &self,
+    interval: Duration,
+    stop_rx: Receiver<()>,
+  ) -> impl Future<Output = ()> + Send
   where
     <<Self::Runtime as agnostic::Runtime>::Sleep as std::future::Future>::Output: Send,
   {
-    loop {
-      futures::select! {
-        _ = <Self::Runtime as agnostic::Runtime>::sleep(interval).fuse() => {
-          // In error case emit 0 as the age
-          let mut age_ms = 0;
-          if let Ok(log) = self.oldest_log().await {
-            if log.appended_at != 0 {
-              age_ms = now_timestamp() - log.appended_at;
+    async move {
+      loop {
+        futures::select! {
+          _ = <Self::Runtime as agnostic::Runtime>::sleep(interval).fuse() => {
+            // In error case emit 0 as the age
+            let mut age_ms = 0;
+            if let Ok(log) = self.oldest_log().await {
+              if log.appended_at != 0 {
+                age_ms = now_timestamp() - log.appended_at;
+              }
             }
-          }
-          metrics::gauge!("ruraft.log.oldest.ms", age_ms as f64);
-        },
-        _ = stop_rx.recv().fuse() => return,
+            metrics::gauge!("ruraft.log.oldest.ms", age_ms as f64);
+          },
+          _ = stop_rx.recv().fuse() => return,
+        }
       }
     }
   }

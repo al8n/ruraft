@@ -131,7 +131,6 @@ impl<I: Id, A: Address> core::fmt::Debug for SnapshotMetaTransformableError<I, A
 
 const U64_SIZE: usize = mem::size_of::<u64>();
 
-#[async_trait::async_trait]
 impl<I, A> Transformable for SnapshotMeta<I, A>
 where
   I: Id + Send + Sync + 'static,

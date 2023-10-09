@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use crate::{
   membership::Membership,
   options::SnapshotVersion,
@@ -11,7 +13,6 @@ pub use meta::*;
 /// of snapshot storage and retrieval. For example, a client could implement
 /// a shared state store such as S3, allowing new nodes to restore snapshots
 /// without streaming from the leader.
-#[async_trait::async_trait]
 pub trait SnapshotStorage: Send + Sync + 'static {
   /// The error type returned by the snapshot storage.
   type Error: std::error::Error + Send + Sync + 'static;
@@ -27,40 +28,42 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Source: SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
   type Options;
 
-  async fn new(opts: Self::Options) -> Result<Self, Self::Error>
+  fn new(opts: Self::Options) -> impl Future<Output = Result<Self, Self::Error>> + Send
   where
     Self: Sized;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls
   /// which snapshot version to create.
-  async fn create(
+  fn create(
     &self,
     version: SnapshotVersion,
     index: u64,
     term: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<Self::Sink, Self::Error>;
+  ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send;
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
-  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error>;
+  fn list(
+    &self,
+  ) -> impl Future<Output = Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Open takes a snapshot ID and provides a reader.
-  async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error>;
+  fn open(&self, id: &SnapshotId)
+    -> impl Future<Output = Result<Self::Source, Self::Error>> + Send;
 }
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-#[async_trait::async_trait]
 pub trait SnapshotSink: futures::io::AsyncWrite {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
   fn id(&self) -> SnapshotId;
 
-  async fn cancel(&mut self) -> std::io::Result<()>;
+  fn cancel(&mut self) -> impl Future<Output = std::io::Result<()>> + Send;
 }
 
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state

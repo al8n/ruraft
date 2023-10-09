@@ -3,7 +3,7 @@ use std::{
     atomic::{AtomicBool, Ordering},
     Arc,
   },
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 use agnostic::Runtime;
@@ -18,7 +18,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{Address, AddressResolver, Id, RpcConsumer, Transport},
+  transport::{Address, AddressResolver, Id, RpcConsumer, Transport}, membership::Memberships,
 };
 
 mod candidate;
@@ -81,6 +81,7 @@ where
   leader: ArcSwapOption<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
   local: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
   candidate_from_leadership_transfer: AtomicBool,
+  memberships: Memberships<T::Id, <T::Resolver as AddressResolver>::Address>,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
@@ -96,6 +97,9 @@ where
   leader_notify_tx: async_channel::Sender<()>,
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
+  /// last_contact is the last time we had contact from the
+	/// leader node. This can be used to gauge staleness.
+  last_contact: parking_lot::RwLock<Instant>,
   /// The sidecar to run alongside the Raft.
   sidecar: Option<Arc<SC>>,
   _marker: std::marker::PhantomData<R>,
@@ -130,6 +134,11 @@ where
   }
 
   #[inline]
+  fn set_last_contact(&self, instant: Instant) {
+    *self.last_contact.write() = instant;
+  }
+
+  #[inline]
   fn set_leader(&self, leader: Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>) {
     let new = leader.map(Arc::new);
     let old = self.leader.swap(new.clone());
@@ -147,6 +156,28 @@ where
         }
       }
     }
+  }
+
+
+  /// Takes a log entry and updates the latest
+  /// membership if the entry results in a new membership. This must only be
+  /// called from the main thread, or from constructors before any threads have begun.
+  fn process_membership_log(&self, log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address>) {
+    if let crate::storage::LogKind::Membership(m) = log.kind {
+      self.memberships.committed.store(self.memberships.latest().clone());
+      self.memberships.set_latest(m, log.index);
+    }
+  }
+
+  /// Used to apply all the committed entries that haven't been
+  /// applied up to the given index limit.
+  /// This can be called from both leaders and followers.
+  /// Followers call this from `append_entries`, for `n` entries at a time, and always
+  /// pass futures = `None`.
+  /// Leaders call this when entries are committed. They pass the futures from any
+  /// inflight logs.
+  async fn process_logs(&self, index: u64, futures: Option<HashMap<u64, ()>>) {
+    todo!()
   }
 }
 

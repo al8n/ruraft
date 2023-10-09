@@ -58,7 +58,6 @@ impl<I: Id, A: Address, R: Runtime> MemoryLogStorage<I, A, R> {
   }
 }
 
-#[async_trait::async_trait]
 impl<I, A, R> LogStorage for MemoryLogStorage<I, A, R>
 where
   I: Id + Send + Sync + 'static,
@@ -72,78 +71,97 @@ where
   type Id = I;
   type Address = A;
 
-  async fn first_index(&self) -> Result<u64, Self::Error> {
-    Ok(self.store.lock().await.low_index)
+  fn first_index(&self) -> impl futures::Future<Outptu = Result<u64, Self::Error>> + Send {
+    async move { Ok(self.store.lock().await.low_index) }
   }
 
-  async fn last_index(&self) -> Result<u64, Self::Error> {
-    Ok(self.store.lock().await.high_index)
+  fn last_index(&self) -> impl futures::Future<Output = Result<u64, Self::Error>> + Send {
+    async move { Ok(self.store.lock().await.high_index) }
   }
 
-  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error> {
-    Ok(self.store.lock().await.logs.get(&index).cloned())
+  fn get_log(
+    &self,
+    index: u64,
+  ) -> impl futures::Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send
+  {
+    async move { Ok(self.store.lock().await.logs.get(&index).cloned()) }
   }
 
-  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error> {
-    let mut store = self.store.lock().await;
-    store.logs.insert(log.index(), log.clone());
-    if store.low_index == 0 {
-      store.low_index = log.index();
-    }
-
-    if store.high_index <= log.index() {
-      store.high_index = log.index();
-    }
-    Ok(())
-  }
-
-  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error> {
-    let mut store = self.store.lock().await;
-    for l in logs {
-      store.logs.insert(l.index(), l.clone());
+  fn store_log(
+    &self,
+    log: &Log<Self::Id, Self::Address>,
+  ) -> impl futures::Future<Output = Result<(), Self::Error>> + Send {
+    async move {
+      let mut store = self.store.lock().await;
+      store.logs.insert(log.index(), log.clone());
       if store.low_index == 0 {
-        store.low_index = l.index();
+        store.low_index = log.index();
       }
 
-      if store.high_index <= l.index() {
-        store.high_index = l.index();
+      if store.high_index <= log.index() {
+        store.high_index = log.index();
       }
+      Ok(())
     }
-    Ok(())
   }
 
-  async fn remove_range(&self, range: impl RangeBounds<u64> + Send) -> Result<(), Self::Error> {
-    use core::ops::Bound;
+  fn store_logs(
+    &self,
+    logs: &[Log<Self::Id, Self::Address>],
+  ) -> impl futures::Future<Output = Result<(), Self::Error>> + Send {
+    async move {
+      let mut store = self.store.lock().await;
+      for l in logs {
+        store.logs.insert(l.index(), l.clone());
+        if store.low_index == 0 {
+          store.low_index = l.index();
+        }
 
-    let mut store = self.store.lock().await;
-
-    let begin = match range.start_bound() {
-      Bound::Included(&n) => n,
-      Bound::Excluded(&n) => n + 1,
-      Bound::Unbounded => 0,
-    };
-
-    let end = match range.end_bound() {
-      Bound::Included(&n) => n.checked_add(1).expect("out of range"),
-      Bound::Excluded(&n) => n,
-      Bound::Unbounded => panic!("unbounded end bound is not acceptable"),
-    };
-
-    for j in begin..end {
-      store.logs.remove(&j);
+        if store.high_index <= l.index() {
+          store.high_index = l.index();
+        }
+      }
+      Ok(())
     }
+  }
 
-    if begin <= store.low_index {
-      store.low_index = end + 1;
-    }
-    if end >= store.high_index {
-      store.high_index = begin - 1;
-    }
-    if store.low_index > store.high_index {
-      store.high_index = 0;
-      store.low_index = 0;
-    }
+  fn remove_range(
+    &self,
+    range: impl RangeBounds<u64> + Send,
+  ) -> impl futures::Future<Output = Result<(), Self::Error>> + Send {
+    async move {
+      use core::ops::Bound;
 
-    Ok(())
+      let mut store = self.store.lock().await;
+
+      let begin = match range.start_bound() {
+        Bound::Included(&n) => n,
+        Bound::Excluded(&n) => n + 1,
+        Bound::Unbounded => 0,
+      };
+
+      let end = match range.end_bound() {
+        Bound::Included(&n) => n.checked_add(1).expect("out of range"),
+        Bound::Excluded(&n) => n,
+        Bound::Unbounded => panic!("unbounded end bound is not acceptable"),
+      };
+
+      for j in begin..end {
+        store.logs.remove(&j);
+      }
+
+      if begin <= store.low_index {
+        store.low_index = end + 1;
+      }
+      if end >= store.high_index {
+        store.high_index = begin - 1;
+      }
+      if store.low_index > store.high_index {
+        store.high_index = 0;
+        store.low_index = 0;
+      }
+
+      Ok(())
+    }
   }
 }

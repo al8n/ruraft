@@ -268,9 +268,7 @@ pub struct HeartbeatResponse<I, A> {
 impl<I: Id, A: Address> HeartbeatResponse<I, A> {
   /// Create a new HeartbeatResponse
   pub const fn new(header: Header<I, A>) -> Self {
-    Self {
-      header,
-    }
+    Self { header }
   }
 }
 
@@ -290,10 +288,7 @@ pub struct ErrorResponse<I, A> {
 impl<I: Id, A: Address> ErrorResponse<I, A> {
   /// Create a new ErrorResponse
   pub const fn new(header: Header<I, A>, error: String) -> Self {
-    Self {
-      header,
-      error,
-    }
+    Self { header, error }
   }
 }
 
@@ -383,9 +378,7 @@ impl<I: Id, A: Address> Request<I, A> {
     Self::Vote(req)
   }
 
-  pub const fn install_snapshot(
-    req: InstallSnapshotRequest<I, A>,
-  ) -> Self {
+  pub const fn install_snapshot(req: InstallSnapshotRequest<I, A>) -> Self {
     Self::InstallSnapshot(req)
   }
 
@@ -412,7 +405,7 @@ impl<I: Id, A: Address> Request<I, A> {
   #[inline]
   pub const fn protocol_version(&self) -> ProtocolVersion {
     self.header().protocol_version
-  } 
+  }
 
   // pub(super) fn encode(&self) -> io::Result<Vec<u8>> {
   //   match self.protocol_version {
@@ -528,9 +521,7 @@ impl<I: Id, A: Address> Response<I, A> {
     Self::Vote(resp)
   }
 
-  pub const fn install_snapshot(
-    resp: InstallSnapshotResponse<I, A>,
-  ) -> Self {
+  pub const fn install_snapshot(resp: InstallSnapshotResponse<I, A>) -> Self {
     Self::InstallSnapshot(resp)
   }
 

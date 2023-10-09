@@ -249,7 +249,6 @@ impl<I: Id, A: Address> Default for Membership<I, A> {
 
 const U32_SIZE: usize = mem::size_of::<u32>();
 
-#[async_trait::async_trait]
 impl<I, A> Transformable for Membership<I, A>
 where
   I: Id + Send + Sync + 'static,
@@ -663,7 +662,7 @@ impl<I: Id, A: Address> Membership<I, A> {
   }
 
   /// Returns true if the server identified by 'id' is in in the
-  /// provided [`Memberhsip`].
+  /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
   where
     I: Borrow<Q>,
@@ -673,7 +672,7 @@ impl<I: Id, A: Address> Membership<I, A> {
   }
 
   /// Returns true if the server address is in in the
-  /// provided [`Memberhsip`].
+  /// provided [`Membership`].
   pub fn contains_addr<Q>(&self, addr: &Q) -> bool
   where
     A: std::borrow::Borrow<Q>,
