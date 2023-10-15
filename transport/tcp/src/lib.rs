@@ -1,10 +1,22 @@
-use std::{time::Duration, net::SocketAddr, io, task::{Context, Poll}, pin::Pin};
+//! TCP transport implementation for [ruraft](https://github.com/al8n/ruraft).
+#![deny(unsafe_code, missing_docs)]
 
-use futures::{AsyncWrite, AsyncRead};
+use std::{
+  io,
+  net::SocketAddr,
+  pin::Pin,
+  task::{Context, Poll},
+  time::Duration,
+};
+
+use agnostic::{
+  net::{Net, TcpListener as _, TcpStream as _},
+  Runtime,
+};
+use futures::{AsyncRead, AsyncWrite};
 use nodecraft::resolver::AddressResolver;
-pub use ruraft_net::{NetTransport, NetTransportOptions, Error};
 use ruraft_net::stream::{Connection, Listener, StreamLayer};
-use agnostic::{Runtime, net::{TcpStream as _, TcpListener as _, Net}};
+pub use ruraft_net::{Error, NetTransport, NetTransportOptions};
 
 /// Tcp transport
 pub type TcpTransport<I, R, W> = NetTransport<I, R, Tcp<<R as AddressResolver>::Runtime>, W>;
@@ -13,6 +25,22 @@ pub type TcpTransport<I, R, W> = NetTransport<I, R, Tcp<<R as AddressResolver>::
 #[repr(transparent)]
 pub struct Tcp<R: Runtime> {
   _marker: std::marker::PhantomData<R>,
+}
+
+impl<R: Runtime> Default for Tcp<R> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<R: Runtime> Tcp<R> {
+  /// Create a new tcp stream layer
+  #[inline]
+  pub const fn new() -> Self {
+    Self {
+      _marker: std::marker::PhantomData,
+    }
+  }
 }
 
 impl<R: Runtime> StreamLayer for Tcp<R> {
@@ -30,12 +58,19 @@ impl<R: Runtime> Listener for TcpListener<R> {
 
   async fn bind(addr: SocketAddr) -> io::Result<Self>
   where
-    Self: Sized {
-    <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr).await.map(Self)
+    Self: Sized,
+  {
+    <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
+      .await
+      .map(Self)
   }
 
   async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
-    self.0.accept().await.map(|(conn, addr)| (TcpStream(conn), addr))
+    self
+      .0
+      .accept()
+      .await
+      .map(|(conn, addr)| (TcpStream(conn), addr))
   }
 
   fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -47,8 +82,7 @@ impl<R: Runtime> Listener for TcpListener<R> {
 #[pin_project::pin_project]
 pub struct TcpStream<R: Runtime>(#[pin] <R::Net as Net>::TcpStream);
 
-impl<R: Runtime> AsyncRead for TcpStream<R>
-{
+impl<R: Runtime> AsyncRead for TcpStream<R> {
   fn poll_read(
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
@@ -58,13 +92,8 @@ impl<R: Runtime> AsyncRead for TcpStream<R>
   }
 }
 
-impl<R: Runtime> AsyncWrite for TcpStream<R>
-{
-  fn poll_write(
-    self: Pin<&mut Self>,
-    cx: &mut Context<'_>,
-    buf: &[u8],
-  ) -> Poll<io::Result<usize>> {
+impl<R: Runtime> AsyncWrite for TcpStream<R> {
+  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     self.project().0.poll_write(cx, buf)
   }
 
@@ -81,9 +110,11 @@ impl<R: Runtime> AsyncWrite for TcpStream<R>
 impl<R: Runtime> Connection for TcpStream<R> {
   async fn connect(addr: SocketAddr) -> io::Result<Self>
   where
-    Self: Sized
+    Self: Sized,
   {
-    <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr).await.map(Self)
+    <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
+      .await
+      .map(Self)
   }
 
   fn set_write_timeout(&self, timeout: Option<Duration>) {
