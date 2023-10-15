@@ -6,6 +6,7 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 metadata.workspace = true
+rust-version.workspace = true
 description = "High-level abstraction for transport layer of ruraft"
 
 [features]
@@ -24,7 +25,6 @@ test = ["ruraft-core/test", "tempfile"]
 agnostic = { workspace = true }
 async-channel = { workspace = true }
 async-lock = { workspace = true }
-async-trait = { workspace = true }
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pollster = { workspace = true }

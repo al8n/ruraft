@@ -3,6 +3,7 @@
 
 use std::{
   io,
+  future::Future,
   net::SocketAddr,
   pin::Pin,
   task::{Context, Poll},
@@ -52,25 +53,28 @@ impl<R: Runtime> StreamLayer for Tcp<R> {
 #[repr(transparent)]
 pub struct TcpListener<R: Runtime>(<R::Net as Net>::TcpListener);
 
-#[async_trait::async_trait]
 impl<R: Runtime> Listener for TcpListener<R> {
   type Stream = TcpStream<R>;
 
-  async fn bind(addr: SocketAddr) -> io::Result<Self>
+  fn bind(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
   where
     Self: Sized,
   {
-    <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
-      .await
-      .map(Self)
+    async move {
+      <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
+        .await
+        .map(Self)
+    }
   }
 
-  async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
-    self
-      .0
-      .accept()
-      .await
-      .map(|(conn, addr)| (TcpStream(conn), addr))
+  fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, SocketAddr)>> + Send {
+    async move {
+      self
+        .0
+        .accept()
+        .await
+        .map(|(conn, addr)| (TcpStream(conn), addr))
+    }
   }
 
   fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -106,15 +110,16 @@ impl<R: Runtime> AsyncWrite for TcpStream<R> {
   }
 }
 
-#[async_trait::async_trait]
 impl<R: Runtime> Connection for TcpStream<R> {
-  async fn connect(addr: SocketAddr) -> io::Result<Self>
+  fn connect(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
   where
     Self: Sized,
   {
-    <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
-      .await
-      .map(Self)
+    async move {
+      <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
+        .await
+        .map(Self)
+    }
   }
 
   fn set_write_timeout(&self, timeout: Option<Duration>) {

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{future::Future, net::SocketAddr};
 
 use agnostic::Runtime;
 use futures::AsyncRead;
@@ -48,7 +48,6 @@ pub trait WireError: std::error::Error + Send + Sync + 'static {
 ///
 /// The trait ensures that implementations provide consistent encoding and decoding functionality,
 /// accompanied by appropriate error handling.
-#[async_trait::async_trait]
 pub trait Wire: Send + Sync + 'static {
   /// Specifies the error type for encoding and decoding operations.
   ///
@@ -91,9 +90,9 @@ pub trait Wire: Send + Sync + 'static {
   ///
   /// # Returns
   /// * `Result` - Returns the decoded `Request` or an error if the decoding process encounters issues.
-  async fn decode_request(
+  fn decode_request(
     reader: impl AsyncRead + Unpin,
-  ) -> Result<Request<Self::Id, Self::Address>, Self::Error>;
+  ) -> impl Future<Output = Result<Request<Self::Id, Self::Address>, Self::Error>> + Send;
 
   /// Decodes a [`Response`] instance from a provided asynchronous reader.
   ///
@@ -102,14 +101,13 @@ pub trait Wire: Send + Sync + 'static {
   ///
   /// # Returns
   /// * `Result` - Returns the decoded `Response` or an error if the decoding process encounters issues.
-  async fn decode_response(
+  fn decode_response(
     reader: impl AsyncRead + Unpin,
-  ) -> Result<Response<Self::Id, Self::Address>, Self::Error>;
+  ) -> impl Future<Output = Result<Response<Self::Id, Self::Address>, Self::Error>> + Send;
 }
 
 /// Provides utilities to pipeline [`AppendEntriesRequest`]s, aiming to
 /// enhance replication throughput by minimizing latency and maximizing bandwidth utilization.
-#[async_trait::async_trait]
 pub trait AppendPipeline {
   /// Specifies potential errors that can occur within the pipeline.
   type Error: std::error::Error + Send + Sync + 'static;
@@ -132,13 +130,13 @@ pub trait AppendPipeline {
   fn consumer(&self) -> async_channel::Receiver<Self::Item>;
 
   /// Asynchronously appends entries to the target node and returns the associated response.
-  async fn append_entries(
+  fn append_entries(
     &self,
     req: AppendEntriesRequest<Self::Id, Self::Address>,
-  ) -> Result<AppendEntriesResponse<Self::Id, Self::Address>, Self::Error>;
+  ) -> impl Future<Output = Result<AppendEntriesResponse<Self::Id, Self::Address>, Self::Error>> + Send;
 
   /// Gracefully closes the pipeline and terminates any in-flight requests.
-  async fn close(&self) -> Result<(), Self::Error>;
+  fn close(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Represents the anticipated response following an appended entry in the pipeline.
@@ -159,7 +157,6 @@ pub trait AppendFuture:
 }
 
 /// Defines the capabilities and requirements for communication with other nodes across a network.
-#[async_trait::async_trait]
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
   type Error: TransportError<Id = Self::Id, Resolver = Self::Resolver, Wire = Self::Wire>;
@@ -204,7 +201,10 @@ pub trait Transport: Send + Sync + 'static {
   fn resolver(&self) -> &Self::Resolver;
 
   /// Returns a transport
-  async fn new(resolver: Self::Resolver, opts: Self::Options) -> Result<Self, Self::Error>
+  fn new(
+    resolver: Self::Resolver,
+    opts: Self::Options,
+  ) -> impl Future<Output = Result<Self, Self::Error>> + Send
   where
     Self: Sized;
 
@@ -217,44 +217,63 @@ pub trait Transport: Send + Sync + 'static {
   // ) -> Result<Self::Pipeline, Self::Error>;
 
   /// Sends the append entries requrest to the target node.
-  async fn append_entries(
+  fn append_entries(
     &self,
     req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> Result<
-    AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    Self::Error,
-  >;
+  ) -> impl Future<
+    Output = Result<
+      AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+      Self::Error,
+    >,
+  > + Send;
 
   /// Sends the vote request to the target node.
-  async fn vote(
+  fn vote(
     &self,
     req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> Result<VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>;
+  ) -> impl Future<
+    Output = Result<
+      VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+      Self::Error,
+    >,
+  > + Send;
 
   /// Used to push a snapshot down to a follower.
-  async fn install_snapshot(
+  fn install_snapshot(
     &self,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     source: impl AsyncRead + Send,
-  ) -> Result<
-    InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    Self::Error,
-  >;
+  ) -> impl Future<
+    Output = Result<
+      InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+      Self::Error,
+    >,
+  > + Send;
 
   /// Used to start a leadership transfer to the target node.
-  async fn timeout_now(
+  fn timeout_now(
     &self,
     req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> Result<TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>;
+  ) -> impl Future<
+    Output = Result<
+      TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+      Self::Error,
+    >,
+  > + Send;
 
   /// Used to send a heartbeat to the target node.
-  async fn heartbeat(
+  fn heartbeat(
     &self,
     req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> Result<HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>;
+  ) -> impl Future<
+    Output = Result<
+      HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+      Self::Error,
+    >,
+  > + Send;
 
   /// Shutdown the transport.
-  async fn shutdown(&self) -> Result<(), Self::Error>;
+  fn shutdown(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 #[cfg(feature = "test")]

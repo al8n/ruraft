@@ -6,11 +6,11 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 metadata.workspace = true
+rust-version.workspace = true
 description = "GRPC transport layer implementation for ruraft"
 
 [dependencies]
 agnostic = { workspace = true, features = ["net", "tokio", "tokio-compat"] }
-async-trait = { workspace = true }
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pollster = { workspace = true }

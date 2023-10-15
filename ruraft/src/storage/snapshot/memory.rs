@@ -1,4 +1,5 @@
 use std::{
+  future::Future,
   io,
   pin::Pin,
   sync::{
@@ -30,7 +31,6 @@ pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
   _runtime: std::marker::PhantomData<R>,
 }
 
-#[async_trait::async_trait]
 impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
   I: Id + Send + Sync + Unpin + 'static,
@@ -45,84 +45,98 @@ where
   type Id = I;
   type Address = A;
 
-  async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
+  fn new(_opts: Self::Options) -> impl Future<Output = Result<Self, Self::Error>> + Send
   where
     Self: Sized,
   {
-    Ok(Self {
-      latest: Arc::new(RwLock::new(Default::default())),
-      has_snapshot: AtomicBool::new(false),
-      _runtime: std::marker::PhantomData,
-    })
+    async move {
+      Ok(Self {
+        latest: Arc::new(RwLock::new(Default::default())),
+        has_snapshot: AtomicBool::new(false),
+        _runtime: std::marker::PhantomData,
+      })
+    }
   }
 
-  async fn create(
+  fn create(
     &self,
     version: SnapshotVersion,
     index: u64,
     term: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<Self::Sink, Self::Error> {
-    if !version.valid() {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("invalid snapshot version: {}", version as u8),
-      ));
+  ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send {
+    async move {
+      if !version.valid() {
+        return Err(io::Error::new(
+          io::ErrorKind::InvalidInput,
+          format!("invalid snapshot version: {}", version as u8),
+        ));
+      }
+
+      let mut lock = self.latest.write().await;
+      let id = SnapshotId::new(index, term);
+
+      self.has_snapshot.store(true, Ordering::Release);
+      *lock = MemorySnapshot {
+        meta: SnapshotMeta {
+          version,
+          timestamp: id.timestamp(),
+          membership,
+          membership_index,
+          size: 0,
+          index,
+          term,
+        },
+        contents: Default::default(),
+      };
+
+      Ok(MemorySnapshotSink {
+        id: lock.meta.id(),
+        snap: self.latest.clone(),
+        _runtime: std::marker::PhantomData,
+      })
     }
-
-    let mut lock = self.latest.write().await;
-    let id = SnapshotId::new(index, term);
-
-    self.has_snapshot.store(true, Ordering::Release);
-    *lock = MemorySnapshot {
-      meta: SnapshotMeta {
-        version,
-        timestamp: id.timestamp(),
-        membership,
-        membership_index,
-        size: 0,
-        index,
-        term,
-      },
-      contents: Default::default(),
-    };
-
-    Ok(MemorySnapshotSink {
-      id: lock.meta.id(),
-      snap: self.latest.clone(),
-      _runtime: std::marker::PhantomData,
-    })
   }
 
-  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error> {
-    let lock = self.latest.read().await;
-    if !self.has_snapshot.load(Ordering::Acquire) {
-      return Ok(vec![]);
-    }
+  fn list(
+    &self,
+  ) -> impl Future<Output = Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error>> + Send
+  {
+    async move {
+      let lock = self.latest.read().await;
+      if !self.has_snapshot.load(Ordering::Acquire) {
+        return Ok(vec![]);
+      }
 
-    Ok(vec![lock.meta.clone()])
+      Ok(vec![lock.meta.clone()])
+    }
   }
 
-  async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
-    let lock = self.latest.read().await;
-    if lock.meta.id().ne(id) {
-      return Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        format!(
-          "failed to open snapshot id (term: {}, index: {})",
-          lock.meta.term, lock.meta.index
-        ),
-      ));
-    }
+  fn open(
+    &self,
+    id: &SnapshotId,
+  ) -> impl Future<Output = Result<Self::Source, Self::Error>> + Send {
+    async move {
+      let lock = self.latest.read().await;
+      if lock.meta.id().ne(id) {
+        return Err(io::Error::new(
+          io::ErrorKind::NotFound,
+          format!(
+            "failed to open snapshot id (term: {}, index: {})",
+            lock.meta.term, lock.meta.index
+          ),
+        ));
+      }
 
-    // Make a copy of the contents, since a bytes.Buffer can only be read
-    // once.
-    Ok(MemorySnapshotSource {
-      meta: lock.meta.clone(),
-      contents: lock.contents.clone(),
-      _runtime: std::marker::PhantomData,
-    })
+      // Make a copy of the contents, since a bytes.Buffer can only be read
+      // once.
+      Ok(MemorySnapshotSource {
+        meta: lock.meta.clone(),
+        contents: lock.contents.clone(),
+        _runtime: std::marker::PhantomData,
+      })
+    }
   }
 }
 
@@ -173,7 +187,6 @@ where
   }
 }
 
-#[async_trait::async_trait]
 impl<I, A, R> SnapshotSink for MemorySnapshotSink<I, A, R>
 where
   I: Id + Send + Sync + Unpin + 'static,
@@ -186,8 +199,8 @@ where
     self.id
   }
 
-  async fn cancel(&mut self) -> std::io::Result<()> {
-    Ok(())
+  fn cancel(&mut self) -> impl Future<Output = std::io::Result<()>> + Send {
+    async move { Ok(()) }
   }
 }
 

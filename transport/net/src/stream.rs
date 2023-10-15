@@ -1,23 +1,21 @@
-use std::{io, net::SocketAddr, time::Duration};
+use std::{future::Future, io, net::SocketAddr, time::Duration};
 
 use futures::{AsyncRead, AsyncWrite};
 
-#[async_trait::async_trait]
 pub trait Listener: Send + Sync + 'static {
   type Stream: Connection;
 
-  async fn bind(addr: SocketAddr) -> io::Result<Self>
+  fn bind(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
   where
     Self: Sized;
 
-  async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)>;
+  fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, SocketAddr)>> + Send;
 
   fn local_addr(&self) -> io::Result<SocketAddr>;
 }
 
-#[async_trait::async_trait]
 pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static {
-  async fn connect(addr: SocketAddr) -> io::Result<Self>
+  fn connect(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
   where
     Self: Sized;
 

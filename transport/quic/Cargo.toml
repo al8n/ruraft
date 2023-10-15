@@ -6,6 +6,7 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 metadata.workspace = true
+rust-version.workspace = true
 description = "QUIC transport layer implementation for ruraft"
 
 [dependencies]

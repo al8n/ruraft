@@ -249,7 +249,6 @@ impl<I: Id, A: Address> Default for Membership<I, A> {
 
 const U32_SIZE: usize = mem::size_of::<u32>();
 
-#[async_trait::async_trait]
 impl<I, A> Transformable for Membership<I, A>
 where
   I: Id + Send + Sync + 'static,

@@ -1,8 +1,12 @@
 [package]
 name = "ruraft-core"
-version = { workspace = true } 
-edition = { workspace = true }
-license = { workspace = true }
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+metadata.workspace = true
+rust-version.workspace = true
 description = "A placeholder"
 
 [features]
@@ -15,7 +19,6 @@ serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde"]
 [dependencies]
 arc-swap = "1.6"
 agnostic = { workspace = true }
-async-trait = { workspace = true }
 async-lock = { workspace = true }
 async-channel = { workspace = true }
 atomic = "0.6"

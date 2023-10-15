@@ -20,6 +20,7 @@ edition = "2021"
 repository = "https://github.com/al8n/ruraft"
 homepage = "https://github.com/al8n/ruraft"
 license = "MPL-2.0"
+rust-version = "1.75.0"
 
 [workspace.package.metadata.docs.rs]
 all-features = true
@@ -29,7 +30,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 agnostic = { version = "0.1.21" }
 async-channel = "1.9"
 async-lock = "2.8"
-async-trait = "0.1"
 bytes = "1.5"
 futures = "0.3"
 humantime-serde = "1.1"
