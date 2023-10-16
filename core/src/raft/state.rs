@@ -40,6 +40,12 @@ pub(crate) struct LastLog {
   term: u64,
 }
 
+impl LastLog {
+  pub(crate) fn new(index: u64, term: u64) -> Self {
+    Self { index, term }
+  }
+}
+
 #[viewit::viewit]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastSnapshot {

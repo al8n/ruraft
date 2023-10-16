@@ -55,16 +55,16 @@ impl<R: agnostic::Runtime> Sidecar for NoopSidecar<R> {
   type Error = Infallible;
   type Runtime = R;
 
-  fn new(_options: Self::Options) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    async move { Ok(()) }
+  async fn new(_options: Self::Options) -> Result<(), Self::Error> {
+    Ok(())
   }
 
-  fn run(&self, _role: Role) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    async move { Ok(()) }
+  async fn run(&self, _role: Role) -> Result<(), Self::Error> {
+    Ok(())
   }
 
-  fn shutdown(&self) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    async move { Ok(()) }
+  async fn shutdown(&self) -> Result<(), Self::Error> {
+    Ok(())
   }
 
   fn applicable(_role: Role) -> bool {

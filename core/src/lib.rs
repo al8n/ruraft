@@ -4,9 +4,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 
-/// Raft API
-pub mod api;
-
 /// Errors implementation for the Raft.
 pub mod error;
 
@@ -17,6 +14,8 @@ mod fsm;
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;
+pub use raft::*;
+
 ///
 pub mod sidecar;
 pub mod storage;

@@ -44,7 +44,7 @@ pub enum LogKind<I: Id, A: Address> {
   Barrier,
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Memberhsip(Membership<I, A>),
+  Membership(Membership<I, A>),
 }
 
 // impl<Id:> LogKind {
@@ -55,7 +55,7 @@ pub enum LogKind<I: Id, A: Address> {
 //       Self::User => "user",
 //       Self::Noop => "noop",
 //       Self::Barrier => "barrier",
-//       Self::Memberhsip => "membership",
+//       Self::Membership => "membership",
 //     }
 //   }
 // }
@@ -153,6 +153,11 @@ impl<I: Id, A: Address> Log<I, A> {
       kind: LogKind::User { data, extension },
       appended_at: 0,
     }
+  }
+
+  #[inline]
+  pub(crate) const fn is_membership(&self) -> bool {
+    matches!(self.kind, LogKind::Membership(_))
   }
 
   #[inline]

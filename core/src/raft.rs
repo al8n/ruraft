@@ -3,7 +3,7 @@ use std::{
     atomic::{AtomicBool, Ordering},
     Arc,
   },
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 use agnostic::Runtime;
@@ -18,7 +18,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{Address, AddressResolver, Id, RpcConsumer, Transport},
+  transport::{Address, AddressResolver, Id, RpcConsumer, Transport}, membership::Memberships,
 };
 
 mod candidate;
@@ -81,6 +81,7 @@ where
   leader: ArcSwapOption<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
   local: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
   candidate_from_leadership_transfer: AtomicBool,
+  memberships: Memberships<T::Id, <T::Resolver as AddressResolver>::Address>,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
@@ -96,6 +97,9 @@ where
   leader_notify_tx: async_channel::Sender<()>,
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
+  /// last_contact is the last time we had contact from the
+	/// leader node. This can be used to gauge staleness.
+  last_contact: parking_lot::RwLock<Instant>,
   /// The sidecar to run alongside the Raft.
   sidecar: Option<Arc<SC>>,
   _marker: std::marker::PhantomData<R>,
@@ -127,6 +131,11 @@ where
   #[inline]
   fn role(&self) -> Role {
     self.state.role()
+  }
+
+  #[inline]
+  fn set_last_contact(&self, instant: Instant) {
+    *self.last_contact.write() = instant;
   }
 
   #[inline]

@@ -662,7 +662,7 @@ impl<I: Id, A: Address> Membership<I, A> {
   }
 
   /// Returns true if the server identified by 'id' is in in the
-  /// provided [`Memberhsip`].
+  /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
   where
     I: Borrow<Q>,
@@ -672,7 +672,7 @@ impl<I: Id, A: Address> Membership<I, A> {
   }
 
   /// Returns true if the server address is in in the
-  /// provided [`Memberhsip`].
+  /// provided [`Membership`].
   pub fn contains_addr<Q>(&self, addr: &Q) -> bool
   where
     A: std::borrow::Borrow<Q>,

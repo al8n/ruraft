@@ -3,13 +3,13 @@ use std::{
   time::{Duration, Instant},
 };
 
-use crate::{
-  raft::{Node, Role},
+use ruraft_core::{
+  Node, Role,
   transport::{Address, Id},
 };
 
 /// Raft is the API for the Raft consensus algorithm.
-pub trait Raft {
+pub trait API {
   /// The error type returned by the Raft.
   type Error: std::error::Error + Send + Sync + 'static;
 
