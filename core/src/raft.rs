@@ -1,9 +1,7 @@
 use std::{
-  sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-  },
-  time::{Duration, Instant},
+  net::SocketAddr,
+  sync::{atomic::{Ordering, AtomicBool}, Arc},
+  time::Duration,
 };
 
 use agnostic::Runtime;
@@ -15,10 +13,11 @@ use futures::FutureExt;
 use crate::{
   error::Error,
   fsm::FinateStateMachine,
+  membership::ServerId,
   options::{Options, ReloadableOptions},
   sidecar::{NoopSidecar, Sidecar},
   storage::Storage,
-  transport::{Address, AddressResolver, Id, RpcConsumer, Transport}, membership::Memberships,
+  transport::{Transport, CommandConsumer},
 };
 
 mod candidate;
@@ -31,36 +30,32 @@ pub use state::*;
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 
-pub struct Node<I: Id, A: Address> {
-  id: I,
-  addr: A,
+pub struct Node {
+  id: ServerId,
+  addr: SocketAddr,
 }
 
-impl<I, A> core::fmt::Display for Node<I, A>
-where
-  I: Id,
-  A: Address,
-{
+impl core::fmt::Display for Node {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}({})", self.id, self.addr)
   }
 }
 
-impl<I: Id, A: Address> Node<I, A> {
+impl Node {
   /// Returns the id of the leader.
   #[inline]
-  pub const fn id(&self) -> &I {
+  pub const fn id(&self) -> &ServerId {
     &self.id
   }
 
   /// Returns the address of the leader.
   #[inline]
-  pub const fn addr(&self) -> &A {
-    &self.addr
+  pub const fn addr(&self) -> SocketAddr {
+    self.addr
   }
 
   #[inline]
-  pub const fn new(id: I, addr: A) -> Self {
+  const fn new(id: ServerId, addr: SocketAddr) -> Self {
     Self { id, addr }
   }
 }
@@ -68,7 +63,7 @@ impl<I: Id, A: Address> Node<I, A> {
 struct RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -78,10 +73,9 @@ where
   fsm: Arc<F>,
   storage: Arc<S>,
   transport: Arc<T>,
-  leader: ArcSwapOption<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  local: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  leader: ArcSwapOption<Node>,
+  local: Node,
   candidate_from_leadership_transfer: AtomicBool,
-  memberships: Memberships<T::Id, <T::Resolver as AddressResolver>::Address>,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
@@ -97,9 +91,6 @@ where
   leader_notify_tx: async_channel::Sender<()>,
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
-  /// last_contact is the last time we had contact from the
-	/// leader node. This can be used to gauge staleness.
-  last_contact: parking_lot::RwLock<Instant>,
   /// The sidecar to run alongside the Raft.
   sidecar: Option<Arc<SC>>,
   _marker: std::marker::PhantomData<R>,
@@ -108,7 +99,7 @@ where
 impl<F, S, T, SC, R> core::ops::Deref for RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -123,7 +114,7 @@ where
 impl<F, S, T, SC, R> RaftInner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -134,12 +125,7 @@ where
   }
 
   #[inline]
-  fn set_last_contact(&self, instant: Instant) {
-    *self.last_contact.write() = instant;
-  }
-
-  #[inline]
-  fn set_leader(&self, leader: Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>) {
+  fn set_leader(&self, leader: Option<Node>) {
     let new = leader.map(Arc::new);
     let old = self.leader.swap(new.clone());
     match (new, old) {
@@ -162,7 +148,7 @@ where
 pub struct RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -173,7 +159,7 @@ where
 impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -188,7 +174,7 @@ where
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   R: Runtime,
 {
@@ -200,7 +186,7 @@ where
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -255,7 +241,7 @@ where
 struct RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -267,7 +253,7 @@ where
 impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -282,7 +268,7 @@ where
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -301,7 +287,7 @@ where
           match self.inner.role() {
             Role::Follower => {
               self.spawn_sidecar(Role::Follower);
-              // self.run_follower().await;
+              self.run_follower().await;
               self.stop_sidecar().await;
             },
             Role::Candidate => todo!(),
