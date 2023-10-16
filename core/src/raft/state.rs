@@ -5,10 +5,9 @@ use atomic::Atomic;
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,
 /// or Shutdown.
-#[derive(
-  Debug, PartialEq, Eq, Clone, Copy, Hash, serde::Serialize, serde::Deserialize, bytemuck::NoUninit,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, bytemuck::NoUninit)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u8)]
 pub enum Role {
   /// The initial state of a Raft node.
@@ -39,6 +38,12 @@ impl Role {
 pub(crate) struct LastLog {
   index: u64,
   term: u64,
+}
+
+impl LastLog {
+  pub(crate) fn new(index: u64, term: u64) -> Self {
+    Self { index, term }
+  }
 }
 
 #[viewit::viewit]

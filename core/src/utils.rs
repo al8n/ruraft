@@ -122,3 +122,7 @@ pub const fn decode_varint(buf: &[u8]) -> Option<u64> {
     i += 1;
   }
 }
+
+pub(crate) fn invalid_data<E: std::error::Error + Send + Sync + 'static>(err: E) -> std::io::Error {
+  std::io::Error::new(std::io::ErrorKind::InvalidData, err)
+}

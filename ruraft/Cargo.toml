@@ -1,10 +1,55 @@
 [package]
 name = "ruraft"
-version = { workspace = true } 
-edition = { workspace = true }
-license = { workspace = true }
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+metadata.workspace = true
+rust-version.workspace = true
 description = "A placeholder"
 
+[features]
+default = ["dns"]
+
+tokio = ["agnostic/tokio"]
+async-std = ["agnostic/async-std"]
+smol = ["agnostic/smol"]
+
+# enable DNS node address resolver
+dns = ["agnostic/dns"]
+
+metrics = ["ruraft-core/metrics"]
+
+test = ["ruraft-core/test", "tempfile"]
+
+serde = ["dep:serde", "ruraft-core/serde"]
+
+# enable rmp encoder/decoder for the network transport
+rmp = ["dep:rmp-serde", "serde"]
+
 [dependencies]
+agnostic = { workspace = true }
+async-channel = { workspace = true }
+async-lock = { workspace = true }
 bytes = { workspace = true }
+crc32fast = "1.3"
+futures = { workspace = true }
+once_cell = "1.18"
 ruraft-core = { path = "../core" }
+rand = "0.8"
+
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+viewit = { workspace = true }
+
+# encoder/decoder related dependencies
+rmp-serde = { version = "1.1", optional = true }
+
+# test features related dependencies
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
+tokio = { version = "1.32", features = ["full"] }

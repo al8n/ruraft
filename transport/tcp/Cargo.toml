@@ -1,0 +1,36 @@
+[package]
+name = "ruraft-tcp"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+metadata.workspace = true
+rust-version.workspace = true
+description = "TCP transport layer implementation for ruraft"
+
+[features]
+default = ["dns"]
+
+serde = ["ruraft-net/serde"]
+
+# enable DNS node address resolver
+dns = ["ruraft-net/dns"]
+
+metrics = ["ruraft-net/metrics"]
+
+test = ["ruraft-net/test", "tempfile"]
+
+[dependencies]
+agnostic = { workspace = true, features = ["net"] }
+futures = { workspace = true }
+nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
+pin-project = { workspace = true }
+ruraft-net = { path = "../net" }
+
+# test features related dependencies
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
+tokio = { version = "1.32", features = ["full"] }

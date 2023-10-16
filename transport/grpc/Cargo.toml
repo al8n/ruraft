@@ -1,0 +1,29 @@
+[package]
+name = "ruraft-grpc"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+metadata.workspace = true
+rust-version.workspace = true
+description = "GRPC transport layer implementation for ruraft"
+
+[dependencies]
+agnostic = { workspace = true, features = ["net", "tokio", "tokio-compat"] }
+futures = { workspace = true }
+nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
+pollster = { workspace = true }
+ruraft-core = { path = "../../core" }
+scopeguard = "1.1"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+viewit = { workspace = true }
+prost = "0.12"
+tonic = "0.10"
+tokio = { version = "1.32", features = ["macros", "time"] }
+wg = { workspace = true }
+
+
+[build-dependencies]
+tonic-build = "0.10"

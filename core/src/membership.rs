@@ -1,21 +1,53 @@
-use std::{borrow::Borrow, net::SocketAddr, sync::Arc};
+use std::{borrow::Borrow, mem, sync::Arc};
 
 use arc_swap::ArcSwapAny;
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
-use smol_str::SmolStr;
+use nodecraft::Transformable;
 
-use crate::options::ProtocolVersion;
+use crate::{
+  transport::{Address, Id},
+  utils::invalid_data,
+};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(
+  feature = "serde",
+  derive(serde_repr::Serialize_repr, serde_repr::Deserialize_repr)
+)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ServerSuffrage {
   Voter,
   Nonvoter,
 }
 
+/// Returend when the fail to parse [`ServerSuffrage`].
+#[derive(Debug)]
+pub struct UnknownServerSuffrage(u8);
+
+impl core::fmt::Display for UnknownServerSuffrage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{} is not a valid server suffrage", self.0)
+  }
+}
+
+impl std::error::Error for UnknownServerSuffrage {}
+
+impl TryFrom<u8> for ServerSuffrage {
+  type Error = UnknownServerSuffrage;
+
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match value {
+      0 => Ok(Self::Voter),
+      1 => Ok(Self::Nonvoter),
+      val => Err(UnknownServerSuffrage(val)),
+    }
+  }
+}
+
 impl ServerSuffrage {
+  const SIZE: usize = mem::size_of::<Self>();
+
   /// Returns a string representation of the suffrage.
   #[inline]
   pub const fn as_str(&self) -> &'static str {
@@ -38,106 +70,19 @@ impl ServerSuffrage {
   }
 }
 
-/// A unique string identifying a server for all time.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ServerId(SmolStr);
-
-impl ServerId {
-  /// Creates a new `ServerId` from the source.
-  pub fn new<T: AsRef<str>>(src: T) -> Result<Self, MembershipError> {
-    if src.as_ref().is_empty() {
-      return Err(MembershipError::EmptyServerId);
-    }
-
-    Ok(Self(SmolStr::new(src)))
-  }
-
-  /// converts the `ServerId` into a `&str`.
-  pub fn as_str(&self) -> &str {
-    self.0.as_ref()
-  }
-
-  /// Returns a byte slice.
-  /// To convert the byte slice back into a string slice, use the [`core::str::from_utf8`] function.
-  pub fn as_bytes(&self) -> &[u8] {
-    self.0.as_bytes()
-  }
-
-  /// Returns random `ServerId`, this function should only be used in `#[cfg(feature = "test")]` or `#[cfg(test)]`
-  #[cfg(any(test, feature = "test"))]
-  pub fn random() -> Self {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let id: String = (0..10).map(|_| rng.gen::<char>()).collect();
-    Self::new(id).unwrap()
-  }
-
-  pub(crate) fn encoded_size(&self, version: ProtocolVersion) -> usize {
-    match version {
-      ProtocolVersion::V1 => {
-        // A simple length-prefix encoding.
-        core::mem::size_of::<u32>() + self.0.len()
-      }
-    }
-  }
-
-  pub(crate) fn encode(&self, dst: &mut [u8], version: ProtocolVersion) {
-    match version {
-      ProtocolVersion::V1 => {
-        const OFFSET: usize = core::mem::size_of::<u32>();
-        let len = self.0.len();
-        dst[..OFFSET].copy_from_slice(&len.to_be_bytes());
-        dst[OFFSET..OFFSET + len].copy_from_slice(self.0.as_bytes());
-      }
-    }
-  }
-}
-
-impl std::str::FromStr for ServerId {
-  type Err = MembershipError;
-
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    Self::new(s)
-  }
-}
-
-impl Borrow<str> for ServerId {
-  fn borrow(&self) -> &str {
-    self.as_str()
-  }
-}
-
-impl AsRef<str> for ServerId {
-  fn as_ref(&self) -> &str {
-    self.0.as_ref()
-  }
-}
-
-impl core::fmt::Display for ServerId {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    self.0.fmt(f)
-  }
-}
-
-impl core::fmt::Debug for ServerId {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    self.0.fmt(f)
-  }
-}
-
 #[viewit::viewit]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Server {
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Server<I: Id, A: Address> {
   /// A unique string identifying this server for all time.
-  id: ServerId,
+  id: I,
   /// The network address that a transport can contact.
-  addr: SocketAddr,
+  addr: A,
   /// Determines whether the server gets a vote.
   suffrage: ServerSuffrage,
 }
 
-impl PartialEq for Server {
+impl<I: Id, A: Address> PartialEq for Server<I, A> {
   fn eq(&self, other: &Self) -> bool {
     if self.id == other.id {
       return true;
@@ -151,27 +96,28 @@ impl PartialEq for Server {
   }
 }
 
-impl Eq for Server {}
+impl<I: Id, A: Address> Eq for Server<I, A> {}
 
-impl Server {
+impl<I: Id, A: Address> Server<I, A> {
   /// Creates a new `Server`.
   #[inline]
-  pub fn new(id: ServerId, addr: SocketAddr, suffrage: ServerSuffrage) -> Self {
+  pub fn new(id: I, addr: A, suffrage: ServerSuffrage) -> Self {
     Self { id, addr, suffrage }
   }
 }
 
 /// The different ways to change the cluster
 /// membership.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum MembershipChangeCommand {
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
+pub enum MembershipChangeCommand<I: Id, A: Address> {
   /// Adds a server with [`ServerSuffrage`] of Voter.
   AddVoter {
     /// The server to execute the command on.
-    server_id: ServerId,
+    id: I,
     /// The server address.
-    server_addr: SocketAddr,
+    addr: A,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -180,9 +126,9 @@ pub enum MembershipChangeCommand {
   /// Makes a server [`ServerSuffrage::Nonvoter`] unless its [`ServerSuffrage::Staging`] or [`ServerSuffrage::Voter`].
   AddNonvoter {
     /// The server to execute the command on.
-    server_id: ServerId,
+    id: I,
     /// The server address.
-    server_addr: SocketAddr,
+    addr: A,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -191,7 +137,7 @@ pub enum MembershipChangeCommand {
   /// Makes a server [`ServerSuffrage::Nonvoter`] unless its absent.
   DemoteVoter {
     /// The server to execute the command on.
-    server_id: ServerId,
+    id: I,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -200,7 +146,7 @@ pub enum MembershipChangeCommand {
   /// Removes a server entirely from the cluster membership.
   RemoveServer {
     /// The server to execute the command on.
-    server_id: ServerId,
+    id: I,
     /// If nonzero, is the index of the only membership upon which
     /// this change may be applied; if another membership entry has been
     /// added in the meantime, this request will fail.
@@ -208,7 +154,7 @@ pub enum MembershipChangeCommand {
   },
 }
 
-impl MembershipChangeCommand {
+impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
   /// Returns a string representation of the command.
   #[inline]
   pub const fn as_str(&self) -> &'static str {
@@ -222,40 +168,67 @@ impl MembershipChangeCommand {
 
   /// Returns [`MembershipChangeCommand::AddVoter`].
   #[inline]
-  pub const fn add_voter(server_id: ServerId, server_addr: SocketAddr, prev_index: u64) -> Self {
+  pub const fn add_voter(id: I, addr: A, prev_index: u64) -> Self {
     Self::AddNonvoter {
-      server_id,
-      server_addr,
+      id,
+      addr,
       prev_index,
     }
   }
 
   /// Returns [`MembershipChangeCommand::AddNonvoter`].
   #[inline]
-  pub const fn add_nonvoter(server_id: ServerId, server_addr: SocketAddr, prev_index: u64) -> Self {
+  pub const fn add_nonvoter(id: I, addr: A, prev_index: u64) -> Self {
     Self::AddNonvoter {
-      server_id,
-      server_addr,
+      id,
+      addr,
       prev_index,
     }
   }
 
   /// Returns [`MembershipChangeCommand::DemoteVoter`].
   #[inline]
-  pub const fn demote_voter(server_id: ServerId, prev_index: u64) -> Self {
-    Self::DemoteVoter {
-      server_id,
-      prev_index,
-    }
+  pub const fn demote_voter(id: I, prev_index: u64) -> Self {
+    Self::DemoteVoter { id, prev_index }
   }
 
   /// Returns [`MembershipChangeCommand::RemoveServer`].
   #[inline]
-  pub const fn remove_server(server_id: ServerId, prev_index: u64) -> Self {
-    Self::RemoveServer {
-      server_id,
-      prev_index,
-    }
+  pub const fn remove_server(id: I, prev_index: u64) -> Self {
+    Self::RemoveServer { id, prev_index }
+  }
+}
+
+/// The error type returned when encoding [`Membership`] to bytes or decoding a [`Membership`] from bytes.
+#[derive(thiserror::Error)]
+pub enum MembershipTransformableError<I: Id, A: Address> {
+  /// Returned when the encode or decode id fails.
+  #[error("id error: {0}")]
+  Id(I::Error),
+  /// Returned when the encode or decode address fails.
+  #[error("address error: {0}")]
+  Address(A::Error),
+  #[error("the encoded size of id({0}) is too large")]
+  IdTooLarge(I),
+  #[error("the encoded size of address({0}) is too large")]
+  AddressTooLarge(A),
+  /// Returned when the number of nodes is too large.
+  #[error("membership too large, too many servers({0})")]
+  TooLarge(usize),
+  /// Returned when the encode buffer is too small.
+  #[error("encode buffer too small")]
+  EncodeBufferTooSmall,
+  /// Returned when decode buffer has less data than expected.
+  #[error("corrupted")]
+  Corrupted,
+  /// Returned when the suffrage is unknown.
+  #[error("{0}")]
+  UnknownServerSuffrage(#[from] UnknownServerSuffrage),
+}
+
+impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    core::fmt::Display::fmt(&self, f)
   }
 }
 
@@ -263,12 +236,343 @@ impl MembershipChangeCommand {
 /// votes. This should include the local server, if it's a member of the cluster.
 /// The servers are listed no particular order, but each should only appear once.
 /// These entries are appended to the log during membership changes.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Membership {
-  servers: IndexMap<ServerId, (SocketAddr, ServerSuffrage)>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Membership<I: Id, A: Address> {
+  servers: IndexMap<I, (A, ServerSuffrage)>,
 }
 
-impl Membership {
+impl<I: Id, A: Address> Default for Membership<I, A> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+const U32_SIZE: usize = mem::size_of::<u32>();
+
+impl<I, A> Transformable for Membership<I, A>
+where
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
+{
+  type Error = MembershipTransformableError<I, A>;
+
+  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    let dst_len = dst.len();
+    let encoded_len = self.encoded_len();
+    if encoded_len > u32::MAX as usize {
+      return Err(Self::Error::TooLarge(encoded_len));
+    }
+
+    if dst_len < encoded_len {
+      return Err(Self::Error::EncodeBufferTooSmall);
+    }
+
+    let total_servers = self.servers.len();
+    if total_servers > u32::MAX as usize {
+      return Err(Self::Error::TooLarge(total_servers));
+    }
+
+    let mut cur = 0;
+    dst[cur..cur + U32_SIZE].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    cur += U32_SIZE;
+
+    let total_servers = total_servers as u32;
+    dst[cur..cur + U32_SIZE].copy_from_slice(&total_servers.to_be_bytes());
+    cur += U32_SIZE;
+
+    for (id, (addr, suffrage)) in self.servers.iter() {
+      let id_len = id.encoded_len();
+      let addr_len = addr.encoded_len();
+      if id_len > u32::MAX as usize {
+        return Err(Self::Error::IdTooLarge(id.clone()));
+      }
+
+      if addr_len > u32::MAX as usize {
+        return Err(Self::Error::AddressTooLarge(addr.clone()));
+      }
+      id.encode(dst[cur..cur + id_len].as_mut())
+        .map_err(Self::Error::Id)?;
+      cur += id_len;
+      addr
+        .encode(dst[cur..cur + addr_len].as_mut())
+        .map_err(Self::Error::Address)?;
+      cur += addr_len;
+      dst[cur] = *suffrage as u8;
+      cur += ServerSuffrage::SIZE;
+    }
+    Ok(())
+  }
+
+  /// Encodes the value into the given writer.
+  ///
+  /// # Note
+  /// The implementation of this method is not optimized, which means
+  /// if your writer is expensive (e.g. [`TcpStream`](std::net::TcpStream), [`File`](std::fs::File)),
+  /// it is better to use a [`BufWriter`](std::io::BufWriter)
+  /// to wrap your orginal writer to cut down the number of I/O times.
+  fn encode_to_writer<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+    let encoded_len = self.encoded_len();
+    if encoded_len > u32::MAX as usize {
+      return Err(invalid_data(Self::Error::TooLarge(encoded_len)));
+    }
+
+    let total_servers = self.servers.len();
+    if total_servers > u32::MAX as usize {
+      return Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        Self::Error::TooLarge(total_servers),
+      ));
+    }
+
+    let mut inlined = [0; U32_SIZE * 2];
+    inlined[..U32_SIZE].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    inlined[U32_SIZE..].copy_from_slice(&(total_servers as u32).to_be_bytes());
+    writer.write_all(&inlined)?;
+
+    for (id, (addr, suffrage)) in self.servers.iter() {
+      let id_len = id.encoded_len();
+      let addr_len = addr.encoded_len();
+      if id_len > u32::MAX as usize {
+        return Err(invalid_data(Self::Error::IdTooLarge(id.clone())));
+      }
+
+      if addr_len > u32::MAX as usize {
+        return Err(invalid_data(Self::Error::AddressTooLarge(addr.clone())));
+      }
+      id.encode_to_writer(writer)?;
+      addr.encode_to_writer(writer)?;
+      writer.write_all(&[*suffrage as u8])?;
+    }
+    Ok(())
+  }
+
+  /// Encodes the value into the given async writer.
+  ///
+  /// # Note
+  /// The implementation of this method is not optimized, which means
+  /// if your writer is expensive (e.g. `TcpStream`, `File`),
+  /// it is better to use a [`BufWriter`](futures::io::BufWriter)
+  /// to wrap your orginal writer to cut down the number of I/O times.
+  async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
+    &self,
+    writer: &mut W,
+  ) -> std::io::Result<()> {
+    use futures::io::AsyncWriteExt;
+    let encoded_len = self.encoded_len();
+    if encoded_len > u32::MAX as usize {
+      return Err(invalid_data(Self::Error::TooLarge(encoded_len)));
+    }
+
+    let total_servers = self.servers.len();
+    if total_servers > u32::MAX as usize {
+      return Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        Self::Error::TooLarge(total_servers),
+      ));
+    }
+
+    let mut inlined = [0; U32_SIZE * 2];
+    inlined[..U32_SIZE].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    inlined[U32_SIZE..].copy_from_slice(&(total_servers as u32).to_be_bytes());
+    writer.write_all(&inlined).await?;
+
+    for (id, (addr, suffrage)) in self.servers.iter() {
+      let id_len = id.encoded_len();
+      let addr_len = addr.encoded_len();
+      if id_len > u32::MAX as usize {
+        return Err(invalid_data(Self::Error::IdTooLarge(id.clone())));
+      }
+
+      if addr_len > u32::MAX as usize {
+        return Err(invalid_data(Self::Error::AddressTooLarge(addr.clone())));
+      }
+      id.encode_to_async_writer(writer).await?;
+      addr.encode_to_async_writer(writer).await?;
+      writer.write_all(&[*suffrage as u8]).await?;
+    }
+    Ok(())
+  }
+
+  fn encoded_len(&self) -> usize {
+    U32_SIZE // length of encoded bytes
+    + U32_SIZE // total servers
+    + self.servers.iter().map(|(id, (addr, _))| {
+      let id_len = id.encoded_len();
+      let addr_len = addr.encoded_len();
+      id_len + addr_len + ServerSuffrage::SIZE
+    }).sum::<usize>()
+  }
+
+  fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
+  where
+    Self: Sized,
+  {
+    let mut cur = 0;
+    if src.len() < U32_SIZE * 2 {
+      return Err(Self::Error::Corrupted);
+    }
+    let len =
+      u32::from_be_bytes(src[cur..cur + mem::size_of::<u32>()].try_into().unwrap()) as usize;
+    cur += U32_SIZE;
+    if src.len() < len {
+      return Err(Self::Error::Corrupted);
+    }
+    let total_servers =
+      u32::from_be_bytes(src[cur..cur + mem::size_of::<u32>()].try_into().unwrap()) as usize;
+    cur += U32_SIZE;
+
+    let mut servers = IndexMap::with_capacity(total_servers);
+    while servers.len() < total_servers {
+      let (readed, id) = I::decode(&src[cur..]).map_err(Self::Error::Id)?;
+      cur += readed;
+      let (readed, addr) = A::decode(&src[cur..]).map_err(Self::Error::Address)?;
+      cur += readed;
+      let suffrage: ServerSuffrage = src[cur].try_into()?;
+      cur += ServerSuffrage::SIZE;
+      servers.insert(id, (addr, suffrage));
+    }
+    Ok((len, Self { servers }))
+  }
+
+  /// Decodes the value from the given reader.
+  ///
+  /// # Note
+  /// The implementation of this method is not optimized, which means
+  /// if your reader is expensive (e.g. [`TcpStream`](std::net::TcpStream), [`File`](std::fs::File)),
+  /// it is better to use a [`BufReader`](std::io::BufReader)
+  /// to wrap your orginal reader to cut down the number of I/O times.
+  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    let mut inlined = [0; U32_SIZE * 2];
+    reader.read_exact(&mut inlined)?;
+    let len = u32::from_be_bytes(inlined[..U32_SIZE].try_into().unwrap()) as usize;
+    let total_servers = u32::from_be_bytes(inlined[U32_SIZE..].try_into().unwrap()) as usize;
+    let remaining: usize = len - (U32_SIZE * 2);
+    if remaining == 0 {
+      return Ok((len, Self::new()));
+    }
+    let mut src = vec![0; remaining];
+    let mut cur = 0;
+    reader.read_exact(&mut src)?;
+    let mut servers = IndexMap::with_capacity(total_servers);
+    while servers.len() < total_servers {
+      let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
+      cur += readed;
+      let (readed, addr) =
+        A::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
+      cur += readed;
+      let suffrage: ServerSuffrage = src[cur]
+        .try_into()
+        .map_err(|e| invalid_data(Self::Error::UnknownServerSuffrage(e)))?;
+      cur += ServerSuffrage::SIZE;
+      servers.insert(id, (addr, suffrage));
+    }
+    Ok((len, Self { servers }))
+  }
+
+  /// Decodes the value from the given async reader.
+  ///
+  /// # Note
+  /// The implementation of this method is not optimized, which means
+  /// if your reader is expensive (e.g. `TcpStream`, `File`),
+  /// it is better to use a [`BufReader`](futures::io::BufReader)
+  /// to wrap your orginal reader to cut down the number of I/O times.
+  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
+    reader: &mut R,
+  ) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    use futures::AsyncReadExt;
+    let mut inlined = [0; U32_SIZE * 2];
+    reader.read_exact(&mut inlined).await?;
+    let len = u32::from_be_bytes(inlined[..U32_SIZE].try_into().unwrap()) as usize;
+    let total_servers = u32::from_be_bytes(inlined[U32_SIZE..].try_into().unwrap()) as usize;
+    let remaining: usize = len - (U32_SIZE * 2);
+    if remaining == 0 {
+      return Ok((len, Self::new()));
+    }
+    let mut src = vec![0; remaining];
+    let mut cur = 0;
+    reader.read_exact(&mut src).await?;
+    let mut servers = IndexMap::with_capacity(total_servers);
+    while servers.len() < total_servers {
+      let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
+      cur += readed;
+      let (readed, addr) =
+        A::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
+      cur += readed;
+      let suffrage: ServerSuffrage = src[cur]
+        .try_into()
+        .map_err(|e| invalid_data(Self::Error::UnknownServerSuffrage(e)))?;
+      cur += ServerSuffrage::SIZE;
+      servers.insert(id, (addr, suffrage));
+    }
+    Ok((len, Self { servers }))
+  }
+}
+
+#[cfg(feature = "serde")]
+impl<I: Id + serde::Serialize, A: Address + serde::Serialize> serde::Serialize
+  for Membership<I, A>
+{
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    use serde::ser::SerializeSeq;
+
+    #[derive(serde::Serialize)]
+    struct ServerRef<'a, Id, Address> {
+      id: &'a Id,
+      addr: &'a Address,
+      suffrage: ServerSuffrage,
+    }
+
+    let mut seq = serializer.serialize_seq(Some(self.servers.len()))?;
+    for (id, (addr, suffrage)) in self.servers.iter() {
+      let server = ServerRef {
+        id: &id,
+        addr: &addr,
+        suffrage: *suffrage,
+      };
+      seq.serialize_element(&server)?;
+    }
+    seq.end()
+  }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, I: Id + serde::Deserialize<'de>, A: Address + serde::Deserialize<'de>>
+  serde::Deserialize<'de> for Membership<I, A>
+{
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    let servers = Vec::<Server<I, A>>::deserialize(deserializer)?;
+    let mut membership = Membership::new();
+    membership
+      .insert_many(servers.into_iter())
+      .and_then(|_| membership.validate().map(|_| membership))
+      .map_err(<D::Error as serde::de::Error>::custom)
+  }
+}
+
+impl<I: Id, A: Address> FromIterator<Server<I, A>>
+  for Result<Membership<I, A>, MembershipError<I, A>>
+{
+  fn from_iter<T: IntoIterator<Item = Server<I, A>>>(iter: T) -> Self {
+    let mut membership = Membership::new();
+    membership
+      .insert_many(iter.into_iter())
+      .and_then(|_| membership.validate().map(|_| membership))
+  }
+}
+
+impl<I: Id, A: Address> Membership<I, A> {
   /// Create a new membership.
   pub fn new() -> Self {
     Self {
@@ -281,7 +585,7 @@ impl Membership {
   /// # Errors
   /// - If the server address is already in the membership.
   /// - If the server id is already in the membership.
-  pub fn insert(&mut self, server: Server) -> Result<(), MembershipError> {
+  pub fn insert(&mut self, server: Server<I, A>) -> Result<(), MembershipError<I, A>> {
     if self.servers.contains_key(&server.id) {
       return Err(MembershipError::DuplicateId(server.id));
     }
@@ -303,20 +607,18 @@ impl Membership {
   /// - If the one of the server id is already in the membership.
   pub fn insert_many(
     &mut self,
-    mut servers: impl Iterator<Item = Server>,
-  ) -> Result<(), MembershipError> {
+    mut servers: impl Iterator<Item = Server<I, A>>,
+  ) -> Result<(), MembershipError<I, A>> {
     servers.try_for_each(|server| self.insert(server))
   }
 
   /// Returns an iterator over the membership
-  pub fn iter(&self) -> impl Iterator<Item = (&ServerId, &(SocketAddr, ServerSuffrage))> {
+  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
     self.servers.iter()
   }
 
   /// Returns an iterator that allows modifying each value.
-  pub fn iter_mut(
-    &mut self,
-  ) -> impl Iterator<Item = (&ServerId, &mut (SocketAddr, ServerSuffrage))> {
+  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
     self.servers.iter_mut()
   }
 
@@ -332,7 +634,7 @@ impl Membership {
 
   /// Validates a cluster membership configuration for common
   /// errors.
-  pub fn validate(&self) -> Result<(), MembershipError> {
+  pub fn validate(&self) -> Result<(), MembershipError<I, A>> {
     self
       .servers
       .values()
@@ -344,7 +646,7 @@ impl Membership {
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
   where
-    ServerId: Borrow<Q>,
+    I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
   {
     self
@@ -360,29 +662,29 @@ impl Membership {
   }
 
   /// Returns true if the server identified by 'id' is in in the
-  /// provided [`Memberhsip`].
+  /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
   where
-    ServerId: Borrow<Q>,
+    I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
   {
     self.servers.contains_key(id)
   }
 
   /// Returns true if the server address is in in the
-  /// provided [`Memberhsip`].
+  /// provided [`Membership`].
   pub fn contains_addr<Q>(&self, addr: &Q) -> bool
   where
-    SocketAddr: std::borrow::Borrow<Q>,
+    A: std::borrow::Borrow<Q>,
     Q: ?Sized + Eq,
   {
     self.servers.values().any(|s| s.0.borrow() == addr)
   }
 
   /// Remove a server from the membership and return its address and suffrage.
-  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server>
+  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
   where
-    ServerId: Borrow<Q>,
+    I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
   {
     self
@@ -397,9 +699,9 @@ impl Membership {
   pub(crate) fn next(
     &self,
     current_index: u64,
-    change: MembershipChangeCommand,
-  ) -> Result<Self, MembershipError> {
-    let check = |prev_index: u64| -> Result<(), MembershipError> {
+    change: MembershipChangeCommand<I, A>,
+  ) -> Result<Self, MembershipError<I, A>> {
+    let check = |prev_index: u64| -> Result<(), MembershipError<I, A>> {
       if prev_index > 0 && prev_index != current_index {
         return Err(MembershipError::AlreadyChanged {
           since: prev_index,
@@ -412,61 +714,53 @@ impl Membership {
 
     match change {
       MembershipChangeCommand::AddVoter {
-        server_id,
-        server_addr,
+        id,
+        addr,
         prev_index,
       } => check(prev_index).and_then(|_| {
         let mut new = self.clone();
-        if let Some((addr, suffrage)) = new.servers.get_mut(&server_id) {
+        if let Some((address, suffrage)) = new.servers.get_mut(&id) {
           if *suffrage != ServerSuffrage::Voter {
             *suffrage = ServerSuffrage::Voter;
           }
 
-          *addr = server_addr;
+          *address = addr;
         } else {
-          new
-            .servers
-            .insert(server_id, (server_addr, ServerSuffrage::Voter));
+          new.servers.insert(id, (addr, ServerSuffrage::Voter));
         }
         new.validate().map(|_| new)
       }),
       MembershipChangeCommand::AddNonvoter {
-        server_id,
-        server_addr,
+        id,
+        addr,
         prev_index,
       } => check(prev_index).and_then(|_| {
         let mut new = self.clone();
-        if let Some((addr, suffrage)) = new.servers.get_mut(&server_id) {
+        if let Some((address, suffrage)) = new.servers.get_mut(&id) {
           if *suffrage != ServerSuffrage::Nonvoter {
             *suffrage = ServerSuffrage::Nonvoter;
           }
 
-          *addr = server_addr;
+          *address = addr;
         } else {
-          new
-            .servers
-            .insert(server_id, (server_addr, ServerSuffrage::Nonvoter));
+          new.servers.insert(id, (addr, ServerSuffrage::Nonvoter));
         }
         new.validate().map(|_| new)
       }),
-      MembershipChangeCommand::DemoteVoter {
-        server_id,
-        prev_index,
-      } => check(prev_index).and_then(|_| {
+      MembershipChangeCommand::DemoteVoter { id, prev_index } => check(prev_index).and_then(|_| {
         let mut new = self.clone();
-        if let Some((_, suffrage)) = new.servers.get_mut(&server_id) {
+        if let Some((_, suffrage)) = new.servers.get_mut(&id) {
           *suffrage = ServerSuffrage::Nonvoter;
         }
         new.validate().map(|_| new)
       }),
-      MembershipChangeCommand::RemoveServer {
-        server_id,
-        prev_index,
-      } => check(prev_index).and_then(|_| {
-        let mut new = self.clone();
-        new.servers.remove(&server_id);
-        new.validate().map(|_| new)
-      }),
+      MembershipChangeCommand::RemoveServer { id, prev_index } => {
+        check(prev_index).and_then(|_| {
+          let mut new = self.clone();
+          new.servers.remove(&id);
+          new.validate().map(|_| new)
+        })
+      }
     }
   }
 }
@@ -484,39 +778,39 @@ impl Membership {
 /// log.
 // TODO(al8n): Implement a WAL for membership changes.
 #[viewit::viewit(setters(skip), getters(skip))]
-pub(crate) struct Memberships {
+pub(crate) struct Memberships<I: Id, A: Address> {
   /// committed is the latest membership in the log/snapshot that has been
   /// committed (the one with the largest index).
-  committed: ArcSwapAny<Arc<(u64, Membership)>>,
+  committed: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
   /// latest is the latest membership in the log/snapshot (may be committed
   /// or uncommitted)
-  latest: ArcSwapAny<Arc<(u64, Membership)>>,
+  latest: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
 }
 
-impl Memberships {
-  pub(crate) fn set_latest(&self, membership: Membership, index: u64) {
+impl<I: Id, A: Address> Memberships<I, A> {
+  pub(crate) fn set_latest(&self, membership: Membership<I, A>, index: u64) {
     self.latest.store(Arc::new((index, membership)))
   }
 
-  pub(crate) fn set_committed(&self, membership: Membership, index: u64) {
+  pub(crate) fn set_committed(&self, membership: Membership<I, A>, index: u64) {
     self.committed.store(Arc::new((index, membership)))
   }
 
-  pub(crate) fn latest(&self) -> arc_swap::Guard<Arc<(u64, Membership)>> {
+  pub(crate) fn latest(&self) -> arc_swap::Guard<Arc<(u64, Membership<I, A>)>> {
     self.latest.load()
   }
 
-  pub(crate) fn committed(&self) -> arc_swap::Guard<Arc<(u64, Membership)>> {
+  pub(crate) fn committed(&self) -> arc_swap::Guard<Arc<(u64, Membership<I, A>)>> {
     self.committed.load()
   }
 }
 
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub enum MembershipError {
+#[derive(PartialEq, Eq, thiserror::Error)]
+pub enum MembershipError<I: Id, A: Address> {
   #[error("found duplicate server address {0}")]
-  DuplicateAddress(SocketAddr),
+  DuplicateAddress(A),
   #[error("found duplicate server id {0}")]
-  DuplicateId(ServerId),
+  DuplicateId(I),
   #[error("server id cannot be empty")]
   EmptyServerId,
   #[error("no voter in the membership")]
@@ -525,15 +819,22 @@ pub enum MembershipError {
   AlreadyChanged { since: u64, latest: u64 },
 }
 
+impl<I: Id, A: Address> core::fmt::Debug for MembershipError<I, A> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    core::fmt::Display::fmt(&self, f)
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::net::SocketAddr;
 
-  fn sample_membership() -> Membership {
+  fn sample_membership() -> Membership<String, SocketAddr> {
     let mut membership = Membership::new();
     membership
       .insert(Server {
-        id: ServerId::new("id0").unwrap(),
+        id: "id0".to_string(),
         addr: "127.0.0.1:8080".parse().unwrap(),
         suffrage: ServerSuffrage::Nonvoter,
       })
@@ -541,7 +842,7 @@ mod tests {
 
     membership
       .insert(Server {
-        id: ServerId::new("id1").unwrap(),
+        id: "id1".to_string(),
         addr: "127.0.0.1:8081".parse().unwrap(),
         suffrage: ServerSuffrage::Voter,
       })
@@ -549,7 +850,7 @@ mod tests {
 
     membership
       .insert(Server {
-        id: ServerId::new("id2").unwrap(),
+        id: "id2".to_string(),
         addr: "127.0.0.1:8082".parse().unwrap(),
         suffrage: ServerSuffrage::Nonvoter,
       })
@@ -558,11 +859,11 @@ mod tests {
     membership
   }
 
-  fn single_server() -> Membership {
+  fn single_server() -> Membership<String, SocketAddr> {
     let mut membership = Membership::new();
     membership
       .insert(Server {
-        id: ServerId::new("id1").unwrap(),
+        id: "id1".to_string(),
         addr: "127.0.0.1:8081".parse().unwrap(),
         suffrage: ServerSuffrage::Voter,
       })
@@ -580,14 +881,15 @@ mod tests {
 
   #[test]
   fn test_membership_validate() {
-    let Err(MembershipError::EmptyVoter) = Membership::new().validate() else {
+    let Err(MembershipError::EmptyVoter) = Membership::<String, SocketAddr>::new().validate()
+    else {
       panic!("should have failed for non voter")
     };
 
     let mut members = Membership::new();
 
     members.servers.insert(
-      ServerId::new("id0").unwrap(),
+      "id0".to_string(),
       ("127.0.0.1:8080".parse().unwrap(), ServerSuffrage::Nonvoter),
     );
     let Err(MembershipError::EmptyVoter) = members.validate() else {
@@ -595,12 +897,12 @@ mod tests {
     };
 
     members.servers.insert(
-      ServerId::new("id1").unwrap(),
+      "id1".to_string(),
       ("127.0.0.1:8081".parse().unwrap(), ServerSuffrage::Voter),
     );
     members.validate().expect("should be ok");
 
-    let id = ServerId::new("id0").unwrap();
+    let id = "id0".to_string();
     let Err(MembershipError::DuplicateId(did)) = members.insert(Server::new(
       id.clone(),
       "127.0.0.1:8083".parse().unwrap(),
@@ -610,12 +912,10 @@ mod tests {
     };
     assert_eq!(did, id);
 
-    let addr = "127.0.0.1:8080".parse().unwrap();
-    let Err(MembershipError::DuplicateAddress(daddr)) = members.insert(Server::new(
-      ServerId::new("id3").unwrap(),
-      addr,
-      ServerSuffrage::Voter,
-    )) else {
+    let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    let Err(MembershipError::DuplicateAddress(daddr)) =
+      members.insert(Server::new("id3".to_string(), addr, ServerSuffrage::Voter))
+    else {
       panic!("should have failed for duplicate addr")
     };
     assert_eq!(daddr, addr);
@@ -623,7 +923,7 @@ mod tests {
     let command = MembershipChangeCommand::remove_server(id, 0);
     members.next(1, command).unwrap();
 
-    let command = MembershipChangeCommand::demote_voter(ServerId::new("id1").unwrap(), 1);
+    let command = MembershipChangeCommand::demote_voter("id1".to_string(), 1);
     let Err(MembershipError::EmptyVoter) = members.next(1, command) else {
       panic!("should have failed for non voter")
     };
@@ -631,11 +931,8 @@ mod tests {
 
   #[test]
   fn test_membership_next_prev_index() {
-    let command = MembershipChangeCommand::add_voter(
-      ServerId::new("id2").unwrap(),
-      "127.0.0.1:8082".parse().unwrap(),
-      1,
-    );
+    let command =
+      MembershipChangeCommand::add_voter("id2".to_string(), "127.0.0.1:8082".parse().unwrap(), 1);
 
     let err = single_server().next(2, command).unwrap_err();
     assert_eq!(
@@ -647,21 +944,15 @@ mod tests {
     );
 
     // current prev_index
-    let command = MembershipChangeCommand::add_voter(
-      ServerId::new("id3").unwrap(),
-      "127.0.0.1:8083".parse().unwrap(),
-      2,
-    );
+    let command =
+      MembershipChangeCommand::add_voter("id3".to_string(), "127.0.0.1:8083".parse().unwrap(), 2);
     single_server()
       .next(2, command)
       .expect("should have succeeded");
 
     // zero prev_index
-    let command = MembershipChangeCommand::add_voter(
-      ServerId::new("id4").unwrap(),
-      "127.0.0.1:8084".parse().unwrap(),
-      2,
-    );
+    let command =
+      MembershipChangeCommand::add_voter("id4".to_string(), "127.0.0.1:8084".parse().unwrap(), 2);
     single_server()
       .next(2, command)
       .expect("should have succeeded");
@@ -669,9 +960,9 @@ mod tests {
 
   #[test]
   fn test_membership_next_and_validate() {
-    let membership = Membership::default();
+    let membership = Membership::<String, SocketAddr>::default();
     let command = MembershipChangeCommand::add_nonvoter(
-      ServerId::new("id1").unwrap(),
+      "id1".to_string(),
       "127.0.0.1:8080".parse().unwrap(),
       0,
     );
