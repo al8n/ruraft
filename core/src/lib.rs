@@ -4,6 +4,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 
+/// Raft API
+pub mod api;
+
 /// Errors implementation for the Raft.
 pub mod error;
 
@@ -14,8 +17,6 @@ mod fsm;
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;
-pub use raft::*;
-
 ///
 pub mod sidecar;
 pub mod storage;
@@ -27,13 +28,16 @@ pub mod utils;
 
 mod commitment;
 
+/// Node id
+pub struct NodeId {}
+
 /// All unit test fns are exported in the `tests` module.
 /// This module is used for users want to use other async runtime,
 /// and want to use the test if ruraft also works with their runtime.
 ///
 #[cfg(feature = "test")]
 pub mod tests {
-  pub use super::storage::tests::*;
+  pub use super::storage::tests::snapshot::*;
   pub use super::transport::tests::*;
 
   /// Sequential access lock for tests.

@@ -1,4 +1,4 @@
-use std::{convert::Infallible, future::Future};
+use std::convert::Infallible;
 
 use crate::raft::Role;
 
@@ -10,6 +10,7 @@ pub use autopilot::*;
 ///
 /// e.g. [`Autopilot`](crate::sidecar::Autopilot) will be run alongside when the Raft node
 /// becomes the leader.
+#[async_trait::async_trait]
 pub trait Sidecar: Send + Sync + 'static {
   /// The options type used to construct the sidecar.
   type Options: Send + Sync + 'static;
@@ -19,17 +20,17 @@ pub trait Sidecar: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// Returns a new sidecar.
-  fn new(options: Self::Options) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  async fn new(options: Self::Options) -> Result<(), Self::Error>;
 
   /// Runs the sidecar.
   ///
   /// - The `role` parameter is the current role of the Raft node.
   /// The implementor should determine whether to run the sidecar or not based on
   /// the role.
-  fn run(&self, role: Role) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  async fn run(&self, role: Role) -> Result<(), Self::Error>;
 
   /// Shutdowns the sidecar, this will be called when the Raft node receives shutdown signal.
-  fn shutdown(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  async fn shutdown(&self) -> Result<(), Self::Error>;
 
   /// This method is used to determine whether the sidecar should run or not.
   fn applicable(role: Role) -> bool;
@@ -50,6 +51,7 @@ impl<R> NoopSidecar<R> {
   }
 }
 
+#[async_trait::async_trait]
 impl<R: agnostic::Runtime> Sidecar for NoopSidecar<R> {
   type Options = ();
   type Error = Infallible;
