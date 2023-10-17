@@ -157,6 +157,28 @@ where
       }
     }
   }
+
+
+  /// Takes a log entry and updates the latest
+  /// membership if the entry results in a new membership. This must only be
+  /// called from the main thread, or from constructors before any threads have begun.
+  fn process_membership_log(&self, log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address>) {
+    if let crate::storage::LogKind::Membership(m) = log.kind {
+      self.memberships.committed.store(self.memberships.latest().clone());
+      self.memberships.set_latest(m, log.index);
+    }
+  }
+
+  /// Used to apply all the committed entries that haven't been
+  /// applied up to the given index limit.
+  /// This can be called from both leaders and followers.
+  /// Followers call this from `append_entries`, for `n` entries at a time, and always
+  /// pass futures = `None`.
+  /// Leaders call this when entries are committed. They pass the futures from any
+  /// inflight logs.
+  async fn process_logs(&self, index: u64, futures: Option<HashMap<u64, ()>>) {
+    todo!()
+  }
 }
 
 pub struct RaftCore<F, S, T, SC, R>
