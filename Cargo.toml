@@ -3,14 +3,10 @@ members = [
   "autopilot",
   "core",
   "ruraft",
-  "storage/snapshot",
-  "storage/bolt",
-  "storage/redb",
-  "storage/sled",
-  "transport/net",
-  "transport/tcp",
-  "transport/grpc",
-  "transport/quic"
+  "storage",
+  "traits",
+  "transport",
+  "types",
 ]
 resolver = "2"
 
@@ -20,25 +16,17 @@ edition = "2021"
 repository = "https://github.com/al8n/ruraft"
 homepage = "https://github.com/al8n/ruraft"
 license = "MPL-2.0"
-rust-version = "1.75.0"
 
 [workspace.package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-agnostic = { version = "0.1.21" }
+agnostic = { path = "../agnostic/agnostic" }
 async-channel = "1.9"
 async-lock = "2.8"
+async-trait = "0.1"
 bytes = "1.5"
-futures = "0.3"
-humantime-serde = "1.1"
-nodecraft = { path = "../nodecraft" }
-pin-project = "1.1"
-pollster = "0.3"
-smol_str = { version = "0.2" }
+futures = { version = "0.3" }
 serde = { version = "1", features = ["derive"] }
-thiserror = "1"
-tracing = { version = "0.1" }
 viewit = { version = "0.1.5" }
-wg = { version = "0.4", features = ["async"] }

@@ -71,11 +71,12 @@ impl<W: Write, H: Hasher> Write for ChecksumableWriter<W, H> {
   }
 }
 
-#[pin_project::pin_project]
-pub struct AsyncChecksumableReader<R: AsyncRead, H: Hasher> {
-  #[pin]
-  reader: R,
-  hasher: H,
+pin_project_lite::pin_project! {
+  pub struct AsyncChecksumableReader<R: AsyncRead, H: Hasher> {
+    #[pin]
+    reader: R,
+    hasher: H,
+  }
 }
 
 impl<R: AsyncRead, H: Hasher> AsyncChecksumableReader<R, H> {
@@ -94,11 +95,11 @@ impl<R: AsyncRead, H: Hasher> AsyncChecksumableReader<R, H> {
 
 impl<R: AsyncRead, H: Hasher> AsyncRead for AsyncChecksumableReader<R, H> {
   fn poll_read(
-    self: Pin<&mut Self>,
+    mut self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &mut [u8],
   ) -> Poll<io::Result<usize>> {
-    let this = self.project();
+    let mut this = self.project();
     match this.reader.poll_read(cx, buf) {
       Poll::Ready(Ok(n)) => {
         this.hasher.write(&buf[..n]);
@@ -110,11 +111,12 @@ impl<R: AsyncRead, H: Hasher> AsyncRead for AsyncChecksumableReader<R, H> {
   }
 }
 
-#[pin_project::pin_project]
-pub struct AsyncChecksumableWriter<W: AsyncWrite, H: Hasher> {
-  #[pin]
-  writer: W,
-  hasher: H,
+pin_project_lite::pin_project! {
+  pub struct AsyncChecksumableWriter<W: AsyncWrite, H: Hasher> {
+    #[pin]
+    writer: W,
+    hasher: H,
+  }
 }
 
 impl<W: AsyncWrite, H: Hasher> AsyncChecksumableWriter<W, H> {

@@ -1,17 +1,15 @@
-use std::{sync::atomic::Ordering, time::Instant};
+use std::sync::atomic::Ordering;
 
-use crate::{
-  storage::LogStorage,
-  transport::{AppendEntriesRequest, AppendEntriesResponse, Request, Response},
-};
+use crate::{transport::{Command, Response, Request, RequestKind, AppendEntriesRequest, AppendEntriesResponse}, storage::LogStorage};
 
 use super::*;
-use futures::{channel::oneshot, StreamExt};
+use futures::{StreamExt, channel::oneshot};
+
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
   F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
@@ -24,14 +22,14 @@ where
     match leader.as_ref() {
       Some(l) => {
         tracing::info!(target = "ruraft.follower", leader = %l.as_ref(), local = %local, "entering follower state");
-      }
+      },
       None => {
         tracing::warn!(target = "ruraft.follower", local = %local, "entering follower state without a leader");
-      }
+      },
     }
-
+    
     let mut request_consumer = self.inner.transport.consumer();
-
+    
     while self.inner.role() == Role::Follower {
       // r.mainThreadSaturation.sleeping()
 
@@ -53,65 +51,44 @@ where
     }
   }
 
-  async fn handle_request(
-    &self,
-    tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
-    req: Request<T::Id, <T::Resolver as AddressResolver>::Address>,
-  ) {
+  async fn handle_request(&self, tx: oneshot::Sender<Response>, req: Request) {
     // TODO: validate the request header
-    match req {
-      Request::AppendEntries(req) => self.handle_append_entries(tx, req).await,
-      Request::Vote(_) => todo!(),
-      Request::InstallSnapshot(_) => todo!(),
-      Request::TimeoutNow(_) => todo!(),
-      Request::Heartbeat(_) => todo!(),
+    match req.kind {
+      RequestKind::AppendEntries(req) => self.handle_append_entries(tx, req).await,
+      RequestKind::Vote(_) => todo!(),
+      RequestKind::InstallSnapshot(_) => todo!(),
+      RequestKind::TimeoutNow(_) => todo!(),
+      RequestKind::Heartbeat(_) => todo!(),
     }
   }
 
-  async fn handle_append_entries(
-    &self,
-    tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
-    mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
-  ) {
+  async fn handle_append_entries(&self, tx: oneshot::Sender<Response>, req: AppendEntriesRequest) {
     // TODO: defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
-
+    
     macro_rules! respond {
-      ($tx:ident.send($resp:ident)) => {
-        if $tx.send(Response::append_entries($resp)).is_err() {
-          tracing::error!(
-            target = "ruraft.follower",
-            err = "channel closed",
-            "failed to respond to append entries request"
-          );
+      ($tx:ident.send($version: ident, $resp:ident)) => {
+        if $tx.send(Response::append_entries($version, $resp)).is_err() {
+          tracing::error!(target = "ruraft.follower", err="channel closed", "failed to respond to append entries request");
         }
       };
     }
 
     let protocol_version = self.options.protocol_version;
-
+    
     // Setup a response
-    let mut resp = AppendEntriesResponse::new(
-      protocol_version,
-      self.local.id().clone(),
-      self.local.addr().clone(),
-    )
+    let mut resp = AppendEntriesResponse::new(self.local.id().clone(), self.local.addr)
     .with_term(self.current_term())
     .with_last_log(self.last_index().await);
 
     // Ignore an older term
     if req.term < self.current_term() {
-      respond!(tx.send(resp));
+      respond!(tx.send(protocol_version, resp));
       return;
     }
 
     // Increase the term if we see a newer one, also transition to follower
-    // if we ever get an appendEntries call
-    if req.term > self.current_term()
-      || (self.role() != Role::Follower
-        && !self
-          .candidate_from_leadership_transfer
-          .load(Ordering::Acquire))
-    {
+	  // if we ever get an appendEntries call
+    if req.term > self.current_term() || (self.role() != Role::Follower && !self.candidate_from_leadership_transfer.load(Ordering::Acquire)) {
       // Ensure transition to follower
       self.set_role(Role::Follower);
       self.set_current_term(req.term);
@@ -130,27 +107,22 @@ where
       } else {
         match self.storage.log_store().get_log(req.prev_log_entry).await {
           Ok(Some(prev_log)) => prev_log_term = prev_log.term,
-          Ok(None) => {}
+          Ok(None) => {},
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
             resp.no_retry_backoff = true;
-            respond!(tx.send(resp));
+            respond!(tx.send(protocol_version, resp));
             return;
           }
         }
       }
 
       if req.prev_log_term != prev_log_term {
-        tracing::warn!(
-          target = "ruraft.follower",
-          "prev log term mismatch (local: {}, remote: {})",
-          prev_log_term,
-          req.prev_log_term
-        );
+        tracing::warn!(target = "ruraft.follower", "prev log term mismatch (local: {}, remote: {})", prev_log_term, req.prev_log_term);
 
         resp.no_retry_backoff = true;
 
-        respond!(tx.send(resp));
+        respond!(tx.send(protocol_version, resp));
         return;
       }
     }

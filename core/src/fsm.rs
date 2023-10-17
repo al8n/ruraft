@@ -1,7 +1,6 @@
-use std::future::Future;
-
 use crate::storage::SnapshotSink;
 
+#[async_trait::async_trait]
 pub trait FinateStateMachineSnapshot {
   /// Errors returned by the finate state machine snapshot.
   type Error: std::error::Error;
@@ -13,13 +12,14 @@ pub trait FinateStateMachineSnapshot {
   type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
-  fn persist(&self, sink: &Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  async fn persist(&self, sink: &Self::Sink) -> Result<(), Self::Error>;
 
   /// Release is invoked when we are finished with the snapshot.
-  fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  async fn release(&self) -> Result<(), Self::Error>;
 }
 
 /// Implemented by clients to make use of the replicated log.
+#[async_trait::async_trait]
 pub trait FinateStateMachine: Send + Sync + 'static {
   /// Errors returned by the finate state machine.
   type Error: std::error::Error;
@@ -40,5 +40,5 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// Apply and Snapshot are always called from the same thread, but Apply will
   /// be called concurrently with FSMSnapshot.Persist. This means the FSM should
   /// be implemented to allow for concurrent updates while a snapshot is happening.
-  fn snapshot(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  async fn snapshot(&self) -> Result<(), Self::Error>;
 }

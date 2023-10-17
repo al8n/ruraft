@@ -1,10 +1,9 @@
 [package]
-name = "ruraft"
+name = "ruraft-traits"
 version = { workspace = true } 
 edition = { workspace = true }
 license = { workspace = true }
 description = "A placeholder"
 
+
 [dependencies]
-bytes = { workspace = true }
-ruraft-core = { path = "../core" }
