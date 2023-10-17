@@ -216,16 +216,19 @@ where
           return;
         }
 
+        let last = req.entries.last().unwrap();
+        let last_log = LastLog::new(last.index, last.term);
+
         // Handle any new membership changes
-        for entry in &req.entries[pos..] {
+        for entry in req.entries.drain(pos..) {
           if entry.is_membership() {
             //TODO: handle membership changes
+            self.process_membership_log(entry);
           }
         }
 
         // Update the lastLog
-        let last = req.entries.last().unwrap();
-        self.set_last_log(LastLog::new(last.index, last.term)).await;
+        self.set_last_log(last_log).await;
       }
 
       // TODO: metrics
@@ -244,7 +247,10 @@ where
       if latest.0 <= idx {
         self.memberships.committed.store(latest.clone());
       }
-      // TODO: processlog & metrics
+
+      self.process_logs(idx, None).await;
+
+      // TODO: metrics
       #[cfg(feature = "metrics")]
       {
 
