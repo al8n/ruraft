@@ -4,8 +4,8 @@ use std::{
 };
 
 use ruraft_core::{
-  Node, Role,
   transport::{Address, Id},
+  Node, Role,
 };
 
 /// Raft is the API for the Raft consensus algorithm.

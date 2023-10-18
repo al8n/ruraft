@@ -1,8 +1,10 @@
+use std::time::Instant;
+
 use agnostic::Runtime;
 use async_channel::Receiver;
 use futures::FutureExt;
 
-use crate::{sidecar::Sidecar, transport::AddressResolver};
+use crate::{sidecar::Sidecar, transport::AddressResolver, storage::{SnapshotSource, SnapshotStorage}, error::Error};
 
 use super::{FinateStateMachine, RaftCore, Storage, Transport};
 
@@ -33,4 +35,16 @@ where
       }
     }
   }
+
+  pub(super) async fn fsm_restore_and_measure(fsm: &F, source: <S::Snapshot as SnapshotStorage>::Source, snapshot_size: u64) -> Result<(), Error<F, S::Error, T::Error>> {
+    let start = Instant::now();
+  
+
+    fsm.restore(source).await.map_err(Error::fsm)?;
+
+    // TODO: metrics
+    Ok(())
+  }
 }
+
+

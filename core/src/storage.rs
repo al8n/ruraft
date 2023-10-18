@@ -7,13 +7,43 @@ pub use stable::*;
 
 use crate::transport::{Address, Id};
 
+/// Represents a comprehensive set of errors arising from operations within the [`Storage`] trait.
+///
+/// This trait encapsulates a range of error types, providing a structured approach to categorizing
+/// and handling storage-level errors. Implementers can leverage this to define both generic and
+/// storage-specific error scenarios.
+pub trait StorageError: Send + Sync + 'static {
+  /// Stable storage errors
+  type Stable: StableStorage;
+
+  /// Snapshot storage errors
+  type Snapshot: SnapshotStorage;
+
+  /// Log storage errors
+  type Log: LogStorage;
+
+  /// Constructs an error associated with stable storage operations.
+  fn stable(err: <Self::Stable as StableStorage>::Error) -> Self;
+
+  /// Constructs an error associated with snapshot storage operations.
+  fn snapshot(err: <Self::Snapshot as SnapshotStorage>::Error) -> Self;
+
+  /// Constructs an error associated with log storage operations.
+  fn log(err: <Self::Log as LogStorage>::Error) -> Self;
+
+  /// Provides a flexible mechanism to define custom errors using a descriptive message.
+  ///
+  /// The resulting error message will be straightforward, avoiding capitalization or a trailing period.
+  fn custom<T>(msg: T) -> Self
+  where
+    Self: Sized,
+    T: core::fmt::Display;
+}
+
 /// Storage is a trait that must be implemented by the user to provide the persistent storage for the Raft.
 pub trait Storage: Send + Sync + 'static {
   /// Errors returned by the storage.
-  type Error: std::error::Error
-    + From<<Self::Stable as StableStorage>::Error>
-    + From<<Self::Snapshot as SnapshotStorage>::Error>
-    + From<<Self::Log as LogStorage>::Error>;
+  type Error: StorageError<Stable = Self::Stable, Snapshot = Self::Snapshot, Log = Self::Log>;
 
   /// The id type used to identify nodes.
   type Id: Id;

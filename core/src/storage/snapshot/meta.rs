@@ -21,6 +21,12 @@ pub struct SnapshotId {
   timestamp: u64,
 }
 
+impl core::fmt::Display for SnapshotId {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}_{}_{}", self.term, self.index, self.timestamp)
+  }
+}
+
 impl SnapshotId {
   #[inline]
   pub fn new(index: u64, term: u64) -> Self {

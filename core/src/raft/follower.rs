@@ -96,7 +96,7 @@ where
       self.local.addr().clone(),
     )
     .with_term(self.current_term())
-    .with_last_log(self.last_index().await);
+    .with_last_log(self.last_index());
 
     // Ignore an older term
     if req.term < self.current_term() {
@@ -123,7 +123,7 @@ where
 
     // Verify the last log entry
     if req.prev_log_entry > 0 {
-      let last = self.last_entry().await;
+      let last = self.last_entry();
       let mut prev_log_term = 0;
       if req.prev_log_entry == last.index {
         prev_log_term = last.term;
@@ -160,7 +160,7 @@ where
       let _start = Instant::now();
 
       // Delete any conflicting entries, skip any duplicates
-      let last_log = self.inner.last_log().await;
+      let last_log = self.inner.last_log();
 
       req.entries.sort_by(|a, b| a.index.cmp(&b.index));
 
@@ -228,20 +228,18 @@ where
         }
 
         // Update the lastLog
-        self.set_last_log(last_log).await;
+        self.set_last_log(last_log);
       }
 
       // TODO: metrics
       #[cfg(feature = "metrics")]
-      {
-
-      }
+      {}
     }
 
     // Update the commit index
     if req.leader_commit > 0 && req.leader_commit > self.commit_index() {
       let _start = Instant::now();
-      let idx = req.leader_commit.min(self.last_index().await);
+      let idx = req.leader_commit.min(self.last_index());
       self.set_commit_index(idx);
       let latest = self.memberships.latest();
       if latest.0 <= idx {
@@ -252,9 +250,7 @@ where
 
       // TODO: metrics
       #[cfg(feature = "metrics")]
-      {
-
-      }
+      {}
     }
 
     // Everything went well, set success

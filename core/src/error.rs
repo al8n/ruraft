@@ -1,5 +1,8 @@
 use crate::{
-  fsm::FinateStateMachine, options::OptionsError, storage::Storage, transport::Transport,
+  fsm::FinateStateMachine,
+  options::OptionsError,
+  storage::{LogStorage, SnapshotStorage, StableStorage, StorageError},
+  transport::TransportError,
 };
 
 /// Raft errors.
@@ -65,8 +68,8 @@ pub enum RaftError {
 pub enum Error<F, S, T>
 where
   F: FinateStateMachine,
-  S: Storage,
-  T: Transport,
+  S: StorageError,
+  T: TransportError,
 {
   /// Raft errors.
   #[error("ruraft: {0}")]
@@ -81,29 +84,47 @@ where
 
   /// Returned when the transport reports an error.
   #[error("ruraft: {0}")]
-  Transport(T::Error),
+  Transport(T),
 
   /// Returned when the storage reports an error.
   #[error("ruraft: {0}")]
-  Storage(S::Error),
+  Storage(S),
 }
 
 impl<F, S, T> Error<F, S, T>
 where
   F: FinateStateMachine,
-  S: Storage,
-  T: Transport,
+  S: StorageError,
+  T: TransportError,
 {
   /// Construct an error from the transport error.
   #[inline]
-  pub const fn transport(err: T::Error) -> Self {
+  pub const fn transport(err: T) -> Self {
     Self::Transport(err)
   }
 
   /// Construct an error from the storage error.
   #[inline]
-  pub const fn storage(err: S::Error) -> Self {
+  pub const fn storage(err: S) -> Self {
     Self::Storage(err)
+  }
+
+  /// Construct an error from the stable storage error.
+  #[inline]
+  pub const fn stable(err: <S::Stable as StableStorage>::Error) -> Self {
+    Self::Storage(S::stable(err))
+  }
+
+  /// Construct an error from the snapshot storage error.
+  #[inline]
+  pub const fn snapshot(err: <S::Snapshot as SnapshotStorage>::Error) -> Self {
+    Self::Storage(S::snapshot(err))
+  }
+
+  /// Construct an error from the log storage error.
+  #[inline]
+  pub const fn log(err: <S::Log as LogStorage>::Error) -> Self {
+    Self::Storage(S::log(err))
   }
 
   /// Construct an error from the finate state machine error.

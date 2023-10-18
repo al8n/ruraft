@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use futures::AsyncRead;
+
 use crate::storage::SnapshotSink;
 
 pub trait FinateStateMachineSnapshot {
@@ -41,4 +43,9 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// be called concurrently with FSMSnapshot.Persist. This means the FSM should
   /// be implemented to allow for concurrent updates while a snapshot is happening.
   fn snapshot(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+  /// Used to restore an FSM from a snapshot. It is not called
+	/// concurrently with any other command. The FSM must discard all previous
+	/// state before restoring the snapshot.
+  fn restore(&self, snapshot: impl AsyncRead + Unpin) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use async_lock::Mutex;
+use parking_lot::Mutex;
 use atomic::Atomic;
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,
@@ -34,7 +34,7 @@ impl Role {
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastLog {
   index: u64,
   term: u64,
@@ -47,21 +47,21 @@ impl LastLog {
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastSnapshot {
   index: u64,
   term: u64,
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastEntry {
   index: u64,
   term: u64,
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Last {
   snapshot: LastSnapshot,
   log: LastLog,
@@ -120,37 +120,37 @@ impl State {
     self.last_applied.store(val, Ordering::Release)
   }
 
-  pub(crate) async fn last_log(&self) -> LastLog {
-    let last = self.last.lock().await;
+  pub(crate) fn last_log(&self) -> LastLog {
+    let last = self.last.lock();
     last.log
   }
 
-  pub(crate) async fn set_last_log(&self, log: LastLog) {
-    let mut last = self.last.lock().await;
+  pub(crate) fn set_last_log(&self, log: LastLog) {
+    let mut last = self.last.lock();
     last.log = log;
   }
 
-  pub(crate) async fn last_snapshot(&self) -> LastSnapshot {
-    let last = self.last.lock().await;
+  pub(crate) fn last_snapshot(&self) -> LastSnapshot {
+    let last = self.last.lock();
     last.snapshot
   }
 
-  pub(crate) async fn set_last_snapshot(&self, snapshot: LastSnapshot) {
-    let mut last = self.last.lock().await;
+  pub(crate) fn set_last_snapshot(&self, snapshot: LastSnapshot) {
+    let mut last = self.last.lock();
     last.snapshot = snapshot;
   }
 
   /// Returns the last index and term in stable storage.
   /// Either from the last log or from the last snapshot.
-  pub(crate) async fn last_index(&self) -> u64 {
-    let last = self.last.lock().await;
+  pub(crate) fn last_index(&self) -> u64 {
+    let last = self.last.lock();
     std::cmp::max(last.log.index, last.snapshot.index)
   }
 
   /// Returns the last index and term in stable storage.
   /// Either from the last log or from the last snapshot.
-  pub(crate) async fn last_entry(&self) -> LastEntry {
-    let last = self.last.lock().await;
+  pub(crate) fn last_entry(&self) -> LastEntry {
+    let last = self.last.lock();
     if last.log.index >= last.snapshot.index {
       return LastEntry {
         index: last.log.index,

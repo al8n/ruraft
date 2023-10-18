@@ -68,7 +68,7 @@ pub trait SnapshotSink: futures::io::AsyncWrite {
 
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state
 /// from the source. On error, `cancel` will be invoked.
-pub trait SnapshotSource: futures::io::AsyncRead {
+pub trait SnapshotSource: futures::io::AsyncRead + Unpin {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
   /// The id type used to identify nodes.
