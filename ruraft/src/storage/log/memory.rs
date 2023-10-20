@@ -71,12 +71,12 @@ where
   type Id = I;
   type Address = A;
 
-  fn first_index(&self) -> impl futures::Future<Outptu = Result<u64, Self::Error>> + Send {
-    async move { Ok(self.store.lock().await.low_index) }
+  fn first_index(&self) -> impl futures::Future<Output = Result<Option<u64>, Self::Error>> + Send {
+    async move { Ok(Some(self.store.lock().await.low_index)) }
   }
 
-  fn last_index(&self) -> impl futures::Future<Output = Result<u64, Self::Error>> + Send {
-    async move { Ok(self.store.lock().await.high_index) }
+  fn last_index(&self) -> impl futures::Future<Output = Result<Option<u64>, Self::Error>> + Send {
+    async move { Ok(Some(self.store.lock().await.high_index)) }
   }
 
   fn get_log(

@@ -53,32 +53,46 @@ impl<R: Runtime> StableStorage for MemoryStableStorage<R> {
   type Runtime = R;
 
   /// Insert a key-value pair into the storage.
-  fn insert(&self, key: Bytes, val: Bytes) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    async move {
-      self.store.lock().await.kvs.insert(key, val);
-      Ok(())
-    }
+  async fn insert(&self, key: Bytes, val: Bytes) -> Result<(), Self::Error> {
+    self.store.lock().await.kvs.insert(key, val);
+    Ok(())
   }
 
   /// Returns the value for key, or a `None` if key was not found.
-  fn get(&self, key: &[u8]) -> impl Future<Output = Result<Option<Bytes>, Self::Error>> + Send {
-    async move { Ok(self.store.lock().await.kvs.get(key).cloned()) }
+  async fn get(&self, key: &[u8]) -> Result<Option<Bytes>, Self::Error> {
+    Ok(self.store.lock().await.kvs.get(key).cloned())
   }
 
   /// Insert a key-`u64` pair into the storage.
-  fn insert_u64(
-    &self,
-    key: Bytes,
-    val: u64,
-  ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    async move {
-      self.store.lock().await.kvu64s.insert(key, val);
-      Ok(())
-    }
+  async fn insert_u64(&self, key: Bytes, val: u64) -> Result<(), Self::Error> {
+    self.store.lock().await.kvu64s.insert(key, val);
+    Ok(())
   }
 
   /// Returns the `u64` for key, or `None` if key was not found.
-  fn get_u64(&self, key: &[u8]) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send {
-    async move { Ok(self.store.lock().await.kvu64s.get(key).copied()) }
+  async fn get_u64(&self, key: &[u8]) -> Result<Option<u64>, Self::Error> {
+    Ok(self.store.lock().await.kvu64s.get(key).copied())
+  }
+
+  async fn current_term(&self) -> Result<Option<u64>, Self::Error> {
+    Ok(
+      self
+        .store
+        .lock()
+        .await
+        .kvu64s
+        .get(b"__ruraft_current_term__".as_ref())
+        .copied(),
+    )
+  }
+
+  async fn store_current_term(&self, term: u64) -> Result<(), Self::Error> {
+    self
+      .store
+      .lock()
+      .await
+      .kvu64s
+      .insert(Bytes::from_static(b"__ruraft_current_term__"), term);
+    Ok(())
   }
 }

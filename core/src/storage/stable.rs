@@ -26,4 +26,11 @@ pub trait StableStorage: Send + Sync + 'static {
 
   /// Returns the `u64` for key, or `None` if key was not found.
   fn get_u64(&self, key: &[u8]) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
+
+  /// Returns the current term. `Some(0)` or `None` means
+  /// no term has been persisted yet.
+  fn current_term(&self) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
+
+  /// Stores the current term.
+  fn store_current_term(&self, term: u64) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

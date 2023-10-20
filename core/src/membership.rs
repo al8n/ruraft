@@ -247,6 +247,27 @@ impl<I: Id, A: Address> Default for Membership<I, A> {
   }
 }
 
+impl<I: Id, A: Address> core::fmt::Display for Membership<I, A> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let len = self.servers.len();
+    write!(f, "[")?;
+    for (idx, (id, (addr, s))) in self.servers.iter().enumerate() {
+      if idx == 0 {
+        write!(f, "[{}({}):{},", id, addr, s.as_str())?;
+        continue;
+      }
+
+      if idx == len - 1 {
+        write!(f, "{}({}):{}]", id, addr, s.as_str())?;
+        break;
+      }
+
+      write!(f, "{}({}):{},", id, addr, s.as_str())?;
+    }
+    Ok(())
+  }
+}
+
 const U32_SIZE: usize = mem::size_of::<u32>();
 
 impl<I, A> Transformable for Membership<I, A>
@@ -781,26 +802,26 @@ impl<I: Id, A: Address> Membership<I, A> {
 pub(crate) struct Memberships<I: Id, A: Address> {
   /// committed is the latest membership in the log/snapshot that has been
   /// committed (the one with the largest index).
-  committed: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
+  committed: ArcSwapAny<Arc<(u64, Arc<Membership<I, A>>)>>,
   /// latest is the latest membership in the log/snapshot (may be committed
   /// or uncommitted)
-  latest: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
+  latest: ArcSwapAny<Arc<(u64, Arc<Membership<I, A>>)>>,
 }
 
 impl<I: Id, A: Address> Memberships<I, A> {
-  pub(crate) fn set_latest(&self, membership: Membership<I, A>, index: u64) {
+  pub(crate) fn set_latest(&self, membership: Arc<Membership<I, A>>, index: u64) {
     self.latest.store(Arc::new((index, membership)))
   }
 
-  pub(crate) fn set_committed(&self, membership: Membership<I, A>, index: u64) {
+  pub(crate) fn set_committed(&self, membership: Arc<Membership<I, A>>, index: u64) {
     self.committed.store(Arc::new((index, membership)))
   }
 
-  pub(crate) fn latest(&self) -> arc_swap::Guard<Arc<(u64, Membership<I, A>)>> {
+  pub(crate) fn latest(&self) -> arc_swap::Guard<Arc<(u64, Arc<Membership<I, A>>)>> {
     self.latest.load()
   }
 
-  pub(crate) fn committed(&self) -> arc_swap::Guard<Arc<(u64, Membership<I, A>)>> {
+  pub(crate) fn committed(&self) -> arc_swap::Guard<Arc<(u64, Arc<Membership<I, A>>)>> {
     self.committed.load()
   }
 }

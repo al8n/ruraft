@@ -38,7 +38,7 @@ futures = { workspace = true }
 once_cell = "1.18"
 ruraft-core = { path = "../core" }
 rand = "0.8"
-
+scopeguard = { workspace = true }
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

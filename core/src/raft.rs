@@ -1,26 +1,30 @@
 use std::{
   collections::HashMap,
+  net::SocketAddr,
   sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
   },
-  time::{Duration, Instant}, net::SocketAddr,
+  time::{Duration, Instant},
 };
 
 use agnostic::Runtime;
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
 use futures::FutureExt;
 use metrics::atomics::AtomicU64;
 
 use crate::{
-  error::Error,
+  error::{Error, RaftError},
   fsm::FinateStateMachine,
-  membership::{Memberships, Membership},
+  membership::{Membership, Memberships, Server, ServerSuffrage},
   options::{Options, ReloadableOptions},
+  raft::fsm::FSMRunner,
   sidecar::{NoopSidecar, Sidecar},
-  storage::{LogStorage, StableStorage, Storage, StorageError, SnapshotStorage, SnapshotMeta},
+  storage::{
+    Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
+  },
   transport::{Address, AddressResolver, Id, RpcConsumer, Transport},
 };
 
@@ -89,10 +93,11 @@ where
   local: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
   advertise_addr: SocketAddr,
   candidate_from_leadership_transfer: AtomicBool,
-  
+
   memberships: Memberships<T::Id, <T::Resolver as AddressResolver>::Address>,
   /// Used to request the leader to make membership changes.
-  membership_change_tx: async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  membership_change_tx:
+    async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
@@ -199,7 +204,11 @@ where
 
 pub struct RaftCore<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
@@ -210,7 +219,11 @@ where
 
 impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
@@ -225,13 +238,24 @@ where
 
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send,
+  R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
   R: Runtime,
 {
   /// Used to construct a new Raft node. It takes a options, as well
-  /// as implementations of various interfaces that are required. If we have any
+  /// as implementations of various traits that are required.
+  ///
+  /// **N.B.**
+  /// - If there is no old state, then will initialize a new Raft cluster which contains only one voter node(self), users can then invoke `add_voter` on it to add other servers to the cluster.
+  /// - If there are any
   /// old state, such as snapshots, logs, peers, etc, all those will be restored
   /// when creating the Raft node.
   pub async fn new(
@@ -239,112 +263,174 @@ where
     storage: S,
     transport: T,
     opts: Options,
-  ) -> Result<Self, Error<F, S::Error, T::Error>> {
+  ) -> Result<Self, Error<F, S::Error, T>> {
     // Validate the options
     opts.validate()?;
-
-    // Try to restore the current term.
-    let current_term = storage
-      .stable_store()
-      .get_u64(KEY_CURRENT_TERM)
-      .await
-      .map_err(|e| {
-        tracing::error!(target = "ruraft", err=%e, "failed to load current term");
-        Error::stable(e)
-      })?;
-
-    let ls = storage.log_store();
-    // Read the index of the last log entry.
-    let last_log_index = ls.last_index().await.map_err(|e| {
-      tracing::error!(target = "ruraft", err=%e, "failed to find last log");
-      Error::log(e)
-    })?;
-
-    // Get the last log entry.
-    let last_log = if last_log_index > 0 {
-      ls.get_log(last_log_index).await.map_err(|e| {
-        tracing::error!(target = "ruraft", err=%e, "failed to get last log at index {}", last_log_index);
-        Error::log(e)
-      })?
-    } else {
-      None
-    };
 
     // Make sure we have a valid server address and ID.
     let advertise_addr = transport.advertise_addr();
     let local_addr = transport.local_addr().clone();
     let local_id = transport.local_id().clone();
 
-    // Buffer applyCh to MaxAppendEntries if the option is enabled
-    let (apply_tx, apply_rx) = if opts.batch_apply {
-      async_channel::bounded(opts.max_append_entries as usize)
+    let mut initial_state = Self::fetch_initial_state(&storage).await?;
+
+    let ls = storage.log_store();
+    if initial_state.is_clean_state() {
+      initial_state.current_term = Some(1);
+      initial_state.last_log_index = Some(1);
+      // If we have no state, then we are a new cluster. We need to
+      // initialize the stable storage with the current term.
+      storage
+        .stable_store()
+        .store_current_term(1)
+        .await
+        .map_err(|e| {
+          tracing::error!(target = "ruraft", err=%e, "failed to initialize stable storage");
+          Error::stable(e)
+        })?;
+
+      ls.store_log(&Log::crate_new(
+        1,
+        1,
+        LogKind::Membership(
+          std::iter::once(Server::new(
+            local_id.clone(),
+            local_addr.clone(),
+            ServerSuffrage::Voter,
+          ))
+          .collect::<Result<_, _>>()
+          .map(Arc::new)
+          .map_err(Error::membership)?,
+        ),
+      ))
+      .await
+      .map_err(|e| {
+        tracing::error!(target = "ruraft", err=%e, "failed to append membership entry to log");
+        Error::log(e)
+      })?;
+    }
+
+    // Try to restore the current term.
+    let Some(current_term) = initial_state.current_term else {
+      tracing::error!(target = "ruraft", err = "failed to load current term");
+      return Err(Error::Raft(RaftError::FailedLoadCurrentTerm));
+    };
+
+    // Try to restore the last log index.
+    let Some(last_log_index) = initial_state.last_log_index else {
+      tracing::error!(target = "ruraft", err = "failed to load last log index");
+      return Err(Error::Raft(RaftError::FailedLoadLastLogIndex));
+    };
+
+    // Get the last log entry.
+    let Some(last_log) = (if last_log_index > 0 {
+      ls.get_log(last_log_index).await.map_err(|e| {
+        tracing::error!(target = "ruraft", err=%e, "failed to get last log at index {}", last_log_index);
+        Error::log(e)
+      })?
     } else {
-      async_channel::unbounded()
+      None
+    }) else {
+      tracing::error!(
+        target = "ruraft",
+        err = "failed to get last log at index {}",
+        last_log_index
+      );
+      return Err(Error::Raft(RaftError::FailedLoadLastLog));
     };
 
     // Restore snapshot
     let snp = storage.snapshot_store();
-    let snapshots = snp.list().await.map_err(|e| {
-      tracing::error!(target = "ruraft", err=%e, "failed to list snapshots");
-      Error::snapshot(e)
-    })?;
 
-    let has_snapshots = !snapshots.is_empty();
-    // Try to load in order of newest to oldest
-    let mut last_applied = 0;
-    let mut last_snapshot = LastSnapshot::default();
-    let mut membership = None;
-    let mut membership_index = 0;
-    for snapshot in snapshots {
-      if Self::try_restore_single_snapshot(&fsm, snp, snapshot, opts.no_snapshot_restore_on_start).await {
-        continue;
+    let RestoredState {
+      last_applied,
+      last_snapshot,
+      mut membership_index,
+      mut membership,
+    } = Self::restore_snapshot(&fsm, snp, opts.no_snapshot_restore_on_start).await?;
+
+    // Scan through the log for any membership change entries.
+    for index in (last_snapshot.index + 1)..=last_log_index {
+      match ls.get_log(index).await {
+        Ok(Some(entry)) => {
+          if let LogKind::Membership(m) = entry.kind {
+            membership_index = entry.index;
+            membership = m;
+          }
+        }
+        Ok(None) => {}
+        Err(e) => {
+          tracing::error!(target = "ruraft", index=%index, err=%e, "failed to get log");
+          panic!("{e}");
+        }
       }
-
-      // Update the lastApplied so we don't replay old logs
-      last_applied = snapshot.index();
-
-      // Update the last stable snapshot info
-      last_snapshot.index = snapshot.index();
-      last_snapshot.term = snapshot.term();
-
-      // Update the membership
-      membership = Some(snapshot.membership);
-      membership_index = snapshot.membership_index;
     }
+    tracing::info!(target = "ruraft", index = %membership_index, members = %membership, "initial membership");
 
-    let mut this = Self {
-      inner: Arc::new(RaftInner {
-        state: State {
-          current_term: AtomicU64::new(current_term.unwrap_or(0)),
-          commit_index: todo!(),
-          last_applied: todo!(),
-          last: parking_lot::Mutex::new(last_log.as_ref().map(|l| Last {
-            snapshot: Default::default(),
-            log: LastLog::new(l.index, l.term),
-          }).unwrap_or_default()),
-          role: Atomic::new(Role::Follower),
-        },
-        fsm: Arc::new(fsm),
-        storage: Arc::new(storage),
-        transport: Arc::new(transport),
-        leader: ArcSwapOption::from_pointee(None),
-        local: Node::new(local_id, local_addr),
-        advertise_addr,
-        candidate_from_leadership_transfer: AtomicBool::new(false),
-        memberships: (),
-        membership_change_tx: ,
-        reloadable_options: Atomic::new(ReloadableOptions::from_options(&opts)),
-        options: opts,
-        reload_options_lock: async_lock::Mutex::new(()),
-        leader_notify_tx: (),
-        follower_notify_tx: (),
-        last_contact: ArcSwapOption::from_pointee(None),
-        sidecar: None,
-        _marker: std::marker::PhantomData,
-      }),
-    };
+    // // Buffer applyCh to MaxAppendEntries if the option is enabled
+    // let (apply_tx, apply_rx) = if opts.batch_apply {
+    //   async_channel::bounded(opts.max_append_entries as usize)
+    // } else {
+    //   async_channel::unbounded()
+    // };
+
+    // let membership = Arc::new((membership_index, membership));
+    // let mut this = Self {
+    //   inner: Arc::new(RaftInner {
+    //     state: State {
+    //       current_term: AtomicU64::new(current_term.unwrap_or_default()),
+    //       commit_index: AtomicU64::new(0),
+    //       last_applied: AtomicU64::new(last_applied),
+    //       last: parking_lot::Mutex::new(Last {
+    //         log: last_log.as_ref().map(|l| LastLog::new(l.index, l.term)).unwrap_or_default(),
+    //         snapshot: last_snapshot,
+    //       }),
+    //       role: Atomic::new(Role::Follower),
+    //     },
+    //     fsm: Arc::new(fsm),
+    //     storage: Arc::new(storage),
+    //     transport: Arc::new(transport),
+    //     leader: ArcSwapOption::from_pointee(None),
+    //     local: Node::new(local_id, local_addr),
+    //     advertise_addr,
+    //     candidate_from_leadership_transfer: AtomicBool::new(false),
+    //     memberships: Memberships {
+    //       committed: ArcSwap::from(membership.clone()),
+    //       latest: ArcSwap::from(membership),
+    //     },
+    //     membership_change_tx: ,
+    //     reloadable_options: Atomic::new(ReloadableOptions::from_options(&opts)),
+    //     options: opts,
+    //     reload_options_lock: async_lock::Mutex::new(()),
+    //     leader_notify_tx: (),
+    //     follower_notify_tx: (),
+    //     last_contact: ArcSwapOption::from_pointee(None),
+    //     sidecar: None,
+    //     _marker: std::marker::PhantomData,
+    //   }),
+    // };
 
     todo!()
+  }
+
+  async fn fetch_initial_state(s: &S) -> Result<InitialState<T>, Error<F, S::Error, T>> {
+    let current_term = s.stable_store().current_term().await.map_err(|e| {
+      tracing::error!(target = "ruraft", err=%e, "failed to load current term");
+      Error::stable(e)
+    })?;
+
+    let last_log_index = s.log_store().last_index().await.map_err(|e| {
+      tracing::error!(target = "ruraft", err=%e, "failed to find last log index");
+      Error::log(e)
+    })?;
+
+    let snapshots = s.snapshot_store().list().await.map_err(Error::snapshot)?;
+
+    Ok(InitialState {
+      current_term,
+      last_log_index,
+      snapshots,
+    })
   }
 
   /// Attempts to restore the latest snapshots, and fails if none
@@ -354,46 +440,45 @@ where
     fsm: &F,
     snp: &S::Snapshot,
     skip_restore_on_start: bool,
-  ) -> Result<(), Error<F, S::Error, T::Error>> {
+  ) -> Result<RestoredState<T>, Error<F, S::Error, T>> {
     let snapshots = snp.list().await.map_err(|e| {
       tracing::error!(target = "ruraft", err=%e, "failed to list snapshots");
       Error::snapshot(e)
     })?;
 
     let has_snapshots = !snapshots.is_empty();
-    // Try to load in order of newest to oldest
-    let mut last_applied = 0;
-    let mut last_snapshot = LastSnapshot::default();
-    let mut membership = None;
-    let mut membership_index = 0;
     for snapshot in snapshots {
       if Self::try_restore_single_snapshot(&fsm, snp, &snapshot, skip_restore_on_start).await {
         continue;
       }
 
-      // Update the lastApplied so we don't replay old logs
-      last_applied = snapshot.index();
-
-      // Update the last stable snapshot info
-      last_snapshot.index = snapshot.index();
-      last_snapshot.term = snapshot.term();
-
-      // Update the membership
-      membership = Some(snapshot.membership);
-      membership_index = snapshot.membership_index;
-
-      return Ok(());
+      return Ok(RestoredState {
+        last_applied: snapshot.index(),
+        last_snapshot: LastSnapshot::new(snapshot.term(), snapshot.index()),
+        membership: Arc::new(snapshot.membership),
+        membership_index: snapshot.membership_index,
+      });
     }
 
     // If we had snapshots and failed to load them, its an error
     if has_snapshots {
-            
+      return Err(Error::Raft(RaftError::FailedLoadSnapshot));
     }
 
-    Ok(())
+    Ok(RestoredState {
+      last_applied: 0,
+      last_snapshot: Default::default(),
+      membership_index: 0,
+      membership: Default::default(),
+    })
   }
 
-  async fn try_restore_single_snapshot(fsm: &F, s: &S::Snapshot, meta: &SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>, skip: bool) -> bool {
+  async fn try_restore_single_snapshot(
+    fsm: &F,
+    s: &S::Snapshot,
+    meta: &SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+    skip: bool,
+  ) -> bool {
     if skip {
       return true;
     }
@@ -403,13 +488,15 @@ where
 
     match s.open(&id).await {
       Ok(source) => {
-        if let Err(e) = Self::fsm_restore_and_measure(fsm, source, meta.size()).await {
+        if let Err(e) =
+          FSMRunner::<F, S, R>::fsm_restore_and_measure(fsm, source, meta.size()).await
+        {
           tracing::error!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), err=%e, "failed to restore snapshot");
           return false;
         }
         tracing::info!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), "restored snapshot");
         true
-      },
+      }
       Err(e) => {
         tracing::error!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), err=%e, "failed to open snapshot");
         false
@@ -420,7 +507,11 @@ where
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
@@ -445,7 +536,7 @@ where
   /// options is invalid an error is returned and no changes made to the
   /// instance. All fields will be copied from rc into the new options, even
   /// if they are zero valued.
-  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
+  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S::Error, T>> {
     rc.validate(self.inner.options.leader_lease_timeout)?;
     let _mu = self.inner.reload_options_lock.lock().await;
     let old = self.inner.reloadable_options.swap(rc, Ordering::Release);

@@ -168,7 +168,7 @@ pub trait Transport: Send + Sync + 'static {
   type Options: Send + Sync + 'static;
 
   /// Unique identifier for nodes.
-  type Id: Id;
+  type Id: Id + Send + Sync + 'static;
 
   // /// The pipeline used to increase the replication throughput by masking latency and better
   // /// utilizing bandwidth.

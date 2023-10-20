@@ -1,10 +1,15 @@
-use std::future::Future;
+use std::{future::Future, iter::FilterMap, sync::Arc};
 
+use bytes::Bytes;
 use futures::AsyncRead;
+use nodecraft::{Address, Id};
 
-use crate::storage::SnapshotSink;
+use crate::{
+  membership::Membership,
+  storage::{Log, LogKind, MembershipStorage, SnapshotSink, SnapshotStorage, Storage},
+};
 
-pub trait FinateStateMachineSnapshot {
+pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
   type Error: std::error::Error;
 
@@ -21,14 +26,97 @@ pub trait FinateStateMachineSnapshot {
   fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+pub trait FinateStateMachineError: std::error::Error + Send + Sync + 'static {
+  type Snapshot: FinateStateMachineSnapshot;
+
+  fn snapshot(err: <Self::Snapshot as FinateStateMachineSnapshot>::Error) -> Self;
+}
+
+pub(crate) enum FSMError<F: FinateStateMachine, S: Storage> {
+  NothingNew,
+  StateMachine(F::Error),
+  Snapshot(<S::Snapshot as SnapshotStorage>::Error),
+  Memberhsip(<S::Membership as MembershipStorage>::Error),
+}
+
+impl<F: FinateStateMachine, S: Storage> FSMError<F, S> {
+  pub(crate) fn snapshot(err: <S::Snapshot as SnapshotStorage>::Error) -> Self {
+    Self::Snapshot(err)
+  }
+
+  pub(crate) fn membership(err: <S::Membership as MembershipStorage>::Error) -> Self {
+    Self::Memberhsip(err)
+  }
+
+  pub(crate) fn state_machine(err: F::Error) -> Self {
+    Self::StateMachine(err)
+  }
+}
+
+pub trait FinateStateMachineResponse: Send + Sync + 'static {
+  /// Returns the index of the newly applied log entry.
+  fn index(&self) -> u64;
+}
+
+pub enum FinateStateMachineLogKind<I: Id, A: Address> {
+  Log { data: Bytes, extension: Bytes },
+  Membership(Arc<Membership<I, A>>),
+}
+
+pub struct FinateStateMachineLog<I: Id, A: Address> {
+  pub index: u64,
+  pub term: u64,
+  pub kind: FinateStateMachineLogKind<I, A>,
+}
+
+impl<I: Id, A: Address> FinateStateMachineLog<I, A> {
+  pub fn new(term: u64, index: u64, kind: FinateStateMachineLogKind<I, A>) -> Self {
+    Self { index, term, kind }
+  }
+}
+
 /// Implemented by clients to make use of the replicated log.
 pub trait FinateStateMachine: Send + Sync + 'static {
   /// Errors returned by the finate state machine.
-  type Error: std::error::Error;
+  type Error: FinateStateMachineError;
+
   /// The snapshot type used by the finate state machine.
   type Snapshot: FinateStateMachineSnapshot<Runtime = Self::Runtime>;
+
+  /// The response type returned by the finate state machine after apply.
+  type Response: FinateStateMachineResponse;
+
+  /// The id type used to identify nodes.
+  type Id: Id + Send + Sync + 'static;
+
+  /// The address type of node.
+  type Address: Address + Send + Sync + 'static;
+
   /// The async runtime used by the finate state machine.
   type Runtime: agnostic::Runtime;
+
+  /// Invoked once a log entry is committed by a majority of the cluster.
+  ///
+  /// Apply should apply the log to the FSM. Apply must be deterministic and
+  /// produce the same result on all peers in the cluster.
+  fn apply(
+    &self,
+    log: FinateStateMachineLog<Self::Id, Self::Address>,
+  ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
+
+  /// Invoked once a batch of log entries has been committed and
+  /// are ready to be applied to the FSM. `apply_batch` will take in an array of
+  /// log entries. These log entries will be in the order they were committed,
+  /// will not have gaps, and could be of a few log types.
+  ///
+  /// The returned slice must be the same length as the input and each response
+  /// should correlate to the log at the same index of the input. The returned
+  /// values will be made available in the ApplyFuture returned by Raft.Apply
+  /// method if that method was called on the same Raft node as the FSM.
+  fn apply_batch(
+    &self,
+    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address>>,
+  ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to
   /// restore the FSM to a previous state, or to bring out-of-date followers up
@@ -42,10 +130,13 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// Apply and Snapshot are always called from the same thread, but Apply will
   /// be called concurrently with FSMSnapshot.Persist. This means the FSM should
   /// be implemented to allow for concurrent updates while a snapshot is happening.
-  fn snapshot(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  fn snapshot(&self) -> impl Future<Output = Result<Self::Snapshot, Self::Error>> + Send;
 
   /// Used to restore an FSM from a snapshot. It is not called
-	/// concurrently with any other command. The FSM must discard all previous
-	/// state before restoring the snapshot.
-  fn restore(&self, snapshot: impl AsyncRead + Unpin) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  /// concurrently with any other command. The FSM must discard all previous
+  /// state before restoring the snapshot.
+  fn restore(
+    &self,
+    snapshot: impl AsyncRead + Unpin,
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

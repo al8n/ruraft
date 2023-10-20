@@ -1,7 +1,13 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+  atomic::{AtomicU64, Ordering},
+  Arc,
+};
 
-use parking_lot::Mutex;
 use atomic::Atomic;
+use nodecraft::resolver::AddressResolver;
+use parking_lot::Mutex;
+
+use crate::{membership::Membership, storage::SnapshotMeta, transport::Transport};
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,
 /// or Shutdown.
@@ -49,8 +55,14 @@ impl LastLog {
 #[viewit::viewit]
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastSnapshot {
-  index: u64,
   term: u64,
+  index: u64,
+}
+
+impl LastSnapshot {
+  pub(crate) fn new(term: u64, index: u64) -> Self {
+    Self { term, index }
+  }
 }
 
 #[viewit::viewit]
@@ -162,5 +174,27 @@ impl State {
       index: last.snapshot.index,
       term: last.snapshot.term,
     }
+  }
+}
+
+pub(super) struct RestoredState<T: Transport> {
+  pub(super) last_snapshot: LastSnapshot,
+  pub(super) last_applied: u64,
+  pub(super) membership_index: u64,
+  pub(super) membership: Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+}
+
+pub(super) struct InitialState<T: Transport> {
+  pub(super) current_term: Option<u64>,
+  pub(super) last_log_index: Option<u64>,
+  pub(super) snapshots: Vec<SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>>,
+}
+
+impl<T: Transport> InitialState<T> {
+  /// Returns `true` if the state is clean,
+  /// i.e. there is no existing raft cluster, and we need to bootstrap
+  /// from scratch.
+  pub(crate) fn is_clean_state(&self) -> bool {
+    self.current_term.is_none() && self.last_log_index.is_none() && self.snapshots.is_empty()
   }
 }

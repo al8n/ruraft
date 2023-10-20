@@ -11,6 +11,8 @@ pub mod error;
 pub mod options;
 
 mod fsm;
+pub use fsm::*;
+
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;
