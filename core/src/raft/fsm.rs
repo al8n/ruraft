@@ -5,6 +5,8 @@ use std::{sync::Arc, time::Instant};
 use agnostic::Runtime;
 use async_channel::Receiver;
 use futures::{channel::oneshot, Future, FutureExt};
+use smallvec::SmallVec;
+
 
 use crate::{
   fsm::{
@@ -44,14 +46,17 @@ impl<R: FinateStateMachineResponse> FSMResponse<R> {
   }
 }
 
-pub(crate) enum FSMLogRequest<F: FinateStateMachine> {
-  One(Log<F::Id, F::Address>),
-  More(Vec<Log<F::Id, F::Address>>),
+const INLINE: usize = 4;
+
+pub(crate) struct FSMLogRequest<F: FinateStateMachine, S : Storage> {
+  log: Log<F::Id, F::Address>,
+  tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
 }
 
 pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage> {
-  Log {
-    req: FSMLogRequest<F>,
+  AdHoc(SmallVec<[FSMLogRequest<F, S>; INLINE]>),
+  Batch {
+    logs: SmallVec<[Log<F::Id, F::Address>; INLINE]>,
     tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
   },
   Restore {
@@ -86,7 +91,7 @@ where
   /// A long running task responsible for applying logs
   /// to the FSM. This is done async of other logs since we don't want
   /// the FSM to block our internal operations.
-  pub(super) async fn run(self) {
+  pub(super) fn spawn(self) {
     let Self {
       fsm,
       storage,
@@ -107,36 +112,28 @@ where
           req = mutate_rx.recv().fuse() => {
             // TODO: stauration metrics
             match req {
-              Ok(FSMRequest::Log {
-                req,
+              Ok(FSMRequest::AdHoc(reqs)) => {
+                let mut last_batch_index = 0;
+                let mut last_batch_term = 0;
+                for FSMLogRequest { log, tx } in reqs {
+                  let ApplyResult {
+                    term,
+                    index,
+                  } = Self::apply_single(&fsm, log, tx).await;
+                  last_batch_index = index;
+                  last_batch_term = term;
+                }
+                last_index = last_batch_index;
+                last_term = last_batch_term;
+              },
+              Ok(FSMRequest::Batch {
+                logs,
                 tx,
               }) => {
                 let ApplyResult {
                   term,
                   index,
-                } = match req {
-                  FSMLogRequest::One(log) => Self::apply_single(&fsm, log, tx).await,
-                  FSMLogRequest::More(logs) => {
-                    if batching_apply {
-                      Self::apply_batch(&fsm, logs, tx).await
-                    } else {
-                      let mut last_batch_index = 0;
-                      let mut last_batch_term = 0;
-                      for log in logs {
-                        let ApplyResult {
-                          term,
-                          index,
-                        } = Self::apply_single(&fsm, log, tx.clone()).await;
-                        last_batch_index = index;
-                        last_batch_term = term;
-                      }
-                      ApplyResult {
-                        term: last_batch_term,
-                        index: last_batch_index,
-                      }
-                    }
-                  },
-                };
+                } = Self::apply_batch(&fsm, logs, tx).await;
                 last_index = index;
                 last_term = term;
               }
@@ -245,7 +242,7 @@ where
 
   async fn apply_batch(
     fsm: &F,
-    logs: Vec<Log<F::Id, F::Address>>,
+    logs: SmallVec<[Log<F::Id, F::Address>; INLINE]>,
     tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
   ) -> ApplyResult {
     let mut last_batch_index = 0;

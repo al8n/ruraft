@@ -266,6 +266,8 @@ where
   ) -> Result<Self, Error<F, S::Error, T>> {
     // Validate the options
     opts.validate()?;
+    
+    let storage = Arc::new(storage);
 
     // Make sure we have a valid server address and ID.
     let advertise_addr = transport.advertise_addr();
@@ -373,6 +375,21 @@ where
     // } else {
     //   async_channel::unbounded()
     // };
+
+
+    let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
+
+    let (fsm_mutate_tx, fsm_mutate_rx) = async_channel::bounded(128);
+    let (fsm_snapshot_tx, fsm_snapshot_rx) = async_channel::unbounded();
+
+    FSMRunner::<F, S, R> {
+      fsm,
+      storage: storage.clone(),
+      mutate_rx: fsm_mutate_rx,
+      snapshot_rx: fsm_snapshot_rx,
+      batching_apply: opts.batch_apply,
+      shutdown_rx: shutdown_rx.clone(),
+    }.spawn();
 
     // let membership = Arc::new((membership_index, membership));
     // let mut this = Self {
