@@ -93,7 +93,7 @@ pub(crate) struct State {
   /// Last applied log to the FSM
   last_applied: AtomicU64,
 
-  last: Mutex<Last>,
+  last: Arc<Mutex<Last>>,
 
   /// The current role
   role: Atomic<Role>,

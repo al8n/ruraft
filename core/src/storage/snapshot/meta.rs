@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
 use nodecraft::Transformable;
 
@@ -73,7 +73,7 @@ pub struct SnapshotMeta<I: Id, A: Address> {
   membership_index: u64,
   /// Membership at the time of the snapshot.
   #[viewit(getter(style = "ref", const))]
-  membership: Membership<I, A>,
+  membership: Arc<Membership<I, A>>,
 }
 
 impl<I: Id, A: Address> Default for SnapshotMeta<I, A> {
@@ -251,7 +251,7 @@ where
         timestamp,
         size,
         membership_index,
-        membership,
+        membership: Arc::new(membership),
       },
     ))
   }
@@ -285,7 +285,7 @@ where
         timestamp,
         size,
         membership_index,
-        membership,
+        membership: Arc::new(membership),
       },
     ))
   }
@@ -323,7 +323,7 @@ where
         timestamp,
         size,
         membership_index,
-        membership,
+        membership: Arc::new(membership),
       },
     ))
   }

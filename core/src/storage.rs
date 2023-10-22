@@ -5,12 +5,9 @@ pub use log::*;
 mod stable;
 pub use stable::*;
 
-use std::future::Future;
+use std::{borrow::Cow, future::Future};
 
-use crate::{
-  membership::Membership,
-  transport::{Address, Id},
-};
+use crate::transport::{Address, Id};
 
 /// Represents a comprehensive set of errors arising from operations within the [`Storage`] trait.
 ///
@@ -35,6 +32,9 @@ pub trait StorageError: std::error::Error + Send + Sync + 'static {
 
   /// Constructs an error associated with log storage operations.
   fn log(err: <Self::Log as LogStorage>::Error) -> Self;
+
+  /// With extra message to explain the error.
+  fn with_message(self, msg: Cow<'static, str>) -> Self;
 
   /// Provides a flexible mechanism to define custom errors using a descriptive message.
   ///

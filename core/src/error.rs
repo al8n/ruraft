@@ -4,8 +4,8 @@ use crate::{
   fsm::FinateStateMachine,
   membership::MembershipError,
   options::OptionsError,
-  storage::{LogStorage, SnapshotStorage, StableStorage, StorageError},
-  transport::{Transport, TransportError},
+  storage::{LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
+  transport::Transport,
 };
 
 /// Raft errors.
@@ -50,15 +50,22 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: nothing new to snapshot")]
   NothingNewToSnapshot,
 
+  /// Returned when trying to create a snapshot, but the membership change has not been applied.
+  #[error("ruraft: cannot take snapshot now, wait until the membership entry at {committed} has been applied (have applied {snapshot})")]
+  CantTakeSnapshot { committed: u64, snapshot: u64 },
+
   /// Returned when an operation is attempted
   /// that's not supported by the current protocol version.
   #[error("ruraft: operation not supported with current protocol version")]
   UpsupportedProtocol,
 
-  /// Returned when attempt is made to bootstrap a
-  /// cluster that already has state present.
-  #[error("ruraft: bootstrap only works on new clusters")]
-  CantBootstrap,
+  /// Returned when an operation is attempted to send/receive from closed channel
+  #[error("ruraft: {0}")]
+  Closed(&'static str),
+
+  /// Returned when long running task exits unexpectedly.
+  #[error("ruraft: {0}")]
+  Exit(&'static str),
 
   /// Returned when the leader is rejecting
   /// client requests because it is attempting to transfer leadership.
@@ -98,7 +105,7 @@ impl<T: Transport> core::fmt::Debug for RaftError<T> {
 pub enum Error<F, S, T>
 where
   F: FinateStateMachine,
-  S: StorageError,
+  S: Storage,
   T: Transport,
 {
   /// Raft errors.
@@ -118,13 +125,13 @@ where
 
   /// Returned when the storage reports an error.
   #[error("ruraft: {0}")]
-  Storage(S),
+  Storage(S::Error),
 }
 
 impl<F, S, T> Error<F, S, T>
 where
   F: FinateStateMachine,
-  S: StorageError,
+  S: Storage,
   T: Transport,
 {
   /// Construct an error from the transport error.
@@ -135,26 +142,26 @@ where
 
   /// Construct an error from the storage error.
   #[inline]
-  pub const fn storage(err: S) -> Self {
+  pub const fn storage(err: S::Error) -> Self {
     Self::Storage(err)
   }
 
   /// Construct an error from the stable storage error.
   #[inline]
   pub fn stable(err: <S::Stable as StableStorage>::Error) -> Self {
-    Self::Storage(S::stable(err))
+    Self::Storage(<S::Error as StorageError>::stable(err))
   }
 
   /// Construct an error from the snapshot storage error.
   #[inline]
   pub fn snapshot(err: <S::Snapshot as SnapshotStorage>::Error) -> Self {
-    Self::Storage(S::snapshot(err))
+    Self::Storage(<S::Error as StorageError>::snapshot(err))
   }
 
   /// Construct an error from the log storage error.
   #[inline]
   pub fn log(err: <S::Log as LogStorage>::Error) -> Self {
-    Self::Storage(S::log(err))
+    Self::Storage(<S::Error as StorageError>::log(err))
   }
 
   /// Construct an error from the finate state machine error.

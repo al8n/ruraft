@@ -271,7 +271,7 @@ where
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership<Self::Id, Self::Address>,
+    membership: Arc<Membership<Self::Id, Self::Address>>,
     membership_index: u64,
   ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send {
     async move {
@@ -722,7 +722,7 @@ pub(crate) mod tests {
         .unwrap();
 
     snap
-      .create(SnapshotVersion::V1, 10, 3, Membership::default(), 0)
+      .create(SnapshotVersion::V1, 10, 3, Default::default(), 0)
       .await
       .unwrap();
   }
@@ -746,7 +746,7 @@ pub(crate) mod tests {
 
     // create a new sink
     let mut sink = snap
-      .create(SnapshotVersion::V1, 10, 3, Membership::default(), 2)
+      .create(SnapshotVersion::V1, 10, 3, Default::default(), 2)
       .await
       .unwrap();
 
@@ -798,7 +798,7 @@ pub(crate) mod tests {
         .unwrap();
 
     let mut snap = storage
-      .create(SnapshotVersion::V1, 10, 2, Membership::default(), 0)
+      .create(SnapshotVersion::V1, 10, 2, Default::default(), 0)
       .await
       .unwrap();
 
@@ -826,7 +826,7 @@ pub(crate) mod tests {
 
     for i in 10..15 {
       let mut sink = storage
-        .create(SnapshotVersion::V1, i as u64, 3, Membership::default(), 0)
+        .create(SnapshotVersion::V1, i as u64, 3, Default::default(), 0)
         .await
         .unwrap();
       sink.close().await.unwrap();
@@ -904,13 +904,13 @@ pub(crate) mod tests {
         .unwrap();
 
     let mut sink = storage
-      .create(SnapshotVersion::V1, 130350, 5, Membership::default(), 0)
+      .create(SnapshotVersion::V1, 130350, 5, Default::default(), 0)
       .await
       .unwrap();
     sink.close().await.unwrap();
 
     let mut sink = storage
-      .create(SnapshotVersion::V1, 204917, 36, Membership::default(), 0)
+      .create(SnapshotVersion::V1, 204917, 36, Default::default(), 0)
       .await
       .unwrap();
     sink.close().await.unwrap();

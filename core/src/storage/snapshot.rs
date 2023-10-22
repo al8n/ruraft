@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use crate::{
   membership::Membership,
@@ -38,9 +38,9 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   fn create(
     &self,
     version: SnapshotVersion,
-    index: u64,
     term: u64,
-    membership: Membership<Self::Id, Self::Address>,
+    index: u64,
+    membership: Arc<Membership<Self::Id, Self::Address>>,
     membership_index: u64,
   ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send;
 

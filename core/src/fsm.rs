@@ -1,13 +1,10 @@
-use std::{future::Future, iter::FilterMap, sync::Arc};
+use std::{borrow::Cow, future::Future, sync::Arc};
 
 use bytes::Bytes;
 use futures::AsyncRead;
 use nodecraft::{Address, Id};
 
-use crate::{
-  membership::Membership,
-  storage::{Log, LogKind, MembershipStorage, SnapshotSink, SnapshotStorage, Storage},
-};
+use crate::{membership::Membership, storage::SnapshotSink};
 
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
@@ -20,39 +17,29 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
-  fn persist(&self, sink: &Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  fn persist(&self, sink: Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-  /// Release is invoked when we are finished with the snapshot.
-  fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  // /// Release is invoked when we are finished with the snapshot.
+  // fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+/// Represents a comprehensive set of errors arising from operations within the [`FinateStateMachine`] trait.
+///
+/// This trait encapsulates a range of error types, providing a structured approach to categorizing
+/// and handling fsm-level errors. Implementers can leverage this to define both generic and
+/// fsm-specific error scenarios.
 pub trait FinateStateMachineError: std::error::Error + Send + Sync + 'static {
+  /// The snapshot of the finate state machine
   type Snapshot: FinateStateMachineSnapshot;
 
+  /// Constructs an error associated with snapshot storage operations.
   fn snapshot(err: <Self::Snapshot as FinateStateMachineSnapshot>::Error) -> Self;
+
+  /// With extra message to explain the error.
+  fn with_message(self, msg: Cow<'static, str>) -> Self;
 }
 
-pub(crate) enum FSMError<F: FinateStateMachine, S: Storage> {
-  NothingNew,
-  StateMachine(F::Error),
-  Snapshot(<S::Snapshot as SnapshotStorage>::Error),
-  Memberhsip(<S::Membership as MembershipStorage>::Error),
-}
-
-impl<F: FinateStateMachine, S: Storage> FSMError<F, S> {
-  pub(crate) fn snapshot(err: <S::Snapshot as SnapshotStorage>::Error) -> Self {
-    Self::Snapshot(err)
-  }
-
-  pub(crate) fn membership(err: <S::Membership as MembershipStorage>::Error) -> Self {
-    Self::Memberhsip(err)
-  }
-
-  pub(crate) fn state_machine(err: F::Error) -> Self {
-    Self::StateMachine(err)
-  }
-}
-
+/// Response returned when the new log entries applied to the state machine
 pub trait FinateStateMachineResponse: Send + Sync + 'static {
   /// Returns the index of the newly applied log entry.
   fn index(&self) -> u64;
@@ -78,10 +65,13 @@ impl<I: Id, A: Address> FinateStateMachineLog<I, A> {
 /// Implemented by clients to make use of the replicated log.
 pub trait FinateStateMachine: Send + Sync + 'static {
   /// Errors returned by the finate state machine.
-  type Error: FinateStateMachineError;
+  type Error: FinateStateMachineError<Snapshot = Self::Snapshot>;
 
   /// The snapshot type used by the finate state machine.
-  type Snapshot: FinateStateMachineSnapshot<Runtime = Self::Runtime>;
+  type Snapshot: FinateStateMachineSnapshot<Sink = Self::SnapshotSink, Runtime = Self::Runtime>;
+
+  /// The sink type used by the finate state machine snapshot.
+  type SnapshotSink: SnapshotSink;
 
   /// The response type returned by the finate state machine after apply.
   type Response: FinateStateMachineResponse;

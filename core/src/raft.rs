@@ -1,5 +1,6 @@
 use std::{
   collections::HashMap,
+  future::Future,
   net::SocketAddr,
   sync::{
     atomic::{AtomicBool, Ordering},
@@ -12,7 +13,7 @@ use agnostic::Runtime;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
-use futures::FutureExt;
+use futures::{channel::oneshot, FutureExt};
 use metrics::atomics::AtomicU64;
 
 use crate::{
@@ -20,11 +21,9 @@ use crate::{
   fsm::FinateStateMachine,
   membership::{Membership, Memberships, Server, ServerSuffrage},
   options::{Options, ReloadableOptions},
-  raft::fsm::FSMRunner,
+  raft::{fsm::FSMRunner, snapshot::SnapshotRunner},
   sidecar::{NoopSidecar, Sidecar},
-  storage::{
-    Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
-  },
+  storage::{Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage},
   transport::{Address, AddressResolver, Id, RpcConsumer, Transport},
 };
 
@@ -32,6 +31,7 @@ mod candidate;
 mod follower;
 mod fsm;
 mod leader;
+mod snapshot;
 mod state;
 pub use state::*;
 
@@ -78,15 +78,18 @@ impl<I: Id, A: Address> Node<I, A> {
 
 struct RaftInner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
   state: State,
-  /// The client state machine to apply commands to
-  fsm: Arc<F>,
   storage: Arc<S>,
   transport: Arc<T>,
   leader: ArcSwapOption<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
@@ -94,38 +97,90 @@ where
   advertise_addr: SocketAddr,
   candidate_from_leadership_transfer: AtomicBool,
 
-  memberships: Memberships<T::Id, <T::Resolver as AddressResolver>::Address>,
+  memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   /// Used to request the leader to make membership changes.
   membership_change_tx:
     async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+
+  membership_change_rx:
+    async_channel::Receiver<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+
+  /// Used to get the membership data safely from
+  /// outside of the main thread.
+  committed_membership_rx: async_channel::Receiver<
+    oneshot::Sender<
+      Result<
+        Arc<(
+          u64,
+          Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+        )>,
+        Error<F, S, T>,
+      >,
+    >,
+  >,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
   options: Options,
   /// Stores the current reloadable options. This is the most recent one provided.
-  reloadable_options: Atomic<ReloadableOptions>,
+  reloadable_options: Arc<Atomic<ReloadableOptions>>,
   /// Ensures that only one thread can reload options at once since
   /// we need to read-modify-write the atomic. It is NOT necessary to hold this
   /// for any other operation e.g. reading config using options().
   reload_options_lock: Mutex<()>,
 
+  apply_tx: async_channel::Sender<()>,
+
+  /// Used to send state-changing updates to the FSM. This
+  /// receives pointers to commitTuple structures when applying logs or
+  /// pointers to restoreFuture structures when restoring a snapshot. We
+  /// need control over the order of these operations when doing user
+  /// restores so that we finish applying any old log applies before we
+  /// take a user snapshot on the leader, otherwise we might restore the
+  /// snapshot and apply old logs to it that were in the pipe.
+  fsm_mutate_tx: async_channel::Sender<fsm::FSMRequest<F, S, T>>,
+
+  user_snapshot_tx: async_channel::Sender<
+    oneshot::Sender<
+      Result<
+        Box<
+          dyn Future<
+              Output = Result<
+                <S::Snapshot as SnapshotStorage>::Source,
+                <S::Snapshot as SnapshotStorage>::Error,
+              >,
+            > + Send,
+        >,
+        Error<F, S, T>,
+      >,
+    >,
+  >,
+
   /// Used to tell leader that `reloadbale_options` has changed
   leader_notify_tx: async_channel::Sender<()>,
+  leader_notify_rx: async_channel::Receiver<()>,
+
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
+  follower_notify_rx: async_channel::Receiver<()>,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
   last_contact: ArcSwapOption<Instant>,
   /// The sidecar to run alongside the Raft.
   sidecar: Option<Arc<SC>>,
-  _marker: std::marker::PhantomData<R>,
+  shutdown_tx: async_channel::Sender<()>,
 }
 
 impl<F, S, T, SC, R> core::ops::Deref for RaftInner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -138,9 +193,14 @@ where
 
 impl<F, S, T, SC, R> RaftInner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -211,6 +271,7 @@ where
   >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -226,6 +287,7 @@ where
   >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -241,11 +303,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   R: Runtime,
@@ -263,10 +326,10 @@ where
     storage: S,
     transport: T,
     opts: Options,
-  ) -> Result<Self, Error<F, S::Error, T>> {
+  ) -> Result<Self, Error<F, S, T>> {
     // Validate the options
     opts.validate()?;
-    
+
     let storage = Arc::new(storage);
 
     // Make sure we have a valid server address and ID.
@@ -369,68 +432,97 @@ where
     }
     tracing::info!(target = "ruraft", index = %membership_index, members = %membership, "initial membership");
 
-    // // Buffer applyCh to MaxAppendEntries if the option is enabled
-    // let (apply_tx, apply_rx) = if opts.batch_apply {
-    //   async_channel::bounded(opts.max_append_entries as usize)
-    // } else {
-    //   async_channel::unbounded()
-    // };
-
+    // Buffer applyCh to MaxAppendEntries if the option is enabled
+    let (apply_tx, apply_rx) = if opts.batch_apply {
+      async_channel::bounded(opts.max_append_entries)
+    } else {
+      async_channel::unbounded()
+    };
 
     let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
 
     let (fsm_mutate_tx, fsm_mutate_rx) = async_channel::bounded(128);
     let (fsm_snapshot_tx, fsm_snapshot_rx) = async_channel::unbounded();
 
-    FSMRunner::<F, S, R> {
+    let (membership_change_tx, membership_change_rx) = async_channel::unbounded();
+
+    let membership = Arc::new((membership_index, membership));
+    let (committed_membership_tx, committed_membership_rx) = async_channel::bounded(8);
+
+    let (leader_notify_tx, leader_notify_rx) = async_channel::bounded(1);
+    let (follower_notify_tx, follower_notify_rx) = async_channel::bounded(1);
+
+    FSMRunner::<F, S, T, R> {
       fsm,
       storage: storage.clone(),
       mutate_rx: fsm_mutate_rx,
       snapshot_rx: fsm_snapshot_rx,
       batching_apply: opts.batch_apply,
       shutdown_rx: shutdown_rx.clone(),
-    }.spawn();
+    }
+    .spawn();
 
-    // let membership = Arc::new((membership_index, membership));
-    // let mut this = Self {
-    //   inner: Arc::new(RaftInner {
-    //     state: State {
-    //       current_term: AtomicU64::new(current_term.unwrap_or_default()),
-    //       commit_index: AtomicU64::new(0),
-    //       last_applied: AtomicU64::new(last_applied),
-    //       last: parking_lot::Mutex::new(Last {
-    //         log: last_log.as_ref().map(|l| LastLog::new(l.index, l.term)).unwrap_or_default(),
-    //         snapshot: last_snapshot,
-    //       }),
-    //       role: Atomic::new(Role::Follower),
-    //     },
-    //     fsm: Arc::new(fsm),
-    //     storage: Arc::new(storage),
-    //     transport: Arc::new(transport),
-    //     leader: ArcSwapOption::from_pointee(None),
-    //     local: Node::new(local_id, local_addr),
-    //     advertise_addr,
-    //     candidate_from_leadership_transfer: AtomicBool::new(false),
-    //     memberships: Memberships {
-    //       committed: ArcSwap::from(membership.clone()),
-    //       latest: ArcSwap::from(membership),
-    //     },
-    //     membership_change_tx: ,
-    //     reloadable_options: Atomic::new(ReloadableOptions::from_options(&opts)),
-    //     options: opts,
-    //     reload_options_lock: async_lock::Mutex::new(()),
-    //     leader_notify_tx: (),
-    //     follower_notify_tx: (),
-    //     last_contact: ArcSwapOption::from_pointee(None),
-    //     sidecar: None,
-    //     _marker: std::marker::PhantomData,
-    //   }),
-    // };
+    let last = Arc::new(parking_lot::Mutex::new(Last {
+      log: LastLog::new(last_log.index(), last_log.term()),
+      snapshot: last_snapshot,
+    }));
+    let reloadable_options = Arc::new(Atomic::new(ReloadableOptions::from_options(&opts)));
 
-    todo!()
+    let (user_snapshot_tx, user_snapshot_rx) = async_channel::unbounded();
+
+    SnapshotRunner::<F, S, T, R> {
+      store: storage.clone(),
+      last: last.clone(),
+      fsm_snapshot_tx,
+      committed_membership_tx,
+      user_snapshot_rx,
+      opts: reloadable_options.clone(),
+      shutdown_rx: shutdown_rx.clone(),
+    }
+    .spawn();
+
+    let this = Self {
+      inner: Arc::new(RaftInner {
+        state: State {
+          current_term: AtomicU64::new(current_term),
+          commit_index: AtomicU64::new(0),
+          last_applied: AtomicU64::new(last_applied),
+          last,
+          role: Atomic::new(Role::Follower),
+        },
+        storage,
+        transport: Arc::new(transport),
+        leader: ArcSwapOption::from_pointee(None),
+        local: Node::new(local_id, local_addr),
+        advertise_addr,
+        candidate_from_leadership_transfer: AtomicBool::new(false),
+        memberships: Arc::new(Memberships {
+          committed: ArcSwap::from(membership.clone()),
+          latest: ArcSwap::from(membership),
+        }),
+        committed_membership_rx,
+        membership_change_tx,
+        membership_change_rx,
+        options: opts,
+        reloadable_options,
+        reload_options_lock: async_lock::Mutex::new(()),
+        apply_tx,
+        fsm_mutate_tx,
+        user_snapshot_tx,
+        leader_notify_tx,
+        leader_notify_rx,
+        follower_notify_tx,
+        follower_notify_rx,
+        last_contact: ArcSwapOption::from_pointee(None),
+        sidecar: None,
+        shutdown_tx,
+      }),
+    };
+
+    Ok(this)
   }
 
-  async fn fetch_initial_state(s: &S) -> Result<InitialState<T>, Error<F, S::Error, T>> {
+  async fn fetch_initial_state(s: &S) -> Result<InitialState<T>, Error<F, S, T>> {
     let current_term = s.stable_store().current_term().await.map_err(|e| {
       tracing::error!(target = "ruraft", err=%e, "failed to load current term");
       Error::stable(e)
@@ -457,7 +549,7 @@ where
     fsm: &F,
     snp: &S::Snapshot,
     skip_restore_on_start: bool,
-  ) -> Result<RestoredState<T>, Error<F, S::Error, T>> {
+  ) -> Result<RestoredState<T>, Error<F, S, T>> {
     let snapshots = snp.list().await.map_err(|e| {
       tracing::error!(target = "ruraft", err=%e, "failed to list snapshots");
       Error::snapshot(e)
@@ -472,7 +564,7 @@ where
       return Ok(RestoredState {
         last_applied: snapshot.index(),
         last_snapshot: LastSnapshot::new(snapshot.term(), snapshot.index()),
-        membership: Arc::new(snapshot.membership),
+        membership: snapshot.membership,
         membership_index: snapshot.membership_index,
       });
     }
@@ -506,7 +598,7 @@ where
     match s.open(&id).await {
       Ok(source) => {
         if let Err(e) =
-          FSMRunner::<F, S, R>::fsm_restore_and_measure(fsm, source, meta.size()).await
+          FSMRunner::<F, S, T, R>::fsm_restore_and_measure(fsm, source, meta.size()).await
         {
           tracing::error!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), err=%e, "failed to restore snapshot");
           return false;
@@ -531,6 +623,7 @@ where
   >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -553,7 +646,7 @@ where
   /// options is invalid an error is returned and no changes made to the
   /// instance. All fields will be copied from rc into the new options, even
   /// if they are zero valued.
-  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S::Error, T>> {
+  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
     rc.validate(self.inner.options.leader_lease_timeout)?;
     let _mu = self.inner.reload_options_lock.lock().await;
     let old = self.inner.reloadable_options.swap(rc, Ordering::Release);
@@ -583,9 +676,14 @@ where
 
 struct RaftRunner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -595,9 +693,14 @@ where
 
 impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -610,9 +713,14 @@ where
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {

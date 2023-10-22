@@ -5,21 +5,23 @@ use std::{sync::Arc, time::Instant};
 use agnostic::Runtime;
 use async_channel::Receiver;
 use futures::{channel::oneshot, Future, FutureExt};
+use nodecraft::resolver::AddressResolver;
 use smallvec::SmallVec;
 
-
 use crate::{
+  error::{Error, RaftError},
   fsm::{
-    FSMError, FinateStateMachine, FinateStateMachineLog, FinateStateMachineLogKind,
+    FinateStateMachine, FinateStateMachineLog, FinateStateMachineLogKind,
     FinateStateMachineResponse, FinateStateMachineSnapshot,
   },
   storage::{Log, LogKind, SnapshotId, SnapshotSource, SnapshotStorage, Storage},
+  transport::Transport,
 };
 
-pub(super) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
-  term: u64,
-  index: u64,
-  snapshot: S,
+pub(crate) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
+  pub(crate) term: u64,
+  pub(crate) index: u64,
+  pub(crate) snapshot: S,
 }
 
 pub(crate) enum FSMLogResponse<R: FinateStateMachineResponse> {
@@ -48,43 +50,55 @@ impl<R: FinateStateMachineResponse> FSMResponse<R> {
 
 const INLINE: usize = 4;
 
-pub(crate) struct FSMLogRequest<F: FinateStateMachine, S : Storage> {
+pub(crate) struct FSMLogRequest<F: FinateStateMachine, S: Storage, T: Transport> {
   log: Log<F::Id, F::Address>,
-  tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
+  tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
 }
 
-pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage> {
-  AdHoc(SmallVec<[FSMLogRequest<F, S>; INLINE]>),
+pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage, T: Transport> {
+  AdHoc(SmallVec<[FSMLogRequest<F, S, T>; INLINE]>),
   Batch {
     logs: SmallVec<[Log<F::Id, F::Address>; INLINE]>,
-    tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
+    tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
   },
   Restore {
     id: SnapshotId,
-    tx: oneshot::Sender<Result<(), FSMError<F, S>>>,
+    tx: oneshot::Sender<Result<(), Error<F, S, T>>>,
   },
 }
 
 // TODO: fix viewit crate and use it
-pub(super) struct FSMRunner<F, S, R>
+pub(super) struct FSMRunner<F, S, T, R>
 where
-  F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = F::Id, Address = F::Address, Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
 {
   pub(super) fsm: F,
   pub(super) storage: Arc<S>,
-  pub(super) mutate_rx: Receiver<FSMRequest<F, S>>,
+  pub(super) mutate_rx: Receiver<FSMRequest<F, S, T>>,
   pub(super) snapshot_rx:
-    Receiver<oneshot::Sender<Result<FSMSnapshot<F::Snapshot>, FSMError<F, S>>>>,
+    Receiver<oneshot::Sender<Result<FSMSnapshot<F::Snapshot>, Error<F, S, T>>>>,
   pub(super) batching_apply: bool,
   pub(super) shutdown_rx: Receiver<()>,
 }
 
-impl<F, S, R> FSMRunner<F, S, R>
+impl<F, S, T, R> FSMRunner<F, S, T, R>
 where
-  F: FinateStateMachine<Runtime = R>,
-  S: Storage<Id = F::Id, Address = F::Address, Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {
@@ -151,9 +165,9 @@ where
                     let term = meta.term();
 
                     if let Err(e) = Self::fsm_restore_and_measure(&fsm, source, size).await {
-                      tracing::error!(target = "ruraft.fsm", id=%e, err=%e, "failed to restore snapshot");
-                      if tx.send(Err(FSMError::StateMachine(e))).is_err() {
-                        tracing::error!(target = "ruraft.fsm", "failed to send finate state machine response, receiver closed");
+                      tracing::error!(target = "ruraft.fsm.runner", id=%e, err=%e, "failed to restore snapshot");
+                      if tx.send(Err(Error::fsm(e))).is_err() {
+                        tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine response, receiver closed");
                       }
                       continue;
                     }
@@ -162,19 +176,19 @@ where
                     last_index = index;
                     last_term = term;
                     if tx.send(Ok(())).is_err() {
-                      tracing::error!(target = "ruraft.fsm", "failed to send finate state machine response, receiver closed");
+                      tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine response, receiver closed");
                     }
                   },
                   Err(e) => {
-                    tracing::error!(target="ruraft.fsm", id = %id, err=%e, "failed to open snapshot");
-                    if tx.send(Err(FSMError::snapshot(e))).is_err() {
-                      tracing::error!(target = "ruraft.fsm", "failed to send finate state machine response, receiver closed");
+                    tracing::error!(target="ruraft.fsm.runner", id = %id, err=%e, "failed to open snapshot");
+                    if tx.send(Err(Error::snapshot(e))).is_err() {
+                      tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine response, receiver closed");
                     }
                   }
                 }
               }
               Err(e) => {
-                tracing::error!(target = "ruraft.fsm", err=%e, "failed to receive finate state machine request, stop finate state machine listener...");
+                tracing::error!(target = "ruraft.fsm.runner", err=%e, "failed to receive finate state machine request, stop finate state machine listener...");
                 return;
               }
             }
@@ -185,8 +199,8 @@ where
               Ok(tx) => {
                 // Is there something to snapshot?
                 if last_index == 0 {
-                  if tx.send(Err(FSMError::NothingNew)).is_err() {
-                    tracing::error!(target = "ruraft.fsm", "failed to send finate state machine snapshot response, receiver closed");
+                  if tx.send(Err(Error::Raft(RaftError::NothingNewToSnapshot))).is_err() {
+                    tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine snapshot response, receiver closed");
                   }
                   continue;
                 }
@@ -202,24 +216,24 @@ where
                     };
 
                     if tx.send(Ok(resp)).is_err() {
-                      tracing::error!(target = "ruraft.fsm", "failed to send finate state machine snapshot response, receiver closed");
+                      tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine snapshot response, receiver closed");
                     }
                   },
                   Err(e) => {
-                    if tx.send(Err(FSMError::StateMachine(e))).is_err() {
-                      tracing::error!(target = "ruraft.fsm", "failed to send finate state machine snapshot response, receiver closed");
+                    if tx.send(Err(Error::fsm(e))).is_err() {
+                      tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine snapshot response, receiver closed");
                     }
                   }
                 }
               },
               Err(e) => {
-                tracing::error!(target = "ruraft.fsm", err=%e, "failed to receive finate state machine snapshot request, stop finate state machine listener...");
+                tracing::error!(target = "ruraft.fsm.runner", err=%e, "failed to receive finate state machine snapshot request, stop finate state machine listener...");
                 return;
               }
             }
           }
           _ = shutdown_rx.recv().fuse() => {
-            tracing::info!(target = "ruraft.fsm", "shutdown finate state machine...");
+            tracing::info!(target = "ruraft.fsm.runner", "shutdown finate state machine...");
             return;
           }
         }
@@ -243,7 +257,7 @@ where
   async fn apply_batch(
     fsm: &F,
     logs: SmallVec<[Log<F::Id, F::Address>; INLINE]>,
-    tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
+    tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
   ) -> ApplyResult {
     let mut last_batch_index = 0;
     let mut last_batch_term = 0;
@@ -285,16 +299,16 @@ where
           // TODO: metrics
           if tx.send(Ok(FSMResponse::more(resps))).is_err() {
             tracing::error!(
-              target = "ruraft.fsm",
+              target = "ruraft.fsm.runner",
               "failed to send finate state machine response, receiver closed"
             );
           }
         }
         Err(e) => {
           // TODO: metrics
-          if tx.send(Err(FSMError::state_machine(e))).is_err() {
+          if tx.send(Err(Error::fsm(e))).is_err() {
             tracing::error!(
-              target = "ruraft.fsm",
+              target = "ruraft.fsm.runner",
               "failed to send finate state machine response, receiver closed"
             );
           }
@@ -311,7 +325,7 @@ where
   async fn apply_single(
     fsm: &F,
     log: Log<F::Id, F::Address>,
-    tx: oneshot::Sender<Result<FSMResponse<F::Response>, FSMError<F, S>>>,
+    tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
   ) -> ApplyResult {
     let rst = ApplyResult {
       term: log.term,
@@ -330,11 +344,11 @@ where
           .await;
         // TODO: metrics
         if tx
-          .send(resp.map(FSMResponse::one).map_err(FSMError::state_machine))
+          .send(resp.map(FSMResponse::one).map_err(Error::fsm))
           .is_err()
         {
           tracing::error!(
-            target = "ruraft.fsm",
+            target = "ruraft.fsm.runner",
             "failed to send finate state machine response, receiver closed"
           );
         }
@@ -349,11 +363,11 @@ where
           .await;
         // TODO: metrics
         if tx
-          .send(resp.map(FSMResponse::one).map_err(FSMError::state_machine))
+          .send(resp.map(FSMResponse::one).map_err(Error::fsm))
           .is_err()
         {
           tracing::error!(
-            target = "ruraft.fsm",
+            target = "ruraft.fsm.runner",
             "failed to send finate state machine response, receiver closed"
           );
         }
