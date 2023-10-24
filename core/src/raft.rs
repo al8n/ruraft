@@ -1,5 +1,4 @@
 use std::{
-  collections::HashMap,
   future::Future,
   net::SocketAddr,
   sync::{
@@ -21,18 +20,17 @@ use crate::{
   fsm::FinateStateMachine,
   membership::{Membership, Memberships, Server, ServerSuffrage},
   options::{Options, ReloadableOptions},
-  raft::{fsm::FSMRunner, snapshot::SnapshotRunner},
+  raft::{fsm::FSMRunner, runner::RaftRunner, snapshot::SnapshotRunner},
   sidecar::{NoopSidecar, Sidecar},
   storage::{Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage},
-  transport::{Address, AddressResolver, Id, RpcConsumer, Transport},
+  transport::{Address, AddressResolver, Id, Transport},
 };
 
-mod candidate;
-mod follower;
 mod fsm;
-mod leader;
+mod runner;
 mod snapshot;
 mod state;
+
 pub use state::*;
 
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
@@ -76,7 +74,46 @@ impl<I: Id, A: Address> Node<I, A> {
   }
 }
 
-struct RaftInner<F, S, T, SC, R>
+struct Leader<I: Id, A: Address>(Arc<ArcSwapOption<Node<I, A>>>);
+
+impl<I: Id, A: Address> Clone for Leader<I, A> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
+}
+
+impl<I: Id, A: Address> Leader<I, A> {
+  #[inline]
+  fn none() -> Self {
+    Self(Arc::new(ArcSwapOption::new(None)))
+  }
+
+  fn set(&self, leader: Option<Node<I, A>>) {
+    let new = leader.map(Arc::new);
+    let old = self.0.swap(new.clone());
+    match (new, old) {
+      (None, None) => {}
+      (None, Some(old)) => {
+        // TODO: self.observe(LeaderObservation::none())
+      }
+      (Some(new), None) => {
+        // TODO: self.observe(LeaderObservation::new(new))
+      }
+      (Some(new), Some(old)) => {
+        if old.addr != new.addr || old.id != new.id {
+          // TODO: self.observe(LeaderObservation::new(new))
+        }
+      }
+    }
+  }
+
+  #[inline]
+  fn load(&self) -> arc_swap::Guard<Option<Arc<Node<I, A>>>> {
+    self.0.load()
+  }
+}
+
+pub struct RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<
     Id = T::Id,
@@ -89,56 +126,28 @@ where
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
-  state: State,
-  storage: Arc<S>,
-  transport: Arc<T>,
-  leader: ArcSwapOption<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  local: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  leader: Leader<T::Id, <T::Resolver as AddressResolver>::Address>,
+  state: Arc<State>,
+  /// last_contact is the last time we had contact from the
+  /// leader node. This can be used to gauge staleness.
+  last_contact: Arc<ArcSwapOption<Instant>>,
+  local: Arc<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
   advertise_addr: SocketAddr,
-  candidate_from_leadership_transfer: AtomicBool,
-
   memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  /// Used to request the leader to make membership changes.
-  membership_change_tx:
-    async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  shutdown_tx: async_channel::Sender<()>,
+  /// Used to prevent concurrent shutdown
+  shutdown: AtomicBool,
 
-  membership_change_rx:
-    async_channel::Receiver<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
-
-  /// Used to get the membership data safely from
-  /// outside of the main thread.
-  committed_membership_rx: async_channel::Receiver<
-    oneshot::Sender<
-      Result<
-        Arc<(
-          u64,
-          Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
-        )>,
-        Error<F, S, T>,
-      >,
-    >,
-  >,
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
   /// to read this safely.
-  options: Options,
+  options: Arc<Options>,
   /// Stores the current reloadable options. This is the most recent one provided.
   reloadable_options: Arc<Atomic<ReloadableOptions>>,
   /// Ensures that only one thread can reload options at once since
   /// we need to read-modify-write the atomic. It is NOT necessary to hold this
   /// for any other operation e.g. reading config using options().
   reload_options_lock: Mutex<()>,
-
-  apply_tx: async_channel::Sender<()>,
-
-  /// Used to send state-changing updates to the FSM. This
-  /// receives pointers to commitTuple structures when applying logs or
-  /// pointers to restoreFuture structures when restoring a snapshot. We
-  /// need control over the order of these operations when doing user
-  /// restores so that we finish applying any old log applies before we
-  /// take a user snapshot on the leader, otherwise we might restore the
-  /// snapshot and apply old logs to it that were in the pipe.
-  fsm_mutate_tx: async_channel::Sender<fsm::FSMRequest<F, S, T>>,
 
   user_snapshot_tx: async_channel::Sender<
     oneshot::Sender<
@@ -156,146 +165,28 @@ where
     >,
   >,
 
+  user_restore_tx: async_channel::Sender<(
+    <S::Snapshot as SnapshotStorage>::Source,
+    oneshot::Sender<Result<(), Error<F, S, T>>>,
+  )>,
+
+  apply_tx: async_channel::Sender<()>,
+
+  /// Used to request the leader to make membership changes.
+  membership_change_tx:
+    async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+
   /// Used to tell leader that `reloadbale_options` has changed
   leader_notify_tx: async_channel::Sender<()>,
-  leader_notify_rx: async_channel::Receiver<()>,
 
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
-  follower_notify_rx: async_channel::Receiver<()>,
-  /// last_contact is the last time we had contact from the
-  /// leader node. This can be used to gauge staleness.
-  last_contact: ArcSwapOption<Instant>,
-  /// The sidecar to run alongside the Raft.
+
+  leader_transfer_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+  verify_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+
+  leader_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
-  shutdown_tx: async_channel::Sender<()>,
-}
-
-impl<F, S, T, SC, R> core::ops::Deref for RaftInner<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  type Target = State;
-
-  fn deref(&self) -> &Self::Target {
-    &self.state
-  }
-}
-
-impl<F, S, T, SC, R> RaftInner<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  #[inline]
-  fn role(&self) -> Role {
-    self.state.role()
-  }
-
-  #[inline]
-  fn set_last_contact(&self, instant: Instant) {
-    self.last_contact.store(Some(Arc::new(instant)));
-  }
-
-  #[inline]
-  fn set_leader(&self, leader: Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>) {
-    let new = leader.map(Arc::new);
-    let old = self.leader.swap(new.clone());
-    match (new, old) {
-      (None, None) => {}
-      (None, Some(old)) => {
-        // TODO: self.observe(LeaderObservation::none())
-      }
-      (Some(new), None) => {
-        // TODO: self.observe(LeaderObservation::new(new))
-      }
-      (Some(new), Some(old)) => {
-        if old.addr != new.addr || old.id != new.id {
-          // TODO: self.observe(LeaderObservation::new(new))
-        }
-      }
-    }
-  }
-
-  /// Takes a log entry and updates the latest
-  /// membership if the entry results in a new membership. This must only be
-  /// called from the main thread, or from constructors before any threads have begun.
-  fn process_membership_log(
-    &self,
-    log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address>,
-  ) {
-    if let crate::storage::LogKind::Membership(m) = log.kind {
-      self
-        .memberships
-        .committed
-        .store(self.memberships.latest().clone());
-      self.memberships.set_latest(m, log.index);
-    }
-  }
-
-  /// Used to apply all the committed entries that haven't been
-  /// applied up to the given index limit.
-  /// This can be called from both leaders and followers.
-  /// Followers call this from `append_entries`, for `n` entries at a time, and always
-  /// pass futures = `None`.
-  /// Leaders call this when entries are committed. They pass the futures from any
-  /// inflight logs.
-  async fn process_logs(&self, index: u64, futures: Option<HashMap<u64, ()>>) {
-    todo!()
-  }
-}
-
-pub struct RaftCore<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  inner: Arc<RaftInner<F, S, T, SC, R>>,
-}
-
-impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  fn clone(&self) -> Self {
-    Self {
-      inner: self.inner.clone(),
-    }
-  }
 }
 
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
@@ -325,6 +216,110 @@ where
     fsm: F,
     storage: S,
     transport: T,
+    opts: Options,
+  ) -> Result<Self, Error<F, S, T>> {
+    Self::new_in(fsm, storage, transport, None, opts).await
+  }
+}
+
+impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
+{
+  /// Used to construct a new Raft node with sidecar. It takes a options, as well
+  /// as implementations of various traits that are required.
+  ///
+  /// **N.B.**
+  /// - If there is no old state, then will initialize a new Raft cluster which contains only one voter node(self), users can then invoke `add_voter` on it to add other servers to the cluster.
+  /// - If there are any
+  /// old state, such as snapshots, logs, peers, etc, all those will be restored
+  /// when creating the Raft node.
+  pub async fn with_sidecar(
+    fsm: F,
+    storage: S,
+    transport: T,
+    sidecar: SC,
+    opts: Options,
+  ) -> Result<Self, Error<F, S, T>> {
+    Self::new_in(fsm, storage, transport, Some(sidecar), opts).await
+  }
+
+  /// Returns the current state of the reloadable fields in Raft's
+  /// options. This is useful for programs to discover the current state for
+  /// reporting to users or tests. It is safe to call concurrently. It is
+  /// intended for reporting and testing purposes primarily; external
+  /// synchronization would be required to safely use this in a read-modify-write
+  /// pattern for reloadable options.
+  pub fn reloadable_options(&self) -> ReloadableOptions {
+    self.reloadable_options.load(Ordering::Acquire)
+  }
+
+  /// Returns the current options in use by the Raft instance.
+  pub fn options(&self) -> Options {
+    self.options.apply(self.reloadable_options())
+  }
+
+  /// Updates the options of a running raft node. If the new
+  /// options is invalid an error is returned and no changes made to the
+  /// instance. All fields will be copied from rc into the new options, even
+  /// if they are zero valued.
+  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
+    rc.validate(self.options.leader_lease_timeout)?;
+    let _mu = self.reload_options_lock.lock().await;
+    let old = self.reloadable_options.swap(rc, Ordering::Release);
+
+    if rc.heartbeat_timeout() < old.heartbeat_timeout() {
+      // On leader, ensure replication loops running with a longer
+      // timeout than what we want now discover the change.
+      // On follower, update current timer to use the shorter new value.
+      let (lres, fres) = futures::future::join(
+        self.leader_notify_tx.send(()),
+        self.follower_notify_tx.send(()),
+      )
+      .await;
+      if let Err(e) = lres {
+        tracing::error!(target = "ruraft", err=%e, "failed to notify leader the options has been changed");
+      }
+
+      if let Err(e) = fres {
+        tracing::error!(target = "ruraft", err=%e, "failed to notify followers the options has been changed");
+      }
+    }
+    Ok(())
+  }
+}
+
+impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
+{
+  async fn new_in(
+    fsm: F,
+    storage: S,
+    transport: T,
+    sidecar: Option<SC>,
     opts: Options,
   ) -> Result<Self, Error<F, S, T>> {
     // Validate the options
@@ -452,6 +447,62 @@ where
     let (leader_notify_tx, leader_notify_rx) = async_channel::bounded(1);
     let (follower_notify_tx, follower_notify_rx) = async_channel::bounded(1);
 
+    let last = Arc::new(parking_lot::Mutex::new(Last {
+      log: LastLog::new(last_log.index(), last_log.term()),
+      snapshot: last_snapshot,
+    }));
+    let reloadable_options = Arc::new(Atomic::new(ReloadableOptions::from_options(&opts)));
+
+    let (user_snapshot_tx, user_snapshot_rx) = async_channel::unbounded();
+    let (user_restore_tx, user_restore_rx) = async_channel::unbounded();
+    let (leader_transfer_tx, leader_transfer_rx) = async_channel::bounded(1);
+    let (verify_tx, verify_rx) = async_channel::bounded(64);
+    let (leader_tx, leader_rx) = async_channel::unbounded();
+    let state = Arc::new(State {
+      current_term: AtomicU64::new(current_term),
+      commit_index: AtomicU64::new(0),
+      last_applied: AtomicU64::new(last_applied),
+      last: last.clone(),
+      role: Atomic::new(Role::Follower),
+    });
+    let leader = Leader::none();
+    let sidecar = sidecar.map(Arc::new);
+    let last_contact = Arc::new(ArcSwapOption::from_pointee(None));
+    let local = Arc::new(Node::new(local_id, local_addr));
+    let memberships = Arc::new(Memberships {
+      committed: ArcSwap::from(membership.clone()),
+      latest: ArcSwap::from(membership),
+    });
+    let options = Arc::new(opts);
+
+    RaftRunner::<F, S, T, SC, R> {
+      options: options.clone(),
+      reloadable_options: reloadable_options.clone(),
+      local: local.clone(),
+      advertise_addr,
+      memberships: memberships.clone(),
+      rpc: transport.consumer(),
+      candidate_from_leadership_transfer: AtomicBool::new(false),
+      leader: leader.clone(),
+      last_contact: last_contact.clone(),
+      state: state.clone(),
+      storage: storage.clone(),
+      transport,
+      sidecar: sidecar.clone(),
+      shutdown_rx: shutdown_rx.clone(),
+      fsm_mutate_tx,
+      leader_notify_rx,
+      follower_notify_rx,
+      apply_rx,
+      membership_change_rx,
+      committed_membership_rx,
+      leader_transfer_rx,
+      leader_tx,
+      verify_rx,
+      user_restore_rx,
+    }
+    .spawn();
+
     FSMRunner::<F, S, T, R> {
       fsm,
       storage: storage.clone(),
@@ -462,61 +513,39 @@ where
     }
     .spawn();
 
-    let last = Arc::new(parking_lot::Mutex::new(Last {
-      log: LastLog::new(last_log.index(), last_log.term()),
-      snapshot: last_snapshot,
-    }));
-    let reloadable_options = Arc::new(Atomic::new(ReloadableOptions::from_options(&opts)));
-
-    let (user_snapshot_tx, user_snapshot_rx) = async_channel::unbounded();
-
     SnapshotRunner::<F, S, T, R> {
-      store: storage.clone(),
-      last: last.clone(),
+      store: storage,
+      last,
       fsm_snapshot_tx,
       committed_membership_tx,
       user_snapshot_rx,
       opts: reloadable_options.clone(),
-      shutdown_rx: shutdown_rx.clone(),
+      shutdown_rx,
     }
     .spawn();
 
     let this = Self {
-      inner: Arc::new(RaftInner {
-        state: State {
-          current_term: AtomicU64::new(current_term),
-          commit_index: AtomicU64::new(0),
-          last_applied: AtomicU64::new(last_applied),
-          last,
-          role: Atomic::new(Role::Follower),
-        },
-        storage,
-        transport: Arc::new(transport),
-        leader: ArcSwapOption::from_pointee(None),
-        local: Node::new(local_id, local_addr),
-        advertise_addr,
-        candidate_from_leadership_transfer: AtomicBool::new(false),
-        memberships: Arc::new(Memberships {
-          committed: ArcSwap::from(membership.clone()),
-          latest: ArcSwap::from(membership),
-        }),
-        committed_membership_rx,
-        membership_change_tx,
-        membership_change_rx,
-        options: opts,
-        reloadable_options,
-        reload_options_lock: async_lock::Mutex::new(()),
-        apply_tx,
-        fsm_mutate_tx,
-        user_snapshot_tx,
-        leader_notify_tx,
-        leader_notify_rx,
-        follower_notify_tx,
-        follower_notify_rx,
-        last_contact: ArcSwapOption::from_pointee(None),
-        sidecar: None,
-        shutdown_tx,
-      }),
+      memberships,
+      local: local.clone(),
+      advertise_addr,
+      options,
+      reloadable_options,
+      reload_options_lock: async_lock::Mutex::new(()),
+      leader,
+      last_contact,
+      sidecar,
+      state,
+      shutdown_tx,
+      shutdown: AtomicBool::new(false),
+      membership_change_tx,
+      apply_tx,
+      user_snapshot_tx,
+      user_restore_tx,
+      leader_notify_tx,
+      follower_notify_tx,
+      leader_transfer_tx,
+      verify_tx,
+      leader_rx,
     };
 
     Ok(this)
@@ -609,168 +638,6 @@ where
       Err(e) => {
         tracing::error!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), err=%e, "failed to open snapshot");
         false
-      }
-    }
-  }
-}
-
-impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  /// Returns the current state of the reloadable fields in Raft's
-  /// options. This is useful for programs to discover the current state for
-  /// reporting to users or tests. It is safe to call concurrently. It is
-  /// intended for reporting and testing purposes primarily; external
-  /// synchronization would be required to safely use this in a read-modify-write
-  /// pattern for reloadable options.
-  pub fn reloadable_options(&self) -> ReloadableOptions {
-    self.inner.reloadable_options.load(Ordering::Acquire)
-  }
-
-  /// Returns the current options in use by the Raft instance.
-  pub fn options(&self) -> Options {
-    self.inner.options.apply(self.reloadable_options())
-  }
-
-  /// Updates the options of a running raft node. If the new
-  /// options is invalid an error is returned and no changes made to the
-  /// instance. All fields will be copied from rc into the new options, even
-  /// if they are zero valued.
-  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
-    rc.validate(self.inner.options.leader_lease_timeout)?;
-    let _mu = self.inner.reload_options_lock.lock().await;
-    let old = self.inner.reloadable_options.swap(rc, Ordering::Release);
-
-    if rc.heartbeat_timeout() < old.heartbeat_timeout() {
-      // On leader, ensure replication loops running with a longer
-      // timeout than what we want now discover the change.
-      // On follower, update current timer to use the shorter new value.
-      let (lres, fres) = futures::future::join(
-        self.inner.leader_notify_tx.send(()),
-        self.inner.follower_notify_tx.send(()),
-      )
-      .await;
-      if let Err(e) = lres {
-        tracing::error!(target = "ruraft", err=%e, "failed to notify leader the options has been changed");
-      }
-
-      if let Err(e) = fres {
-        tracing::error!(target = "ruraft", err=%e, "failed to notify followers the options has been changed");
-      }
-    }
-    Ok(())
-  }
-}
-
-// -------------------------------- Private Methods --------------------------------
-
-struct RaftRunner<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  inner: Arc<RaftInner<F, S, T, SC, R>>,
-  shutdown_rx: async_channel::Receiver<()>,
-}
-
-impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  type Target = RaftInner<F, S, T, SC, R>;
-
-  fn deref(&self) -> &Self::Target {
-    &self.inner
-  }
-}
-
-impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
-where
-  F: FinateStateMachine<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Runtime = R,
-  >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
-  T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-  SC: Sidecar<Runtime = R>,
-  R: Runtime,
-{
-  async fn run(&self) {
-    loop {
-      futures::select! {
-        _ = self.shutdown_rx.recv().fuse() => {
-          tracing::info!(target = "ruraft", "raft runner received shutdown signal, gracefully shutdown...");
-          // Clear the leader to prevent forwarding
-          self.inner.set_leader(None);
-          self.stop_sidecar().await;
-          return;
-        }
-        default => {
-          match self.inner.role() {
-            Role::Follower => {
-              self.spawn_sidecar(Role::Follower);
-              // self.run_follower().await;
-              self.stop_sidecar().await;
-            },
-            Role::Candidate => todo!(),
-            Role::Leader => todo!(),
-            Role::Shutdown => {
-              self.spawn_sidecar(Role::Shutdown);
-            },
-          }
-        }
-      }
-    }
-  }
-
-  fn spawn_sidecar(&self, role: Role) {
-    if SC::applicable(role) {
-      if let Some(ref sidecar) = self.inner.sidecar {
-        let sc = sidecar.clone();
-        R::spawn_detach(async move {
-          if let Err(e) = sc.run(role).await {
-            tracing::error!(target = "ruraft", err=%e, "failed to run sidecar");
-          }
-        });
-      }
-    }
-  }
-
-  async fn stop_sidecar(&self) {
-    if let Some(ref sidecar) = self.inner.sidecar {
-      if sidecar.is_running() {
-        if let Err(e) = sidecar.shutdown().await {
-          tracing::error!(target = "ruraft", err=%e, "failed to shutdown sidecar");
-        }
       }
     }
   }
