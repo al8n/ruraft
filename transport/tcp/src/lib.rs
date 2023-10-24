@@ -2,8 +2,8 @@
 #![deny(unsafe_code, missing_docs)]
 
 use std::{
-  io,
   future::Future,
+  io,
   net::SocketAddr,
   pin::Pin,
   task::{Context, Poll},

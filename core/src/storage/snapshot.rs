@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use crate::{
   membership::Membership,
@@ -20,9 +20,9 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// The id type used to identify nodes.
-  type Id: Id;
+  type Id: Id + Send + Sync + 'static;
   /// The address type of node.
-  type Address: Address;
+  type Address: Address + Send + Sync + 'static;
 
   type Sink: SnapshotSink<Runtime = Self::Runtime>;
   type Source: SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
@@ -38,9 +38,9 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   fn create(
     &self,
     version: SnapshotVersion,
-    index: u64,
     term: u64,
-    membership: Membership<Self::Id, Self::Address>,
+    index: u64,
+    membership: Arc<Membership<Self::Id, Self::Address>>,
     membership_index: u64,
   ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send;
 
@@ -57,7 +57,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: futures::io::AsyncWrite {
+pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
@@ -68,13 +68,13 @@ pub trait SnapshotSink: futures::io::AsyncWrite {
 
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state
 /// from the source. On error, `cancel` will be invoked.
-pub trait SnapshotSource: futures::io::AsyncRead {
+pub trait SnapshotSource: futures::io::AsyncRead + Unpin + Send + Sync + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
   /// The id type used to identify nodes.
-  type Id: Id;
+  type Id: Id + Send + Sync + 'static;
   /// The address type of node.
-  type Address: Address;
+  type Address: Address + Send + Sync + 'static;
 
   fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address>;
 }

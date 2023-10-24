@@ -1,7 +1,13 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+  atomic::{AtomicU64, Ordering},
+  Arc,
+};
 
-use async_lock::Mutex;
 use atomic::Atomic;
+use nodecraft::resolver::AddressResolver;
+use parking_lot::Mutex;
+
+use crate::{membership::Membership, storage::SnapshotMeta, transport::Transport};
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,
 /// or Shutdown.
@@ -34,7 +40,7 @@ impl Role {
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastLog {
   index: u64,
   term: u64,
@@ -47,21 +53,27 @@ impl LastLog {
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastSnapshot {
-  index: u64,
   term: u64,
+  index: u64,
+}
+
+impl LastSnapshot {
+  pub(crate) fn new(term: u64, index: u64) -> Self {
+    Self { term, index }
+  }
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct LastEntry {
   index: u64,
   term: u64,
 }
 
 #[viewit::viewit]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Last {
   snapshot: LastSnapshot,
   log: LastLog,
@@ -81,7 +93,7 @@ pub(crate) struct State {
   /// Last applied log to the FSM
   last_applied: AtomicU64,
 
-  last: Mutex<Last>,
+  last: Arc<Mutex<Last>>,
 
   /// The current role
   role: Atomic<Role>,
@@ -120,37 +132,37 @@ impl State {
     self.last_applied.store(val, Ordering::Release)
   }
 
-  pub(crate) async fn last_log(&self) -> LastLog {
-    let last = self.last.lock().await;
+  pub(crate) fn last_log(&self) -> LastLog {
+    let last = self.last.lock();
     last.log
   }
 
-  pub(crate) async fn set_last_log(&self, log: LastLog) {
-    let mut last = self.last.lock().await;
+  pub(crate) fn set_last_log(&self, log: LastLog) {
+    let mut last = self.last.lock();
     last.log = log;
   }
 
-  pub(crate) async fn last_snapshot(&self) -> LastSnapshot {
-    let last = self.last.lock().await;
+  pub(crate) fn last_snapshot(&self) -> LastSnapshot {
+    let last = self.last.lock();
     last.snapshot
   }
 
-  pub(crate) async fn set_last_snapshot(&self, snapshot: LastSnapshot) {
-    let mut last = self.last.lock().await;
+  pub(crate) fn set_last_snapshot(&self, snapshot: LastSnapshot) {
+    let mut last = self.last.lock();
     last.snapshot = snapshot;
   }
 
   /// Returns the last index and term in stable storage.
   /// Either from the last log or from the last snapshot.
-  pub(crate) async fn last_index(&self) -> u64 {
-    let last = self.last.lock().await;
+  pub(crate) fn last_index(&self) -> u64 {
+    let last = self.last.lock();
     std::cmp::max(last.log.index, last.snapshot.index)
   }
 
   /// Returns the last index and term in stable storage.
   /// Either from the last log or from the last snapshot.
-  pub(crate) async fn last_entry(&self) -> LastEntry {
-    let last = self.last.lock().await;
+  pub(crate) fn last_entry(&self) -> LastEntry {
+    let last = self.last.lock();
     if last.log.index >= last.snapshot.index {
       return LastEntry {
         index: last.log.index,
@@ -162,5 +174,27 @@ impl State {
       index: last.snapshot.index,
       term: last.snapshot.term,
     }
+  }
+}
+
+pub(super) struct RestoredState<T: Transport> {
+  pub(super) last_snapshot: LastSnapshot,
+  pub(super) last_applied: u64,
+  pub(super) membership_index: u64,
+  pub(super) membership: Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+}
+
+pub(super) struct InitialState<T: Transport> {
+  pub(super) current_term: Option<u64>,
+  pub(super) last_log_index: Option<u64>,
+  pub(super) snapshots: Vec<SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>>,
+}
+
+impl<T: Transport> InitialState<T> {
+  /// Returns `true` if the state is clean,
+  /// i.e. there is no existing raft cluster, and we need to bootstrap
+  /// from scratch.
+  pub(crate) fn is_clean_state(&self) -> bool {
+    self.current_term.is_none() && self.last_log_index.is_none() && self.snapshots.is_empty()
   }
 }

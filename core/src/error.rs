@@ -1,10 +1,16 @@
+use nodecraft::resolver::AddressResolver;
+
 use crate::{
-  fsm::FinateStateMachine, options::OptionsError, storage::Storage, transport::Transport,
+  fsm::FinateStateMachine,
+  membership::MembershipError,
+  options::OptionsError,
+  storage::{LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
+  transport::Transport,
 };
 
 /// Raft errors.
-#[derive(Debug, thiserror::Error)]
-pub enum RaftError {
+#[derive(thiserror::Error)]
+pub enum RaftError<T: Transport> {
   /// Returned when an operation can't be completed on a
   /// leader node.
   #[error("ruraft: node is the leader")]
@@ -44,20 +50,54 @@ pub enum RaftError {
   #[error("ruraft: nothing new to snapshot")]
   NothingNewToSnapshot,
 
+  /// Returned when trying to create a snapshot, but the membership change has not been applied.
+  #[error("ruraft: cannot take snapshot now, wait until the membership entry at {committed} has been applied (have applied {snapshot})")]
+  CantTakeSnapshot { committed: u64, snapshot: u64 },
+
   /// Returned when an operation is attempted
   /// that's not supported by the current protocol version.
   #[error("ruraft: operation not supported with current protocol version")]
   UpsupportedProtocol,
 
-  /// Returned when attempt is made to bootstrap a
-  /// cluster that already has state present.
-  #[error("ruraft: bootstrap only works on new clusters")]
-  CantBootstrap,
+  /// Returned when an operation is attempted to send/receive from closed channel
+  #[error("ruraft: {0}")]
+  Closed(&'static str),
+
+  /// Returned when long running task exits unexpectedly.
+  #[error("ruraft: {0}")]
+  Exit(&'static str),
 
   /// Returned when the leader is rejecting
   /// client requests because it is attempting to transfer leadership.
   #[error("ruraft: leadership transfer in progress")]
   LeadershipTransferInProgress,
+
+  /// Returned when there are some snapshots in the storage,
+  /// but none of them can be loaded.
+  #[error("ruraft: failed to load any existing snapshots")]
+  FailedLoadSnapshot,
+
+  /// Returned when failing to load current term.
+  #[error("ruraft: failed to load current term")]
+  FailedLoadCurrentTerm,
+
+  /// Returned when failing to load last log index.
+  #[error("ruraft: failed to load last log index")]
+  FailedLoadLastLogIndex,
+
+  /// Returned when failing to load last log entry.
+  #[error("ruraft: failed to load last log")]
+  FailedLoadLastLog,
+
+  /// Returned when there is invalid membership.
+  #[error("ruraft: {0}")]
+  Membership(#[from] MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>),
+}
+
+impl<T: Transport> core::fmt::Debug for RaftError<T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    core::fmt::Display::fmt(self, f)
+  }
 }
 
 /// Errors implementation for the Raft.
@@ -70,7 +110,7 @@ where
 {
   /// Raft errors.
   #[error("ruraft: {0}")]
-  Raft(#[from] RaftError),
+  Raft(#[from] RaftError<T>),
 
   #[error("ruraft: invalid options: {0}")]
   InvalidOptions(#[from] OptionsError),
@@ -106,9 +146,35 @@ where
     Self::Storage(err)
   }
 
+  /// Construct an error from the stable storage error.
+  #[inline]
+  pub fn stable(err: <S::Stable as StableStorage>::Error) -> Self {
+    Self::Storage(<S::Error as StorageError>::stable(err))
+  }
+
+  /// Construct an error from the snapshot storage error.
+  #[inline]
+  pub fn snapshot(err: <S::Snapshot as SnapshotStorage>::Error) -> Self {
+    Self::Storage(<S::Error as StorageError>::snapshot(err))
+  }
+
+  /// Construct an error from the log storage error.
+  #[inline]
+  pub fn log(err: <S::Log as LogStorage>::Error) -> Self {
+    Self::Storage(<S::Error as StorageError>::log(err))
+  }
+
   /// Construct an error from the finate state machine error.
   #[inline]
   pub const fn fsm(err: F::Error) -> Self {
     Self::FinateStateMachine(err)
+  }
+
+  /// Construct an error from the membership error.
+  #[inline]
+  pub const fn membership(
+    err: MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Self {
+    Self::Raft(RaftError::Membership(err))
   }
 }

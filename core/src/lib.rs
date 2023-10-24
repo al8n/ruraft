@@ -1,8 +1,9 @@
 //!
-#![forbid(unsafe_code)]
-// #![deny(missing_docs)]
+#![allow(clippy::type_complexity)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
+// #![deny(missing_docs)]
+#![forbid(unsafe_code)]
 
 /// Errors implementation for the Raft.
 pub mod error;
@@ -11,6 +12,8 @@ pub mod error;
 pub mod options;
 
 mod fsm;
+pub use fsm::*;
+
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;

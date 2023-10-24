@@ -5,21 +5,27 @@ use crate::{
   transport::{AppendEntriesRequest, AppendEntriesResponse, Request, Response},
 };
 
-use super::*;
+use super::{super::state::LastLog, *};
 use futures::{channel::oneshot, StreamExt};
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
-  F: FinateStateMachine<Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
+  >,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
-  pub(super) async fn run_follower(&self) {
+  pub(super) async fn run_follower(&self) -> Result<bool, ()> {
     let mut did_warn = false;
-    let leader = self.inner.leader.load();
-    let local = &self.inner.local;
+    let leader = self.leader.load();
+    let local = &self.local;
 
     match leader.as_ref() {
       Some(l) => {
@@ -30,27 +36,33 @@ where
       }
     }
 
-    let mut request_consumer = self.inner.transport.consumer();
-
-    while self.inner.role() == Role::Follower {
+    while self.state.role() == Role::Follower {
       // r.mainThreadSaturation.sleeping()
 
       futures::select! {
-        req = request_consumer.next().fuse() => {
+        rpc = self.rpc.recv().fuse() => {
           // r.mainThreadSaturation.working()
-          if let Some(req) = req {
-            let (tx, req) = req.into_components();
-            self.handle_request(tx, req).await;
+          match rpc {
+            Ok(rpc) => {
+              let (tx, req) = rpc.into_components();
+              self.handle_request(tx, req).await;
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.follower", err=%e, "failed to receive rpc request, producer has been dropped unexpectedly, shutting down...");
+              return Err(());
+            }
           }
         }
         _ = self.shutdown_rx.recv().fuse() => {
           tracing::info!(target = "ruraft.follower", "follower received shutdown signal, gracefully shutdown...");
           // Clear the leader to prevent forwarding
-          self.inner.set_leader(None);
-          return;
+          self.leader.set(None);
+          return Ok(false);
         }
       }
     }
+
+    Ok(true)
   }
 
   async fn handle_request(
@@ -96,7 +108,7 @@ where
       self.local.addr().clone(),
     )
     .with_term(self.current_term())
-    .with_last_log(self.last_index().await);
+    .with_last_log(self.last_index());
 
     // Ignore an older term
     if req.term < self.current_term() {
@@ -119,11 +131,13 @@ where
     }
 
     // Save the current leader
-    self.set_leader(Some(Node::new(req.header.id.clone(), req.header.addr)));
+    self
+      .leader
+      .set(Some(Node::new(req.header.id.clone(), req.header.addr)));
 
     // Verify the last log entry
     if req.prev_log_entry > 0 {
-      let last = self.last_entry().await;
+      let last = self.last_entry();
       let mut prev_log_term = 0;
       if req.prev_log_entry == last.index {
         prev_log_term = last.term;
@@ -160,7 +174,7 @@ where
       let _start = Instant::now();
 
       // Delete any conflicting entries, skip any duplicates
-      let last_log = self.inner.last_log().await;
+      let last_log = self.last_log();
 
       req.entries.sort_by(|a, b| a.index.cmp(&b.index));
 
@@ -186,10 +200,9 @@ where
               }
               if ent_idx <= self.memberships.latest().0 {
                 self
-                  .inner
                   .memberships
                   .latest
-                  .store(self.inner.memberships.committed().clone());
+                  .store(self.memberships.committed().clone());
               }
               pos = idx;
               break;
@@ -228,20 +241,18 @@ where
         }
 
         // Update the lastLog
-        self.set_last_log(last_log).await;
+        self.set_last_log(last_log);
       }
 
       // TODO: metrics
       #[cfg(feature = "metrics")]
-      {
-
-      }
+      {}
     }
 
     // Update the commit index
     if req.leader_commit > 0 && req.leader_commit > self.commit_index() {
       let _start = Instant::now();
-      let idx = req.leader_commit.min(self.last_index().await);
+      let idx = req.leader_commit.min(self.last_index());
       self.set_commit_index(idx);
       let latest = self.memberships.latest();
       if latest.0 <= idx {
@@ -252,9 +263,7 @@ where
 
       // TODO: metrics
       #[cfg(feature = "metrics")]
-      {
-
-      }
+      {}
     }
 
     // Everything went well, set success

@@ -14,6 +14,8 @@ use crate::{
 
 use super::{Address, Id};
 
+pub use async_channel::{RecvError, TryRecvError};
+
 /// A common sub-structure used to pass along protocol version and
 /// other information about the cluster.
 #[viewit::viewit(
@@ -662,6 +664,20 @@ impl<I: Id, A: Address> Stream for RpcConsumer<I, A> {
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
     <async_channel::Receiver<Rpc<I, A>> as Stream>::poll_next(self.project().rx, cx)
+  }
+}
+
+impl<I: Id, A: Address> RpcConsumer<I, A> {
+  /// Receives a [`Rpc`] from the consumer.
+  pub async fn recv(&self) -> Result<Rpc<I, A>, RecvError> {
+    self.rx.recv().await
+  }
+
+  /// Attempts to receive a [`Rpc`] from the consumer.
+  ///
+  /// If the consumer is empty, or empty and closed, this method returns an error
+  pub fn try_recv(&self) -> Result<Rpc<I, A>, TryRecvError> {
+    self.rx.try_recv()
   }
 }
 

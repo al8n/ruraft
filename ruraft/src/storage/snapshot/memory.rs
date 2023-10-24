@@ -63,7 +63,7 @@ where
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Membership<Self::Id, Self::Address>,
+    membership: Arc<Membership<Self::Id, Self::Address>>,
     membership_index: u64,
   ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send {
     async move {
@@ -266,7 +266,7 @@ pub(super) mod tests {
 
     // create a new sink
     let mut sink = snap
-      .create(SnapshotVersion::V1, 10, 3, Membership::default(), 2)
+      .create(SnapshotVersion::V1, 10, 3, Default::default(), 2)
       .await
       .unwrap();
 
@@ -308,7 +308,7 @@ pub(super) mod tests {
 
     // create a new sink
     let mut sink = snap
-      .create(SnapshotVersion::V1, 10, 3, Membership::default(), 2)
+      .create(SnapshotVersion::V1, 10, 3, Default::default(), 2)
       .await
       .unwrap();
 

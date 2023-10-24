@@ -1,4 +1,4 @@
-use std::{future::Future, ops::RangeBounds, time::Duration};
+use std::{future::Future, ops::RangeBounds, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use bytes::Bytes;
@@ -9,6 +9,22 @@ use crate::{
   transport::{Address, Id},
   utils::now_timestamp,
 };
+
+pub struct MembershipLog<I: Id, A: Address> {
+  pub membership: Arc<Membership<I, A>>,
+  pub index: u64,
+  pub term: u64,
+}
+
+impl<I: Id, A: Address> MembershipLog<I, A> {
+  pub(crate) fn new(term: u64, index: u64, membership: Arc<Membership<I, A>>) -> Self {
+    Self {
+      membership,
+      index,
+      term,
+    }
+  }
+}
 
 /// Describes various types of log entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,21 +60,8 @@ pub enum LogKind<I: Id, A: Address> {
   Barrier,
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Membership(Membership<I, A>),
+  Membership(Arc<Membership<I, A>>),
 }
-
-// impl<Id:> LogKind {
-//   /// Returns a string representation of the log type.
-//   #[inline]
-//   pub const fn as_string(&self) -> &'static str {
-//     match self {
-//       Self::User => "user",
-//       Self::Noop => "noop",
-//       Self::Barrier => "barrier",
-//       Self::Membership => "membership",
-//     }
-//   }
-// }
 
 /// Log entries are replicated to all members of the Raft cluster
 /// and form the heart of the replicated state machine.
@@ -161,6 +164,11 @@ impl<I: Id, A: Address> Log<I, A> {
   }
 
   #[inline]
+  pub(crate) const fn is_user(&self) -> bool {
+    matches!(self.kind, LogKind::User { .. })
+  }
+
+  #[inline]
   pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A>) -> Self {
     Self {
       index,
@@ -186,11 +194,11 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   /// The address type of node.
   type Address: Address;
 
-  /// Returns the first index written. 0 for no entries.
-  fn first_index(&self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
+  /// Returns the first index written. `None` or `Some(0)` means no entries.
+  fn first_index(&self) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
 
-  /// Returns the last index written. 0 for no entries.
-  fn last_index(&self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
+  /// Returns the last index written. `None` or `Some(0)` means no entries.
+  fn last_index(&self) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
 
   /// Gets a log entry at a given index.
   fn get_log(
@@ -248,10 +256,14 @@ pub(crate) trait LogStorageExt: LogStorage {
       let mut last_fail_idx = 0;
       let mut last_err: Option<Self::Error> = None;
       loop {
-        let first_idx = self
+        let Some(first_idx) = self
           .first_index()
           .await
-          .map_err(LogStorageExtError::LogStorageError)?;
+          .map_err(LogStorageExtError::LogStorageError)?
+        else {
+          return Err(LogStorageExtError::NotFound);
+        };
+
         if first_idx == 0 {
           return Err(LogStorageExtError::NotFound);
         }
