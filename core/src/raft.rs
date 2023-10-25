@@ -23,10 +23,13 @@ use crate::{
   raft::{fsm::FSMRunner, runner::RaftRunner, snapshot::SnapshotRunner},
   sidecar::{NoopSidecar, Sidecar},
   storage::{Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage},
-  transport::{Address, AddressResolver, Id, Transport}, FinateStateMachineResponse,
+  transport::{Address, AddressResolver, Id, Transport},
 };
 
+
 mod api;
+pub use api::*;
+
 mod fsm;
 mod runner;
 mod snapshot;
@@ -184,7 +187,7 @@ where
   follower_notify_tx: async_channel::Sender<()>,
 
   leader_transfer_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
-  verify_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+  verify_tx: async_channel::Sender<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
 
   leader_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
@@ -600,33 +603,3 @@ where
   }
 }
 
-/// Used for apply and can return the [`FinateStateMachine`] response.
-#[pin_project::pin_project]
-#[repr(transparent)]
-pub struct ApplyResponse<F: FinateStateMachine, S: Storage, T: Transport> {
-  #[pin]
-  rx: oneshot::Receiver<Result<F::Response, Error<F, S, T>>>,
-}
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future for ApplyResponse<F, S, T> {
-  type Output = Result<F::Response, Error<F, S, T>>;
-
-  fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-    let this = self.project();
-    match this.rx.poll(cx) {
-      std::task::Poll::Ready(rst) => {
-        match rst {
-          Ok(resp) => std::task::Poll::Ready(resp),
-          Err(_) => std::task::Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        }
-      },
-      std::task::Poll::Pending => std::task::Poll::Pending,
-    }
-  }
-}
-
-
-struct ApplyRequest<F: FinateStateMachine, E> {
-  log: LogKind<F::Id, F::Address>,
-  tx: oneshot::Sender<Result<F::Response, E>>
-}

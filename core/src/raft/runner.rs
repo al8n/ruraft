@@ -85,7 +85,7 @@ where
   >,
   pub(super) leader_transfer_rx:
     async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
-  pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+  pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
   pub(super) user_restore_rx: async_channel::Receiver<(
     <S::Snapshot as SnapshotStorage>::Source,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
