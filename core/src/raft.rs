@@ -23,9 +23,10 @@ use crate::{
   raft::{fsm::FSMRunner, runner::RaftRunner, snapshot::SnapshotRunner},
   sidecar::{NoopSidecar, Sidecar},
   storage::{Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage},
-  transport::{Address, AddressResolver, Id, Transport},
+  transport::{Address, AddressResolver, Id, Transport}, FinateStateMachineResponse,
 };
 
+mod api;
 mod fsm;
 mod runner;
 mod snapshot;
@@ -170,7 +171,7 @@ where
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
 
-  apply_tx: async_channel::Sender<()>,
+  apply_tx: async_channel::Sender<ApplyRequest<F, Error<F, S, T>>>,
 
   /// Used to request the leader to make membership changes.
   membership_change_tx:
@@ -253,51 +254,7 @@ where
     opts: Options,
   ) -> Result<Self, Error<F, S, T>> {
     Self::new_in(fsm, storage, transport, Some(sidecar), opts).await
-  }
-
-  /// Returns the current state of the reloadable fields in Raft's
-  /// options. This is useful for programs to discover the current state for
-  /// reporting to users or tests. It is safe to call concurrently. It is
-  /// intended for reporting and testing purposes primarily; external
-  /// synchronization would be required to safely use this in a read-modify-write
-  /// pattern for reloadable options.
-  pub fn reloadable_options(&self) -> ReloadableOptions {
-    self.reloadable_options.load(Ordering::Acquire)
-  }
-
-  /// Returns the current options in use by the Raft instance.
-  pub fn options(&self) -> Options {
-    self.options.apply(self.reloadable_options())
-  }
-
-  /// Updates the options of a running raft node. If the new
-  /// options is invalid an error is returned and no changes made to the
-  /// instance. All fields will be copied from rc into the new options, even
-  /// if they are zero valued.
-  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
-    rc.validate(self.options.leader_lease_timeout)?;
-    let _mu = self.reload_options_lock.lock().await;
-    let old = self.reloadable_options.swap(rc, Ordering::Release);
-
-    if rc.heartbeat_timeout() < old.heartbeat_timeout() {
-      // On leader, ensure replication loops running with a longer
-      // timeout than what we want now discover the change.
-      // On follower, update current timer to use the shorter new value.
-      let (lres, fres) = futures::future::join(
-        self.leader_notify_tx.send(()),
-        self.follower_notify_tx.send(()),
-      )
-      .await;
-      if let Err(e) = lres {
-        tracing::error!(target = "ruraft", err=%e, "failed to notify leader the options has been changed");
-      }
-
-      if let Err(e) = fres {
-        tracing::error!(target = "ruraft", err=%e, "failed to notify followers the options has been changed");
-      }
-    }
-    Ok(())
-  }
+  } 
 }
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
@@ -641,4 +598,35 @@ where
       }
     }
   }
+}
+
+/// Used for apply and can return the [`FinateStateMachine`] response.
+#[pin_project::pin_project]
+#[repr(transparent)]
+pub struct ApplyResponse<F: FinateStateMachine, S: Storage, T: Transport> {
+  #[pin]
+  rx: oneshot::Receiver<Result<F::Response, Error<F, S, T>>>,
+}
+
+impl<F: FinateStateMachine, S: Storage, T: Transport> Future for ApplyResponse<F, S, T> {
+  type Output = Result<F::Response, Error<F, S, T>>;
+
+  fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+    let this = self.project();
+    match this.rx.poll(cx) {
+      std::task::Poll::Ready(rst) => {
+        match rst {
+          Ok(resp) => std::task::Poll::Ready(resp),
+          Err(_) => std::task::Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
+        }
+      },
+      std::task::Poll::Pending => std::task::Poll::Pending,
+    }
+  }
+}
+
+
+struct ApplyRequest<F: FinateStateMachine, E> {
+  log: LogKind<F::Id, F::Address>,
+  tx: oneshot::Sender<Result<F::Response, E>>
 }

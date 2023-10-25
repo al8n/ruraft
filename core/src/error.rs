@@ -92,6 +92,10 @@ pub enum RaftError<T: Transport> {
   /// Returned when there is invalid membership.
   #[error("ruraft: {0}")]
   Membership(#[from] MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>),
+
+  /// Returned when the operation is canceled, e.g. apply, barrier and etc.
+  #[error("ruraft: operation canceled")]
+  Canceled,
 }
 
 impl<T: Transport> core::fmt::Debug for RaftError<T> {
