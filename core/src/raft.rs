@@ -26,7 +26,6 @@ use crate::{
   transport::{Address, AddressResolver, Id, Transport},
 };
 
-
 mod api;
 pub use api::*;
 
@@ -177,8 +176,7 @@ where
   apply_tx: async_channel::Sender<ApplyRequest<F, Error<F, S, T>>>,
 
   /// Used to request the leader to make membership changes.
-  membership_change_tx:
-    async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  membership_change_tx: async_channel::Sender<MembershipChangeRequest<F, S, T>>,
 
   /// Used to tell leader that `reloadbale_options` has changed
   leader_notify_tx: async_channel::Sender<()>,
@@ -186,7 +184,10 @@ where
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
 
-  leader_transfer_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+  leader_transfer_tx: async_channel::Sender<(
+    Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    oneshot::Sender<Result<(), Error<F, S, T>>>,
+  )>,
   verify_tx: async_channel::Sender<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
 
   leader_rx: async_channel::Receiver<bool>,
@@ -257,7 +258,7 @@ where
     opts: Options,
   ) -> Result<Self, Error<F, S, T>> {
     Self::new_in(fsm, storage, transport, Some(sidecar), opts).await
-  } 
+  }
 }
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
@@ -602,4 +603,3 @@ where
     }
   }
 }
-
