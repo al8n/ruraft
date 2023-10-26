@@ -10,6 +10,7 @@ use async_channel::Receiver;
 use futures::{channel::oneshot, Future, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use smallvec::SmallVec;
+use wg::AsyncWaitGroup;
 
 use crate::{
   error::{Error, RaftError},
@@ -94,6 +95,7 @@ where
   pub(super) snapshot_rx:
     Receiver<oneshot::Sender<Result<FSMSnapshot<F::Snapshot>, Error<F, S, T>>>>,
   pub(super) batching_apply: bool,
+  pub(super) wg: AsyncWaitGroup,
   pub(super) shutdown_rx: Receiver<()>,
 }
 
@@ -121,11 +123,12 @@ where
       snapshot_rx,
       shutdown_rx,
       batching_apply,
+      wg,
     } = self;
 
     let mut saturation = SaturationMetric::new("ruraft.fsm.runner", Duration::from_secs(1));
 
-    R::spawn_detach(async move {
+    super::spawn_local::<R, _>(wg.add(1), async move {
       let mut last_index = 0;
       let mut last_term = 0;
 

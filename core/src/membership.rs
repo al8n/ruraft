@@ -238,7 +238,7 @@ impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> 
 /// These entries are appended to the log during membership changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Membership<I: Id, A: Address> {
-  servers: IndexMap<I, (A, ServerSuffrage)>,
+  pub(crate) servers: IndexMap<I, (A, ServerSuffrage)>,
 }
 
 impl<I: Id, A: Address> Default for Membership<I, A> {

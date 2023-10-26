@@ -1128,8 +1128,8 @@ pub(super) struct MembershipChangeRequest<F: FinateStateMachine, S: Storage, T: 
 }
 
 pub(super) struct ApplyRequest<F: FinateStateMachine, E> {
-  log: LogKind<F::Id, F::Address>,
-  tx: oneshot::Sender<Result<F::Response, E>>,
+  pub(super) log: LogKind<F::Id, F::Address>,
+  pub(super) tx: oneshot::Sender<Result<F::Response, E>>,
 }
 
 macro_rules! resp {

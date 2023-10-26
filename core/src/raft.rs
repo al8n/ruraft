@@ -15,6 +15,7 @@ use async_lock::Mutex;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
 use metrics::atomics::AtomicU64;
+use wg::AsyncWaitGroup;
 
 use crate::{
   error::{Error, RaftError},
@@ -204,6 +205,7 @@ where
 
   leader_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
+  wg: AsyncWaitGroup,
 }
 
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
@@ -219,7 +221,7 @@ where
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
-  R: Runtime,
+  <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   /// Used to construct a new Raft node. It takes a options, as well
   /// as implementations of various traits that are required.
@@ -253,6 +255,7 @@ where
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
+  <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   /// Used to construct a new Raft node with sidecar. It takes a options, as well
   /// as implementations of various traits that are required.
@@ -272,7 +275,7 @@ where
     Self::new_in(fsm, storage, transport, Some(sidecar), opts).await
   }
 
-  /// `recover`` is used to manually force a new membership in order to
+  /// `recover` is used to manually force a new membership in order to
   /// recover from a loss of quorum where the current membership cannot be
   /// restored, such as when several servers die at the same time. This works by
   /// reading all the current state for this server, creating a snapshot with the
@@ -281,7 +284,7 @@ where
   /// insert any new entries, which could cause conflicts with other servers with
   /// different state.
   ///
-  /// WARNING! This operation implicitly commits all entries in the Raft log, so
+  /// **WARNING!** This operation implicitly commits all entries in the Raft log, so
   /// in general this is an extremely unsafe operation. If you've lost your other
   /// servers and are performing a manual recovery, then you've also lost the
   /// commit information, so this is likely the best you can do, but you should be
@@ -291,7 +294,7 @@ where
   /// Note the [`FinateStateMachine`] passed here is used for the snapshot operations and will be
   /// left in a state that should not be used by the application. Be sure to
   /// discard this [`FinateStateMachine`] and any associated state and provide a fresh one when
-  /// calling NewRaft later.
+  /// calling `new` or `with_sidecar` later.
   ///
   /// A typical way to recover the cluster is to shut down all servers and then
   /// run RecoverCluster on every server using an identical membership. When
@@ -380,7 +383,6 @@ where
       )
     })?
     else {
-      // This should never happen since we have a snapshot.
       return Err(Error::Raft(RaftError::FailedLoadLogIndex));
     };
 
@@ -439,7 +441,7 @@ where
     })?;
 
     // Compact the log so that we don't get bad interference from any
-    // configuration change log entries that might be there.
+    // membership change log entries that might be there.
     let first_log_index = match logs.first_index().await {
       Err(e) => {
         return Err(Error::storage(
@@ -447,7 +449,6 @@ where
         ));
       }
       Ok(None) => {
-        // This should never happen since we have a snapshot.
         return Err(Error::Raft(RaftError::FailedLoadLogIndex));
       }
       Ok(Some(index)) => index,
@@ -478,6 +479,7 @@ where
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
+  <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   async fn new_in(
     fsm: F,
@@ -626,6 +628,7 @@ where
       latest: ArcSwap::from(membership),
     });
     let options = Arc::new(opts);
+    let wg = AsyncWaitGroup::new();
 
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
@@ -639,7 +642,7 @@ where
       last_contact: last_contact.clone(),
       state: state.clone(),
       storage: storage.clone(),
-      transport,
+      transport: Arc::new(transport),
       sidecar: sidecar.clone(),
       shutdown_rx: shutdown_rx.clone(),
       fsm_mutate_tx: fsm_mutate_tx.clone(),
@@ -652,6 +655,7 @@ where
       leader_tx,
       verify_rx,
       user_restore_rx,
+      wg: wg.clone(),
       #[cfg(feature = "metrics")]
       saturation_metric: SaturationMetric::new("ruraft.runner", Duration::from_secs(1)),
     }
@@ -663,6 +667,7 @@ where
       mutate_rx: fsm_mutate_rx,
       snapshot_rx: fsm_snapshot_rx,
       batching_apply: opts.batch_apply,
+      wg: wg.clone(),
       shutdown_rx: shutdown_rx.clone(),
     }
     .spawn();
@@ -674,6 +679,7 @@ where
       committed_membership_tx,
       user_snapshot_rx,
       opts: reloadable_options.clone(),
+      wg: wg.clone(),
       shutdown_rx,
     }
     .spawn();
@@ -701,6 +707,7 @@ where
       leader_transfer_tx,
       verify_tx,
       leader_rx,
+      wg
     };
 
     Ok(this)
@@ -796,4 +803,12 @@ where
       }
     }
   }
+}
+
+
+pub(crate) fn spawn_local<R: Runtime, F: std::future::Future + Send + 'static>(wg: AsyncWaitGroup, f: F) {
+  R::spawn_detach(async move {
+    f.await;
+    wg.done();
+  });
 }

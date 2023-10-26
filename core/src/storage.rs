@@ -87,7 +87,7 @@ pub trait Storage: Send + Sync + 'static {
   type Address: Address;
 
   /// Stable storage
-  type Stable: StableStorage<Runtime = Self::Runtime>;
+  type Stable: StableStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// Snapshot storage
   type Snapshot: SnapshotStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
