@@ -21,6 +21,9 @@ use crate::{
 
 use super::fsm::FSMSnapshot;
 
+mod monitor;
+pub(crate) use monitor::*;
+
 pub(super) struct SnapshotRunner<F, S, T, R>
 where
   F: FinateStateMachine<
@@ -132,7 +135,14 @@ where
   }
 
   async fn take_snapshot(&self) -> Result<SnapshotId, Error<F, S, T>> {
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.snapshot.take_snapshot",
+      start.elapsed().as_millis() as f64
+    ));
 
     let (tx, rx) = oneshot::channel();
 
@@ -154,10 +164,10 @@ where
                   },
                 };
               }
-              Err(e) => return Err(Error::Raft(RaftError::Closed("finate state mechine snapshot request sender closed"))),
+              Err(_) => return Err(Error::Raft(RaftError::Closed("finate state mechine snapshot request sender closed"))),
             }
           }
-          Err(e) => return Err(Error::Raft(RaftError::Closed("finate state mechine snapshot receiver closed"))),
+          Err(_) => return Err(Error::Raft(RaftError::Closed("finate state mechine snapshot receiver closed"))),
         };
 
         // Make a request for the memberships and extract the committed info.
@@ -196,7 +206,8 @@ where
 
             // Create a new snapshot.
             tracing::info!(target = "ruraft.snapshot.runner", index = %snap.index, "starting snapshot up");
-            let start = Instant::now();
+            #[cfg(feature = "metrics")]
+            let create_start = Instant::now();
             let sink = match self.store.snapshot_store().create(
               Default::default(),
               snap.term,
@@ -209,16 +220,20 @@ where
                 return Err(Error::storage(<S::Error as StorageError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot"))));
               },
             };
-            // TODO: metrics
-            // metrics.MeasureSince([]string{"raft", "snapshot", "create"}, start)
+
+            #[cfg(feature = "metrics")]
+            metrics::histogram!("ruraft.snapshot.create", create_start.elapsed().as_millis() as f64);
 
             // Try to persist the snapshot
-            let start = Instant::now();
+            #[cfg(feature = "metrics")]
+            let persist_start = Instant::now();
             let id = sink.id();
             if let Err(e) = snap.snapshot.persist(sink).await {
               return Err(Error::fsm(<F::Error as FinateStateMachineError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot"))));
             }
-            // TODO: metrics metrics.MeasureSince([]string{"raft", "snapshot", "persist"}, start)
+
+            #[cfg(feature = "metrics")]
+            metrics::histogram!("ruraft.snapshot.persist", persist_start.elapsed().as_millis() as f64);
 
             // Update the last stable snapshot info.
             self.last.lock().snapshot = LastSnapshot::new(snap.term, snap.index);
@@ -307,7 +322,15 @@ where
   /// Takes the last inclusive index of a snapshot
   /// and trims the logs that are no longer needed.
   async fn compact_logs(&self, snap_idx: u64) -> Result<(), S::Error> {
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.snapshot.compact_logs",
+      start.elapsed().as_millis() as f64
+    ));
+
     let last_log = self.last.lock().log;
     self
       .compact_logs_with_trailing(snap_idx, last_log.index, self.trailing_logs())
@@ -317,8 +340,16 @@ where
   /// Removes all old logs from the store. This is used for
   /// MonotonicLogStores after restore. Callers should verify that the store
   /// implementation is monotonic prior to calling.
-  async fn remove_old_logs(&self) -> Result<(), S::Error> {
-    // TODO: metrics
+  pub(super) async fn remove_old_logs(&self) -> Result<(), S::Error> {
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.snapshot.remove_old_logs",
+      start.elapsed().as_millis() as f64
+    ));
+
     match self.store.log_store().last_index().await {
       Ok(None) | Ok(Some(0)) => Ok(()),
       Ok(Some(last_log_index)) => {

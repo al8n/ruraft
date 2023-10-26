@@ -81,9 +81,9 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: failed to load current term")]
   FailedLoadCurrentTerm,
 
-  /// Returned when failing to load last log index.
-  #[error("ruraft: failed to load last log index")]
-  FailedLoadLastLogIndex,
+  /// Returned when failing to load log index.
+  #[error("ruraft: failed to load log index")]
+  FailedLoadLogIndex,
 
   /// Returned when failing to load last log entry.
   #[error("ruraft: failed to load last log")]
@@ -92,6 +92,24 @@ pub enum RaftError<T: Transport> {
   /// Returned when there is invalid membership.
   #[error("ruraft: {0}")]
   Membership(#[from] MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>),
+
+  /// Returned when the operation is canceled because of the other sender half of the channel is closed, e.g. apply, barrier and etc.
+  #[error("ruraft: operation canceled, the sender half of the channel is closed")]
+  Canceled,
+
+  /// Returned when the leader transfer to self.
+  #[error("ruraft: leader transfer to self")]
+  TransferToSelf,
+
+  /// Returned when trying to recover a raft cluster but cannot find any existing state.
+  #[error(
+    "ruraft: refused to recover cluster with no initial state, this is probably an operator error"
+  )]
+  NoExistingState,
+
+  /// Returned when trying to recover a raft cluster but cannot restore any of the available snapshots.
+  #[error("ruraft: failed to restore any of the available snapshots")]
+  FailedRestoreSnapshots,
 }
 
 impl<T: Transport> core::fmt::Debug for RaftError<T> {
