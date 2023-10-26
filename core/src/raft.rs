@@ -173,6 +173,8 @@ where
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
 
+  fsm_mutate_tx: async_channel::Sender<fsm::FSMRequest<F, S, T>>,
+
   apply_tx: async_channel::Sender<ApplyRequest<F, Error<F, S, T>>>,
 
   /// Used to request the leader to make membership changes.
@@ -451,7 +453,7 @@ where
       transport,
       sidecar: sidecar.clone(),
       shutdown_rx: shutdown_rx.clone(),
-      fsm_mutate_tx,
+      fsm_mutate_tx: fsm_mutate_tx.clone(),
       leader_notify_rx,
       follower_notify_rx,
       apply_rx,
@@ -502,6 +504,7 @@ where
       apply_tx,
       user_snapshot_tx,
       user_restore_tx,
+      fsm_mutate_tx,
       leader_notify_tx,
       follower_notify_tx,
       leader_transfer_tx,

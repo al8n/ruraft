@@ -14,11 +14,11 @@ use nodecraft::{resolver::AddressResolver, Address, Id};
 use crate::{
   error::{Error, RaftError},
   membership::{Membership, MembershipChangeCommand},
-  options::{Options, ReloadableOptions},
+  options::{Options, ProtocolVersion, ReloadableOptions, SnapshotVersion},
   sidecar::Sidecar,
-  storage::{LogKind, SnapshotMeta, SnapshotStorage, Storage},
+  storage::{LogKind, SnapshotStorage, Storage},
   transport::Transport,
-  FinateStateMachine, FinateStateMachineResponse, Node, RaftCore, Role,
+  FinateStateMachine, Node, RaftCore, Role,
 };
 
 pub use futures::{FutureExt, StreamExt};
@@ -172,7 +172,7 @@ where
   /// See also [`barrier_timeout`].
   ///
   /// [`barrier_timeout`]: struct.RaftCore.html#method.barrier_timeout
-  pub async fn barrier(&self) -> Barrier<F, S, T> {
+  pub async fn barrier(&self) -> BarrierResponse<F, S, T> {
     self.barrier_in(None).await
   }
 
@@ -185,20 +185,24 @@ where
   /// See also [`barrier`].
   ///
   /// [`barrier`]: struct.RaftCore.html#method.barrier
-  pub async fn barrier_timeout(&self, timeout: Duration) -> Barrier<F, S, T> {
+  pub async fn barrier_timeout(&self, timeout: Duration) -> BarrierResponse<F, S, T> {
     self.barrier_in(Some(timeout)).await
   }
 
   /// Used to ensure this peer is still the leader. It may be used
   /// to prevent returning stale data from the FSM after the peer has lost
   /// leadership.
-  pub async fn verify_leader(&self) -> Verify<F, S, T> {
+  pub async fn verify_leader(&self) -> VerifyResponse<F, S, T> {
+    if let Err(e) = self.is_shutdown() {
+      return e;
+    }
+
     // TODO: metrics
 
     let (tx, rx) = oneshot::channel();
     match self.verify_tx.send(tx).await {
-      Ok(_) => Verify::ok(rx),
-      Err(_) => Verify::err(Error::Raft(RaftError::Shutdown)),
+      Ok(_) => VerifyResponse::ok(rx),
+      Err(_) => VerifyResponse::err(Error::Raft(RaftError::Shutdown)),
     }
   }
 
@@ -405,6 +409,8 @@ where
   /// instance. All fields will be copied from rc into the new options, even
   /// if they are zero valued.
   pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
+    self.is_shutdown_error()?;
+
     rc.validate(self.options.leader_lease_timeout)?;
     let _mu = self.reload_options_lock.lock().await;
     let old = self.reloadable_options.swap(rc, Ordering::Release);
@@ -448,18 +454,23 @@ where
   /// Used to manually force Raft to take a snapshot. Returns a future
   /// that can be used to block until complete, and that contains a function that
   /// can be used to open the snapshot.
+  ///
+  /// See also [`snapshot_timeout`].
+  ///
+  /// [`snapshot_timeout`]: struct.RaftCore.html#method.snapshot_timeout
   pub async fn snapshot(&self) -> SnapshotResponse<F, S, T> {
-    let (tx, rx) = oneshot::channel();
+    self.snapshot_in(None).await
+  }
 
-    match self.user_snapshot_tx.send(tx).await {
-      Ok(_) => SnapshotResponse::ok(rx),
-      Err(e) => {
-        tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
-        SnapshotResponse::err(Error::Raft(RaftError::Closed(
-          "user snapshot channel closed",
-        )))
-      }
-    }
+  /// Used to manually force Raft to take a snapshot. Returns a future
+  /// that can be used to block until complete, and that contains a function that
+  /// can be used to open the snapshot. A timeout can be provided to limit the amount of time we wait.
+  ///
+  /// See also [`snapshot`].
+  ///
+  /// [`snapshot`]: struct.RaftCore.html#method.snapshot
+  pub async fn snapshot_timeout(&self, timeout: Duration) -> SnapshotResponse<F, S, T> {
+    self.snapshot_in(Some(timeout)).await
   }
 
   /// Used to manually force Raft to consume an external snapshot, such
@@ -551,8 +562,44 @@ where
 
   /// Return various internal stats. This
   /// should only be used for informative purposes or debugging.
-  pub async fn stats(&self) -> RaftStats {
-    todo!()
+  pub async fn stats(&self) -> RaftStats<T::Id, <T::Resolver as AddressResolver>::Address> {
+    let last_log = self.state.last_log();
+    let last_snapshot = self.state.last_snapshot();
+    let membership = self.membership();
+
+    let mut num_peers = 0;
+    let mut has_us = false;
+    for (id, (_, suffrage)) in membership.membership.iter() {
+      if suffrage.is_voter() {
+        if id.eq(self.local.id()) {
+          has_us = true;
+        } else {
+          num_peers += 1;
+        }
+      }
+
+      if !has_us {
+        num_peers = 0;
+      }
+    }
+
+    RaftStats {
+      last_log_index: last_log.index,
+      last_log_term: last_log.term,
+      last_snapshot_index: last_snapshot.index,
+      last_snapshot_term: last_snapshot.term,
+      latest_membership_index: membership.index,
+      latest_membership: membership.membership,
+      role: self.state.role(),
+      term: self.state.current_term(),
+      commit_index: self.state.commit_index(),
+      applied_index: self.state.last_applied(),
+      last_contact: self.last_contact(),
+      num_peers,
+      fsm_pending: self.fsm_mutate_tx.len() as u64,
+      snapshot_version: SnapshotVersion::V1,
+      protocol_version: ProtocolVersion::V1,
+    }
   }
 }
 
@@ -577,6 +624,10 @@ where
     extension: Option<Bytes>,
     timeout: Option<Duration>,
   ) -> ApplyResponse<F, S, T> {
+    if let Err(e) = self.is_shutdown() {
+      return e;
+    }
+
     // TODO: metrics
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
@@ -613,7 +664,11 @@ where
     }
   }
 
-  async fn barrier_in(&self, timeout: Option<Duration>) -> Barrier<F, S, T> {
+  async fn barrier_in(&self, timeout: Option<Duration>) -> BarrierResponse<F, S, T> {
+    if let Err(e) = self.is_shutdown() {
+      return e;
+    }
+
     // TODO: metrics
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
@@ -624,22 +679,22 @@ where
     if let Some(timeout) = timeout {
       futures::select! {
         _ = R::sleep(timeout).fuse() => {
-          Barrier::err(Error::Raft(RaftError::EnqueueTimeout))
+          BarrierResponse::err(Error::Raft(RaftError::EnqueueTimeout))
         }
         rst = self.apply_tx.send(req).fuse() => {
           if let Err(e) = rst {
             tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-            Barrier::err(Error::Raft(RaftError::Closed("apply channel closed")))
+            BarrierResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
           } else {
-            Barrier::ok(rx)
+            BarrierResponse::ok(rx)
           }
         },
       }
     } else if let Err(e) = self.apply_tx.send(req).await {
       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-      Barrier::err(Error::Raft(RaftError::Closed("apply channel closed")))
+      BarrierResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
     } else {
-      Barrier::ok(rx)
+      BarrierResponse::ok(rx)
     }
   }
 
@@ -648,6 +703,10 @@ where
     cmd: MembershipChangeCommand<T::Id, <T::Resolver as AddressResolver>::Address>,
     timeout: Option<Duration>,
   ) -> MembershipChangeResponse<F, S, T> {
+    if let Err(e) = self.is_shutdown() {
+      return e;
+    }
+
     // TODO: metrics
     let (tx, rx) = oneshot::channel();
     let req = MembershipChangeRequest { cmd, tx };
@@ -680,11 +739,48 @@ where
     }
   }
 
+  async fn snapshot_in(&self, timeout: Option<Duration>) -> SnapshotResponse<F, S, T> {
+    if let Err(e) = self.is_shutdown() {
+      return e;
+    }
+
+    let (tx, rx) = oneshot::channel();
+
+    match timeout {
+      Some(Duration::ZERO) | None => match self.user_snapshot_tx.send(tx).await {
+        Ok(_) => SnapshotResponse::ok(rx),
+        Err(e) => {
+          tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
+          SnapshotResponse::err(Error::Raft(RaftError::Closed(
+            "user snapshot channel closed",
+          )))
+        }
+      },
+      Some(timeout) => {
+        futures::select! {
+          _ = R::sleep(timeout).fuse() => {
+            tracing::error!(target = "ruraft", "failed to send snapshot request: user snapshot channel closed");
+            SnapshotResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+          }
+          rst = self.user_snapshot_tx.send(tx).fuse() => {
+            if let Err(e) = rst {
+              tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
+              return SnapshotResponse::err(Error::Raft(RaftError::Closed("user snapshot channel closed")));
+            }
+
+            SnapshotResponse::ok(rx)
+          },
+        }
+      }
+    }
+  }
+
   async fn restore_in(
     &self,
     source: <S::Snapshot as SnapshotStorage>::Source,
     timeout: Option<Duration>,
   ) -> Result<(), Error<F, S, T>> {
+    self.is_shutdown_error()?;
     // TODO: metrics
 
     let (tx, rx) = oneshot::channel();
@@ -703,6 +799,8 @@ where
           Ok(Err(e)) => Err(e),
           Err(_) => Err(Error::Raft(RaftError::Canceled)),
           Ok(Ok(_)) => {
+            self.is_shutdown_error()?;
+
             // Apply a no-op log entry. Waiting for this allows us to wait until the
             // followers have gotten the restore and replicated at least this new
             // entry, which shows that we've also faulted and installed the
@@ -747,6 +845,8 @@ where
               Ok(Err(e)) => Err(e),
               Err(_) => Err(Error::Raft(RaftError::Canceled)),
               Ok(Ok(_)) => {
+                self.is_shutdown_error()?;
+
                 // Apply a no-op log entry. Waiting for this allows us to wait until the
                 // followers have gotten the restore and replicated at least this new
                 // entry, which shows that we've also faulted and installed the
@@ -786,6 +886,10 @@ where
     &self,
     target: Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
   ) -> LeadershipTransferResponse<F, S, T> {
+    if let Err(e) = self.is_shutdown() {
+      return e;
+    }
+
     // TODO: metrics
     let (tx, rx) = oneshot::channel();
 
@@ -811,12 +915,134 @@ where
       }
     }
   }
+
+  fn is_shutdown<Future: Fut<F, S, T>>(&self) -> Result<(), Future> {
+    if self.shutdown.load(Ordering::Acquire) {
+      Err(Future::err(Error::Raft(RaftError::Shutdown)))
+    } else {
+      Ok(())
+    }
+  }
+
+  fn is_shutdown_error(&self) -> Result<(), Error<F, S, T>> {
+    if self.shutdown.load(Ordering::Acquire) {
+      Err(Error::Raft(RaftError::Shutdown))
+    } else {
+      Ok(())
+    }
+  }
 }
 
 /// The information about the current stats of the Raft node.
+#[viewit::viewit(vis_all = "", getters(vis_all = "pub"), setters(skip))]
 #[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RaftStats {}
+pub struct RaftStats<I: Id, A: Address> {
+  role: Role,
+  term: u64,
+  last_log_index: u64,
+  last_log_term: u64,
+  commit_index: u64,
+  applied_index: u64,
+  fsm_pending: u64,
+  last_snapshot_index: u64,
+  last_snapshot_term: u64,
+  protocol_version: ProtocolVersion,
+  snapshot_version: SnapshotVersion,
+  last_contact: Option<Instant>,
+  #[viewit(getter(
+    style = "ref",
+    result(
+      type = "&Membership<I, A>",
+      converter(style = "ref", fn = "AsRef::as_ref",),
+    )
+  ))]
+  latest_membership: Arc<Membership<I, A>>,
+  latest_membership_index: u64,
+  num_peers: u64,
+}
+
+#[cfg(feature = "serde")]
+impl<I: Id, A: Address> serde::Serialize for RaftStats<I, A>
+where
+  I: serde::Serialize,
+  A: serde::Serialize,
+{
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    struct InstantSerdeHelper {
+      role: Role,
+      val: Option<Instant>,
+    }
+
+    fn serde_instant<S: serde::ser::Serializer>(
+      val: &InstantSerdeHelper,
+      serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+      if val.role == Role::Leader {
+        return humantime_serde::option::serialize(&Some(Duration::ZERO), serializer);
+      }
+
+      match val.val {
+        Some(val) => {
+          let val = val.elapsed();
+          humantime_serde::option::serialize(&Some(val), serializer)
+        }
+        None => serializer.serialize_none(),
+      }
+    }
+
+    #[derive(serde::Serialize)]
+    struct RaftStatsHelper<I: Id, A: Address> {
+      role: Role,
+      term: u64,
+      last_log_index: u64,
+      last_log_term: u64,
+      commit_index: u64,
+      applied_index: u64,
+      fsm_pending: u64,
+      last_snapshot_index: u64,
+      last_snapshot_term: u64,
+      protocol_version: ProtocolVersion,
+      snapshot_version: SnapshotVersion,
+      #[serde(serialize_with = "serde_instant")]
+      last_contact: InstantSerdeHelper,
+      latest_membership: Arc<Membership<I, A>>,
+      latest_membership_index: u64,
+      num_peers: u64,
+    }
+
+    impl<I: Id, A: Address> From<&RaftStats<I, A>> for RaftStatsHelper<I, A> {
+      fn from(value: &RaftStats<I, A>) -> Self {
+        let instant = InstantSerdeHelper {
+          role: value.role,
+          val: value.last_contact,
+        };
+
+        Self {
+          role: value.role,
+          term: value.term,
+          last_log_index: value.last_log_index,
+          last_log_term: value.last_log_term,
+          commit_index: value.commit_index,
+          applied_index: value.applied_index,
+          fsm_pending: value.fsm_pending,
+          last_snapshot_index: value.last_snapshot_index,
+          last_snapshot_term: value.last_snapshot_term,
+          protocol_version: value.protocol_version,
+          snapshot_version: value.snapshot_version,
+          last_contact: instant,
+          latest_membership: value.latest_membership.clone(),
+          latest_membership_index: value.latest_membership_index,
+          num_peers: value.num_peers,
+        }
+      }
+    }
+
+    RaftStatsHelper::from(self).serialize(serializer)
+  }
+}
 
 /// The latest membership in use by Raft, the membership may not yet be committed.
 #[derive(PartialEq, Eq)]
@@ -864,7 +1090,8 @@ impl Stream for LeaderWatcher {
 
 trait Fut<F: FinateStateMachine, S: Storage, T: Transport> {
   type Ok;
-  fn err(err: ErrorFuture<F, S, T>) -> Self;
+
+  fn err(err: Error<F, S, T>) -> Self;
 
   fn ok(rst: Self::Ok) -> Self;
 }
@@ -888,253 +1115,75 @@ pub(super) struct MembershipChangeRequest<F: FinateStateMachine, S: Storage, T: 
   pub(super) tx: oneshot::Sender<Result<u64, Error<F, S, T>>>,
 }
 
-/// A future that can be used to wait on the result of a membership change. The index is the output of the future.
-#[pin_project::pin_project]
-#[repr(transparent)]
-pub struct MembershipChangeResponse<F: FinateStateMachine, S: Storage, T: Transport>(
-  #[pin] Either<ErrorFuture<F, S, T>, oneshot::Receiver<Result<u64, Error<F, S, T>>>>,
-);
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> MembershipChangeResponse<F, S, T> {
-  fn err(err: Error<F, S, T>) -> Self {
-    Self(Either::Left(ErrorFuture { error: Some(err) }))
-  }
-
-  fn ok(rst: oneshot::Receiver<Result<u64, Error<F, S, T>>>) -> Self {
-    Self(Either::Right(rst))
-  }
-}
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future for MembershipChangeResponse<F, S, T> {
-  type Output = Result<u64, Error<F, S, T>>;
-
-  fn poll(
-    self: std::pin::Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<Self::Output> {
-    let this = self.project();
-    match this.0.as_pin_mut() {
-      Either::Left(fut) => fut.poll(cx).map(Err),
-      Either::Right(fut) => match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(rst),
-        Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        Poll::Pending => Poll::Pending,
-      },
-    }
-  }
-}
-
-/// Used for apply and can return the [`FinateStateMachine`] response.
-#[pin_project::pin_project]
-#[repr(transparent)]
-pub struct ApplyResponse<F: FinateStateMachine, S: Storage, T: Transport>(
-  #[pin] Either<ErrorFuture<F, S, T>, oneshot::Receiver<Result<F::Response, Error<F, S, T>>>>,
-);
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> ApplyResponse<F, S, T> {
-  fn err(err: Error<F, S, T>) -> Self {
-    Self(Either::Left(ErrorFuture { error: Some(err) }))
-  }
-
-  fn ok(rst: oneshot::Receiver<Result<F::Response, Error<F, S, T>>>) -> Self {
-    Self(Either::Right(rst))
-  }
-}
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future for ApplyResponse<F, S, T> {
-  type Output = Result<F::Response, Error<F, S, T>>;
-
-  fn poll(
-    self: std::pin::Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<Self::Output> {
-    let this = self.project();
-    match this.0.as_pin_mut() {
-      Either::Left(fut) => fut.poll(cx).map(Err),
-      Either::Right(fut) => match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(rst),
-        Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        Poll::Pending => Poll::Pending,
-      },
-    }
-  }
-}
-
 pub(super) struct ApplyRequest<F: FinateStateMachine, E> {
   log: LogKind<F::Id, F::Address>,
   tx: oneshot::Sender<Result<F::Response, E>>,
 }
 
-/// Used for barrier and can return the [`FinateStateMachine`] response.
-#[pin_project::pin_project]
-#[repr(transparent)]
-pub struct Barrier<F: FinateStateMachine, S: Storage, T: Transport>(
-  #[pin] Either<ErrorFuture<F, S, T>, oneshot::Receiver<Result<F::Response, Error<F, S, T>>>>,
-);
+macro_rules! resp {
+  ($(
+    $(#[$attr:meta])*
+    $name:ident<$ty: ty>
+  ), + $(,)?) => {
+    $(
+      #[pin_project::pin_project]
+      #[repr(transparent)]
+      pub struct $name<F: FinateStateMachine, S: Storage, T: Transport>(
+        #[pin] Either<ErrorFuture<F, S, T>, oneshot::Receiver<Result<$ty, Error<F, S, T>>>>,
+      );
 
-impl<F: FinateStateMachine, S: Storage, T: Transport> Barrier<F, S, T> {
-  fn err(err: Error<F, S, T>) -> Self {
-    Self(Either::Left(ErrorFuture { error: Some(err) }))
-  }
+      impl<F: FinateStateMachine, S: Storage, T: Transport> Fut<F, S, T> for $name<F, S, T> {
+        type Ok = oneshot::Receiver<Result<$ty, Error<F, S, T>>>;
 
-  fn ok(rst: oneshot::Receiver<Result<F::Response, Error<F, S, T>>>) -> Self {
-    Self(Either::Right(rst))
-  }
+        fn err(err: Error<F, S, T>) -> Self {
+          Self(Either::Left(ErrorFuture { error: Some(err) }))
+        }
+
+        fn ok(rst: oneshot::Receiver<Result<$ty, Error<F, S, T>>>) -> Self {
+          Self(Either::Right(rst))
+        }
+      }
+
+      impl<F: FinateStateMachine, S: Storage, T: Transport> Future for $name<F, S, T> {
+        type Output = Result<$ty, Error<F, S, T>>;
+
+        fn poll(
+          self: std::pin::Pin<&mut Self>,
+          cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+          let this = self.project();
+          match this.0.as_pin_mut() {
+            Either::Left(fut) => fut.poll(cx).map(Err),
+            Either::Right(fut) => match fut.poll(cx) {
+              Poll::Ready(Ok(rst)) => Poll::Ready(rst),
+              Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
+              Poll::Pending => Poll::Pending,
+            },
+          }
+        }
+      }
+    )*
+  };
 }
 
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future for Barrier<F, S, T> {
-  type Output = Result<u64, Error<F, S, T>>;
-
-  fn poll(
-    self: std::pin::Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<Self::Output> {
-    let this = self.project();
-
-    match this.0.as_pin_mut() {
-      Either::Left(fut) => fut.poll(cx).map(Err),
-      Either::Right(fut) => match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(rst.map(|resp| resp.index())),
-        Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        Poll::Pending => Poll::Pending,
-      },
-    }
-  }
-}
-
-#[pin_project::pin_project]
-pub struct Verify<F: FinateStateMachine, S: Storage, T: Transport>(
-  #[pin] Either<ErrorFuture<F, S, T>, oneshot::Receiver<Result<bool, Error<F, S, T>>>>,
-);
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Verify<F, S, T> {
-  fn err(err: Error<F, S, T>) -> Self {
-    Self(Either::Left(ErrorFuture { error: Some(err) }))
-  }
-
-  fn ok(rst: oneshot::Receiver<Result<bool, Error<F, S, T>>>) -> Self {
-    Self(Either::Right(rst))
-  }
-}
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future for Verify<F, S, T> {
-  type Output = Result<bool, Error<F, S, T>>;
-
-  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    let this = self.project();
-    match this.0.as_pin_mut() {
-      Either::Left(fut) => fut.poll(cx).map(Err),
-      Either::Right(fut) => match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(rst),
-        Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        Poll::Pending => Poll::Pending,
-      },
-    }
-  }
-}
-
-/// A future that can be used to wait on the result of a snapshot. The returned future whose output is a [`SnapshotSource`](crate::storage::SnapshotSource).
-#[pin_project::pin_project]
-pub struct SnapshotResponse<F: FinateStateMachine, S: Storage, T: Transport>(
-  #[pin]
-  Either<
-    ErrorFuture<F, S, T>,
-    oneshot::Receiver<
-      Result<
-        Box<
-          dyn Future<
-              Output = Result<
-                <S::Snapshot as SnapshotStorage>::Source,
-                <S::Snapshot as SnapshotStorage>::Error,
-              >,
-            > + Send,
-        >,
-        Error<F, S, T>,
+resp!(
+  #[doc = "A future that can be used to wait on the result of a membership change. The index is the output of the future."]
+  MembershipChangeResponse<u64>,
+  #[doc = "Used for apply and can return the [`FinateStateMachine`] response."]
+  ApplyResponse<F::Response>,
+  #[doc = "Used for barrier and can return the [`FinateStateMachine`] response."]
+  BarrierResponse<F::Response>,
+  #[doc = "Used to verify the current node is still the leader. This is to prevent a stale read."]
+  VerifyResponse<bool>,
+  #[doc = "A future that can be used to wait on the result of a snapshot. The returned future whose output is a [`SnapshotSource`](crate::storage::SnapshotSource)."]
+  SnapshotResponse<Box<
+    dyn Future<
+      Output = Result<
+        <S::Snapshot as SnapshotStorage>::Source,
+        <S::Snapshot as SnapshotStorage>::Error,
       >,
-    >,
-  >,
+    > + Send,
+  >>,
+  #[doc = "A future that can be used to wait on the result of a leadership transfer response."]
+  LeadershipTransferResponse<()>,
 );
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> SnapshotResponse<F, S, T> {
-  fn err(err: Error<F, S, T>) -> Self {
-    Self(Either::Left(ErrorFuture { error: Some(err) }))
-  }
-
-  fn ok(
-    rst: oneshot::Receiver<
-      Result<
-        Box<
-          dyn Future<
-              Output = Result<
-                <S::Snapshot as SnapshotStorage>::Source,
-                <S::Snapshot as SnapshotStorage>::Error,
-              >,
-            > + Send,
-        >,
-        Error<F, S, T>,
-      >,
-    >,
-  ) -> Self {
-    Self(Either::Right(rst))
-  }
-}
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future for SnapshotResponse<F, S, T> {
-  type Output = Result<
-    Box<
-      dyn Future<
-          Output = Result<
-            <S::Snapshot as SnapshotStorage>::Source,
-            <S::Snapshot as SnapshotStorage>::Error,
-          >,
-        > + Send,
-    >,
-    Error<F, S, T>,
-  >;
-
-  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    let this = self.project();
-    match this.0.as_pin_mut() {
-      Either::Left(fut) => fut.poll(cx).map(Err),
-      Either::Right(fut) => match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(rst),
-        Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        Poll::Pending => Poll::Pending,
-      },
-    }
-  }
-}
-
-/// A future that can be used to wait on the result of a leadership transfer response.
-#[pin_project::pin_project]
-pub struct LeadershipTransferResponse<F: FinateStateMachine, S: Storage, T: Transport>(
-  #[pin] Either<ErrorFuture<F, S, T>, oneshot::Receiver<Result<(), Error<F, S, T>>>>,
-);
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> LeadershipTransferResponse<F, S, T> {
-  fn err(err: Error<F, S, T>) -> Self {
-    Self(Either::Left(ErrorFuture { error: Some(err) }))
-  }
-
-  fn ok(rx: oneshot::Receiver<Result<(), Error<F, S, T>>>) -> Self {
-    Self(Either::Right(rx))
-  }
-}
-
-impl<F: FinateStateMachine, S: Storage, T: Transport> Future
-  for LeadershipTransferResponse<F, S, T>
-{
-  type Output = Result<(), Error<F, S, T>>;
-
-  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    let this = self.project();
-    match this.0.as_pin_mut() {
-      Either::Left(fut) => fut.poll(cx).map(Err),
-      Either::Right(fut) => match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(rst),
-        Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
-        Poll::Pending => Poll::Pending,
-      },
-    }
-  }
-}
