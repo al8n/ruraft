@@ -237,174 +237,160 @@ where
   type Source = FileSnapshotSource<Self::Id, Self::Address, R>;
   type Options = FileSnapshotStorageOptions;
 
-  fn new(opts: Self::Options) -> impl Future<Output = Result<Self, Self::Error>> + Send
+  async fn new(opts: Self::Options) -> Result<Self, Self::Error>
   where
     Self: Sized,
   {
-    async move {
-      let FileSnapshotStorageOptions { base, retain } = opts;
-      if retain < 1 {
-        return Err(FileSnapshotStorageError::InvalidRetain);
-      }
-
-      // Ensure our path exists
-      let path = base.join(SNAPSHOT_PATH);
-      make_dir_all(&path, 0o755).map_err(FileSnapshotStorageError::PathNotAccessible)?;
-
-      // Setup the store
-      let this = Self {
-        path: Arc::new(path),
-        retain,
-        no_sync: false,
-        _runtime: std::marker::PhantomData,
-      };
-
-      this
-        .check_permissions()
-        .map(|_| this)
-        .map_err(FileSnapshotStorageError::NoPermissions)
+    let FileSnapshotStorageOptions { base, retain } = opts;
+    if retain < 1 {
+      return Err(FileSnapshotStorageError::InvalidRetain);
     }
+
+    // Ensure our path exists
+    let path = base.join(SNAPSHOT_PATH);
+    make_dir_all(&path, 0o755).map_err(FileSnapshotStorageError::PathNotAccessible)?;
+
+    // Setup the store
+    let this = Self {
+      path: Arc::new(path),
+      retain,
+      no_sync: false,
+      _runtime: std::marker::PhantomData,
+    };
+
+    this
+      .check_permissions()
+      .map(|_| this)
+      .map_err(FileSnapshotStorageError::NoPermissions)
   }
 
-  fn create(
+  async fn create(
     &self,
     version: SnapshotVersion,
     index: u64,
     term: u64,
     membership: Arc<Membership<Self::Id, Self::Address>>,
     membership_index: u64,
-  ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send {
-    async move {
-      // Create a new path
-      let id = SnapshotId::new(index, term);
-      let path = self.path.join(id.temp_name());
+  ) -> Result<Self::Sink, Self::Error> {
+    // Create a new path
+    let id = SnapshotId::new(index, term);
+    let path = self.path.join(id.temp_name());
 
-      tracing::info!(
-        target = "ruraft.snapshot.file",
-        "creating new snapshot at {}",
-        path.display()
-      );
+    tracing::info!(
+      target = "ruraft.snapshot.file",
+      "creating new snapshot at {}",
+      path.display()
+    );
 
-      // make the directory
-      make_dir_all(&path, 0o755).map_err(|e| {
+    // make the directory
+    make_dir_all(&path, 0o755).map_err(|e| {
       tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to make snapshot directly");
       e
     })?;
 
-      // Create the sink
-      let meta = FileSnapshotMeta {
-        meta: SnapshotMeta {
-          version,
-          timestamp: id.timestamp(),
-          index,
-          term,
-          membership,
-          membership_index,
-          size: 0,
-        },
-        crc: 0,
-      };
+    // Create the sink
+    let meta = FileSnapshotMeta {
+      meta: SnapshotMeta {
+        version,
+        timestamp: id.timestamp(),
+        index,
+        term,
+        membership,
+        membership_index,
+        size: 0,
+      },
+      crc: 0,
+    };
 
-      FileSnapshotSink::<Self::Id, Self::Address, Self::Runtime>::write_meta(
-        &path,
-        &meta,
-        self.no_sync,
-      )
-      .map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to write metadata");
-        e
-      })?;
+    FileSnapshotSink::<Self::Id, Self::Address, Self::Runtime>::write_meta(
+      &path,
+      &meta,
+      self.no_sync,
+    )
+    .map_err(|e| {
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to write metadata");
+      e
+    })?;
 
-      // Open the state file
+    // Open the state file
 
-      let state_path = path.join(STATE_FILE_PATH.as_path());
-      let state_file = File::create(state_path).map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to create state file");
-        e
-      })?;
-      let w = BufWriter::new(ChecksumableWriter::new(
-        state_file,
-        crc32fast::Hasher::new(),
-      ));
+    let state_path = path.join(STATE_FILE_PATH.as_path());
+    let state_file = File::create(state_path).map_err(|e| {
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to create state file");
+      e
+    })?;
+    let w = BufWriter::new(ChecksumableWriter::new(
+      state_file,
+      crc32fast::Hasher::new(),
+    ));
 
-      let this = FileSnapshotSink {
-        store: self.clone(),
-        dir: path,
-        no_sync: self.no_sync,
-        file: w,
-        meta,
-        closed: false,
-      };
+    let this = FileSnapshotSink {
+      store: self.clone(),
+      dir: path,
+      no_sync: self.no_sync,
+      file: w,
+      meta,
+      closed: false,
+    };
 
-      Ok(this)
-    }
+    Ok(this)
   }
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
-  fn list(
-    &self,
-  ) -> impl Future<Output = Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error>> + Send
-  {
-    async move {
-      // Get the eligible snapshots
-      let mut snapshots = self.get_snapshots().map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to get snapshots");
-        e
-      })?;
+  async fn list(&self) -> Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error> {
+    // Get the eligible snapshots
+    let mut snapshots = self.get_snapshots().map_err(|e| {
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to get snapshots");
+      e
+    })?;
 
-      if snapshots.len() > self.retain {
-        snapshots.drain(self.retain..);
-      }
-      Ok(snapshots)
+    if snapshots.len() > self.retain {
+      snapshots.drain(self.retain..);
     }
+    Ok(snapshots)
   }
 
   /// Open takes a snapshot ID and provides a ReadCloser.
-  fn open(
-    &self,
-    id: &SnapshotId,
-  ) -> impl Future<Output = Result<Self::Source, Self::Error>> + Send {
-    async move {
-      let filename = id.name();
-      // Get the metadata
-      let meta = self.read_meta(filename.as_str()).map_err(|e| {
+  async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
+    let filename = id.name();
+    // Get the metadata
+    let meta = self.read_meta(filename.as_str()).map_err(|e| {
       tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to get meta data to open snapshot");
       e
     })?;
 
-      // Open the state file
-      let state_path = self.path.join(&filename).join(STATE_FILE_PATH.as_path());
+    // Open the state file
+    let state_path = self.path.join(&filename).join(STATE_FILE_PATH.as_path());
 
-      let mut state_file = File::open(state_path).map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to open state file");
-        e
-      })?;
+    let mut state_file = File::open(state_path).map_err(|e| {
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to open state file");
+      e
+    })?;
 
-      // Create a CRC64 hasher
-      let mut data = Vec::new();
-      state_file.read_to_end(&mut data)?;
-      let mut hash = crc32fast::Hasher::new();
-      hash.write(&data);
-      let crc = hash.finish();
+    // Create a CRC64 hasher
+    let mut data = Vec::new();
+    state_file.read_to_end(&mut data)?;
+    let mut hash = crc32fast::Hasher::new();
+    hash.write(&data);
+    let crc = hash.finish();
 
-      if meta.crc != crc {
-        tracing::error!(target = "ruraft.snapshot.file", stored = %meta.crc, computed = %crc, "checksum mismatch");
-        return Err(FileSnapshotStorageError::ChecksumMismatch);
-      }
-
-      // Seek to the start
-      state_file.seek(io::SeekFrom::Start(0)).map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err = %e, "state file seek failed");
-        e
-      })?;
-
-      Ok(FileSnapshotSource {
-        meta,
-        file: BufReader::new(state_file),
-        _runtime: std::marker::PhantomData,
-      })
+    if meta.crc != crc {
+      tracing::error!(target = "ruraft.snapshot.file", stored = %meta.crc, computed = %crc, "checksum mismatch");
+      return Err(FileSnapshotStorageError::ChecksumMismatch);
     }
+
+    // Seek to the start
+    state_file.seek(io::SeekFrom::Start(0)).map_err(|e| {
+      tracing::error!(target = "ruraft.snapshot.file", err = %e, "state file seek failed");
+      e
+    })?;
+
+    Ok(FileSnapshotSource {
+      meta,
+      file: BufReader::new(state_file),
+      _runtime: std::marker::PhantomData,
+    })
   }
 }
 

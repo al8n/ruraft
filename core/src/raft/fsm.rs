@@ -1,6 +1,9 @@
 #![allow(clippy::type_complexity)]
 
-use std::{sync::Arc, time::Instant};
+use std::{
+  sync::Arc,
+  time::{Duration, Instant},
+};
 
 use agnostic::Runtime;
 use async_channel::Receiver;
@@ -17,6 +20,11 @@ use crate::{
   storage::{Log, LogKind, SnapshotId, SnapshotSource, SnapshotStorage, Storage},
   transport::Transport,
 };
+
+#[cfg(feature = "metrics")]
+use crate::metrics::SaturationMetric;
+
+use super::snapshot::{CountingReader, SnapshotRestoreMonitor};
 
 pub(crate) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
   pub(crate) term: u64,
@@ -115,16 +123,19 @@ where
       batching_apply,
     } = self;
 
-    // TODO: saturation metrics
+    let mut saturation = SaturationMetric::new("ruraft.fsm.runner", Duration::from_secs(1));
 
     R::spawn_detach(async move {
       let mut last_index = 0;
       let mut last_term = 0;
 
       loop {
+        saturation.sleeping();
+
         futures::select! {
           req = mutate_rx.recv().fuse() => {
-            // TODO: stauration metrics
+            saturation.working();
+
             match req {
               Ok(FSMRequest::AdHoc(reqs)) => {
                 let mut last_batch_index = 0;
@@ -194,7 +205,7 @@ where
             }
           }
           tx = snapshot_rx.recv().fuse() => {
-            // TODO: stauration metrics
+            saturation.working();
             match tx {
               Ok(tx) => {
                 // Is there something to snapshot?
@@ -206,9 +217,12 @@ where
                 }
 
                 // Start a snapshot
-                let _start = Instant::now();
+                let start = Instant::now();
                 match fsm.snapshot().await {
                   Ok(snapshot) => {
+                    #[cfg(feature = "metrics")]
+                    metrics::histogram!("ruraft.fsm.snapshot", start.elapsed().as_millis() as f64);
+
                     let resp = FSMSnapshot {
                       term: last_term,
                       index: last_index,
@@ -220,6 +234,9 @@ where
                     }
                   },
                   Err(e) => {
+                    #[cfg(feature = "metrics")]
+                    metrics::histogram!("ruraft.fsm.snapshot", start.elapsed().as_millis() as f64);
+
                     if tx.send(Err(Error::fsm(e))).is_err() {
                       tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine snapshot response, receiver closed");
                     }
@@ -248,10 +265,28 @@ where
   ) -> Result<(), F::Error> {
     let start = Instant::now();
 
-    fsm.restore(source).await?;
+    let cr = CountingReader::from(source);
+    let ctr = cr.ctr();
+    let monitor = SnapshotRestoreMonitor::<R>::new(ctr, snapshot_size, false);
+    match fsm.restore(cr).await {
+      Ok(_) => {
+        #[cfg(feature = "metrics")]
+        {
+          metrics::histogram!("ruraft.fsm.restore", start.elapsed().as_millis() as f64);
 
-    // TODO: metrics
-    Ok(())
+          metrics::gauge!(
+            "ruraft.fsm.last_restore_duration",
+            start.elapsed().as_millis() as f64
+          );
+        }
+        monitor.stop_and_wait().await;
+        Ok(())
+      }
+      Err(e) => {
+        monitor.stop_and_wait().await;
+        Err(e)
+      }
+    }
   }
 
   async fn apply_batch(
@@ -287,8 +322,9 @@ where
       })
     });
 
-    if logs.size_hint().0 > 0 {
-      let _start = Instant::now();
+    let len = logs.size_hint().0;
+    if len > 0 {
+      let start = Instant::now();
       match fsm.apply_batch(logs).await {
         Ok(resps) => {
           // Ensure we get the expected responses
@@ -296,7 +332,13 @@ where
             panic!("ruraft: finate state machine apply batch response length mismatch, expected {}, got {}", should_send, resps.len());
           }
 
-          // TODO: metrics
+          #[cfg(feature = "metrics")]
+          {
+            metrics::histogram!("raft.fsm.apply_batch", start.elapsed().as_millis() as f64);
+
+            metrics::counter!("raft.fsm.apply_batch_num", len as u64);
+          }
+
           if tx.send(Ok(FSMResponse::more(resps))).is_err() {
             tracing::error!(
               target = "ruraft.fsm.runner",
@@ -305,7 +347,13 @@ where
           }
         }
         Err(e) => {
-          // TODO: metrics
+          #[cfg(feature = "metrics")]
+          {
+            metrics::histogram!("raft.fsm.apply_batch", start.elapsed().as_millis() as f64);
+
+            metrics::counter!("raft.fsm.apply_batch_num", len as u64);
+          }
+
           if tx.send(Err(Error::fsm(e))).is_err() {
             tracing::error!(
               target = "ruraft.fsm.runner",
@@ -334,7 +382,7 @@ where
     // Apply the log if a command or config change
     match log.kind {
       LogKind::User { data, extension } => {
-        let _start = Instant::now();
+        let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {
             index: log.index,
@@ -342,7 +390,10 @@ where
             kind: FinateStateMachineLogKind::Log { data, extension },
           })
           .await;
-        // TODO: metrics
+
+        #[cfg(feature = "metrics")]
+        metrics::histogram!("ruraft.fsm.apply", start.elapsed().as_millis() as f64);
+
         if tx
           .send(resp.map(FSMResponse::one).map_err(Error::fsm))
           .is_err()
@@ -354,6 +405,7 @@ where
         }
       }
       LogKind::Membership(membership) => {
+        let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {
             index: log.index,
@@ -361,7 +413,9 @@ where
             kind: FinateStateMachineLogKind::Membership(membership),
           })
           .await;
-        // TODO: metrics
+        #[cfg(feature = "metrics")]
+        metrics::histogram!("ruraft.fsm.apply", start.elapsed().as_millis() as f64);
+
         if tx
           .send(resp.map(FSMResponse::one).map_err(Error::fsm))
           .is_err()

@@ -318,269 +318,235 @@ where
     &self.resolver
   }
 
-  fn new(
-    resolver: Self::Resolver,
-    opts: Self::Options,
-  ) -> impl Future<Output = Result<Self, Self::Error>> + Send {
-    async move {
-      let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
-      let advertise_addr = if let Some(addr) = opts.advertise_addr {
-        addr
-      } else {
-        tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
-        resolver
-          .resolve(opts.header.addr())
-          .await
-          .map_err(<Self::Error as TransportError>::resolver)?
-      };
-      let auto_port = advertise_addr.port() == 0;
-
-      let ln = <S::Listener as Listener>::bind(advertise_addr)
+  async fn new(resolver: Self::Resolver, opts: Self::Options) -> Result<Self, Self::Error> {
+    let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
+    let advertise_addr = if let Some(addr) = opts.advertise_addr {
+      addr
+    } else {
+      tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
+      resolver
+        .resolve(opts.header.addr())
         .await
-        .map_err(|e| {
-          tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
-          Error::IO(e)
-        })?;
+        .map_err(<Self::Error as TransportError>::resolver)?
+    };
+    let auto_port = advertise_addr.port() == 0;
 
-      let advertise_addr = if auto_port {
-        let addr = ln.local_addr()?;
-        tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
-        addr
+    let ln = <S::Listener as Listener>::bind(advertise_addr)
+      .await
+      .map_err(|e| {
+        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
+        Error::IO(e)
+      })?;
+
+    let advertise_addr = if auto_port {
+      let addr = ln.local_addr()?;
+      tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
+      addr
+    } else {
+      advertise_addr
+    };
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let wg = AsyncWaitGroup::from(1);
+    let (producer, consumer) = rpc::<Self::Id, <Self::Resolver as AddressResolver>::Address>();
+    let request_handler = RequestHandler {
+      ln,
+      local_header: opts.header.clone(),
+      producer,
+      shutdown: shutdown.clone(),
+      shutdown_rx,
+      wg: wg.clone(),
+    };
+    <Self::Runtime as Runtime>::spawn_detach(RequestHandler::<
+      I,
+      <Self::Resolver as AddressResolver>::Address,
+      S,
+    >::run::<Self::Resolver, Self::Wire>(
+      request_handler
+    ));
+
+    Ok(Self {
+      shutdown,
+      shutdown_tx,
+      local_header: opts.header,
+      advertise_addr,
+      resolver,
+      consumer,
+      conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
+      conn_size: AtomicUsize::new(0),
+      protocol_version: opts.protocol_version,
+      wg,
+      max_pool: opts.max_pool,
+      max_inflight_requests: if opts.max_inflight_requests == 0 {
+        DEFAULT_MAX_INFLIGHT_REQUESTS
       } else {
-        advertise_addr
-      };
-
-      let shutdown = Arc::new(AtomicBool::new(false));
-      let wg = AsyncWaitGroup::from(1);
-      let (producer, consumer) = rpc::<Self::Id, <Self::Resolver as AddressResolver>::Address>();
-      let request_handler = RequestHandler {
-        ln,
-        local_header: opts.header.clone(),
-        producer,
-        shutdown: shutdown.clone(),
-        shutdown_rx,
-        wg: wg.clone(),
-      };
-      <Self::Runtime as Runtime>::spawn_detach(RequestHandler::<
-        I,
-        <Self::Resolver as AddressResolver>::Address,
-        S,
-      >::run::<Self::Resolver, Self::Wire>(
-        request_handler
-      ));
-
-      Ok(Self {
-        shutdown,
-        shutdown_tx,
-        local_header: opts.header,
-        advertise_addr,
-        resolver,
-        consumer,
-        conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
-        conn_size: AtomicUsize::new(0),
-        protocol_version: opts.protocol_version,
-        wg,
-        max_pool: opts.max_pool,
-        max_inflight_requests: if opts.max_inflight_requests == 0 {
-          DEFAULT_MAX_INFLIGHT_REQUESTS
-        } else {
-          opts.max_inflight_requests
-        },
-        timeout: opts.timeout,
-        _w: std::marker::PhantomData,
-      })
-    }
+        opts.max_inflight_requests
+      },
+      timeout: opts.timeout,
+      _w: std::marker::PhantomData,
+    })
   }
 
-  fn append_entries(
+  async fn append_entries(
     &self,
     req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> impl Future<
-    Output = Result<
-      AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-      Self::Error,
-    >,
-  > + Send {
-    async move {
-      let header_addr = req.header().addr().clone();
-      let addr = self
-        .resolver
-        .resolve(&header_addr)
-        .await
-        .map_err(<Self::Error as TransportError>::resolver)?;
-      let req = Request::append_entries(req);
-      let mut conn = BufReader::new(self.send(addr, req).await?);
-      let resp = <Self::Wire as Wire>::decode_response(&mut conn)
-        .await
-        .map_err(<Self::Error as TransportError>::wire)?;
-      match resp {
-        Response::Error(err) => Err(Error::Remote(err.error)),
-        Response::AppendEntries(resp) => {
-          self.return_conn(conn.into_inner(), header_addr).await;
-          Ok(resp)
-        }
-        kind => Err(Error::UnexpectedResponse {
-          expected: "AppendEntries",
-          actual: kind.description(),
-        }),
+  ) -> Result<
+    AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+    Self::Error,
+  > {
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::append_entries(req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::AppendEntries(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
+        Ok(resp)
       }
+      kind => Err(Error::UnexpectedResponse {
+        expected: "AppendEntries",
+        actual: kind.description(),
+      }),
     }
   }
 
-  fn vote(
+  async fn vote(
     &self,
     req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> impl Future<
-    Output = Result<
-      VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-      Self::Error,
-    >,
-  > + Send {
-    async move {
-      let header_addr = req.header().addr().clone();
-      let addr = self
-        .resolver
-        .resolve(&header_addr)
-        .await
-        .map_err(<Self::Error as TransportError>::resolver)?;
-      let req = Request::vote(req);
-      let mut conn = BufReader::new(self.send(addr, req).await?);
-      let resp = <Self::Wire as Wire>::decode_response(&mut conn)
-        .await
-        .map_err(<Self::Error as TransportError>::wire)?;
-      match resp {
-        Response::Error(err) => Err(Error::Remote(err.error)),
-        Response::Vote(resp) => {
-          self.return_conn(conn.into_inner(), header_addr).await;
-          Ok(resp)
-        }
-        kind => Err(Error::UnexpectedResponse {
-          expected: "Vote",
-          actual: kind.description(),
-        }),
+  ) -> Result<VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error> {
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::vote(req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::Vote(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
+        Ok(resp)
       }
+      kind => Err(Error::UnexpectedResponse {
+        expected: "Vote",
+        actual: kind.description(),
+      }),
     }
   }
 
-  fn install_snapshot(
+  async fn install_snapshot(
     &self,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     source: impl AsyncRead + Send,
-  ) -> impl Future<
-    Output = Result<
-      InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-      Self::Error,
-    >,
-  > + Send {
-    async move {
-      let header_addr = req.header().addr().clone();
-      let addr = self
-        .resolver
-        .resolve(&header_addr)
-        .await
-        .map_err(<Self::Error as TransportError>::resolver)?;
-      let req = Request::install_snapshot(req);
-      let conn = self.send(addr, req).await?;
-      let mut w = BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, conn);
-      futures::io::copy(source, &mut w).await?;
-      let mut conn = BufReader::new(w.into_inner());
-      let resp = <Self::Wire as Wire>::decode_response(&mut conn)
-        .await
-        .map_err(<Self::Error as TransportError>::wire)?;
-      match resp {
-        Response::Error(err) => Err(Error::Remote(err.error)),
-        Response::InstallSnapshot(resp) => {
-          self.return_conn(conn.into_inner(), header_addr).await;
-          Ok(resp)
-        }
-        kind => Err(Error::UnexpectedResponse {
-          expected: "InstallSnapshot",
-          actual: kind.description(),
-        }),
+  ) -> Result<
+    InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+    Self::Error,
+  > {
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::install_snapshot(req);
+    let conn = self.send(addr, req).await?;
+    let mut w = BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, conn);
+    futures::io::copy(source, &mut w).await?;
+    let mut conn = BufReader::new(w.into_inner());
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::InstallSnapshot(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
+        Ok(resp)
       }
+      kind => Err(Error::UnexpectedResponse {
+        expected: "InstallSnapshot",
+        actual: kind.description(),
+      }),
     }
   }
 
-  fn timeout_now(
+  async fn timeout_now(
     &self,
     req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> impl Future<
-    Output = Result<
-      TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-      Self::Error,
-    >,
-  > + Send {
-    async move {
-      let header_addr = req.header().addr().clone();
-      let addr = self
-        .resolver
-        .resolve(&header_addr)
-        .await
-        .map_err(<Self::Error as TransportError>::resolver)?;
-      let req = Request::timeout_now(req);
-      let mut conn = BufReader::new(self.send(addr, req).await?);
-      let resp = <Self::Wire as Wire>::decode_response(&mut conn)
-        .await
-        .map_err(<Self::Error as TransportError>::wire)?;
-      match resp {
-        Response::Error(err) => Err(Error::Remote(err.error)),
-        Response::TimeoutNow(resp) => {
-          self.return_conn(conn.into_inner(), header_addr).await;
-          Ok(resp)
-        }
-        kind => Err(Error::UnexpectedResponse {
-          expected: "TimeoutNow",
-          actual: kind.description(),
-        }),
+  ) -> Result<TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>
+  {
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::timeout_now(req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::TimeoutNow(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
+        Ok(resp)
       }
+      kind => Err(Error::UnexpectedResponse {
+        expected: "TimeoutNow",
+        actual: kind.description(),
+      }),
     }
   }
 
-  fn heartbeat(
+  async fn heartbeat(
     &self,
     req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> impl Future<
-    Output = Result<
-      HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-      Self::Error,
-    >,
-  > + Send {
-    async move {
-      let header_addr = req.header().addr().clone();
-      let addr = self
-        .resolver
-        .resolve(&header_addr)
-        .await
-        .map_err(<Self::Error as TransportError>::resolver)?;
-      let req = Request::heartbeat(req);
-      let mut conn = BufReader::new(self.send(addr, req).await?);
-      let resp = <Self::Wire as Wire>::decode_response(&mut conn)
-        .await
-        .map_err(<Self::Error as TransportError>::wire)?;
-      match resp {
-        Response::Error(err) => Err(Error::Remote(err.error)),
-        Response::Heartbeat(resp) => {
-          self.return_conn(conn.into_inner(), header_addr).await;
-          Ok(resp)
-        }
-        kind => Err(Error::UnexpectedResponse {
-          expected: "Heartbeat",
-          actual: kind.description(),
-        }),
+  ) -> Result<HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>
+  {
+    let header_addr = req.header().addr().clone();
+    let addr = self
+      .resolver
+      .resolve(&header_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+    let req = Request::heartbeat(req);
+    let mut conn = BufReader::new(self.send(addr, req).await?);
+    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+      .await
+      .map_err(<Self::Error as TransportError>::wire)?;
+    match resp {
+      Response::Error(err) => Err(Error::Remote(err.error)),
+      Response::Heartbeat(resp) => {
+        self.return_conn(conn.into_inner(), header_addr).await;
+        Ok(resp)
       }
+      kind => Err(Error::UnexpectedResponse {
+        expected: "Heartbeat",
+        actual: kind.description(),
+      }),
     }
   }
 
-  fn shutdown(&self) -> impl Future<Output = Result<(), Self::Error>> + Send {
-    async move {
-      if self.shutdown.load(Ordering::Acquire) {
-        return Ok(());
-      }
-      self.shutdown.store(true, Ordering::Release);
-      self.shutdown_tx.close();
-      self.wg.wait().await;
-      Ok(())
+  async fn shutdown(&self) -> Result<(), Self::Error> {
+    if self.shutdown.load(Ordering::Acquire) {
+      return Ok(());
     }
+    self.shutdown.store(true, Ordering::Release);
+    self.shutdown_tx.close();
+    self.wg.wait().await;
+    Ok(())
   }
 }
 
@@ -619,7 +585,7 @@ where
     // Get a connection
     let mut conn = {
       let mut pool = self.conn_pool.lock().await;
-      match pool.remove(&req.header().addr()) {
+      match pool.remove(req.header().addr()) {
         Some(conn) => {
           self.conn_size.fetch_sub(1, Ordering::Release);
           conn
@@ -670,8 +636,8 @@ struct RequestHandler<I: Id, A: Address, S: StreamLayer> {
 
 impl<I, A, S> RequestHandler<I, A, S>
 where
-  I: Id + Send + 'static,
-  A: Address + Send + 'static,
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
   S: StreamLayer,
 {
   async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(self)
@@ -763,25 +729,44 @@ where
     // measuring the time to get the first byte separately because the heartbeat conn will hang out here
     // for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
 
-    let _decode_start = Instant::now();
+    #[cfg(feature = "metrics")]
+    let decode_start = Instant::now();
     // Get the request meta
     let req = <W as Wire>::decode_request(&mut r)
       .await
       .map_err(Error::Wire)?;
+    #[cfg(feature = "metrics")]
+    {
+      let decode_label = req.decode_label();
+      metrics::histogram!(decode_label, decode_start.elapsed().as_millis() as f64);
+    }
 
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    let process_start = Instant::now();
+    #[cfg(feature = "metrics")]
+    let enqueue_label = req.enqueue_label();
+    #[cfg(feature = "metrics")]
+    let respond_label = req.respond_label();
 
-    let _process_start = Instant::now();
     let resp = if let Request::Heartbeat(_) = &req {
       Response::heartbeat(HeartbeatResponse::new(local_header))
     } else {
       let (tx, handle) = Rpc::<I, A>::new(req);
       futures::select! {
         res = producer.send(tx).fuse() => {
+          #[cfg(feature = "metrics")]
+          metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
+
           match res {
             Ok(_) => {
+              #[cfg(feature = "metrics")]
+              let resp_wait_start = Instant::now();
+
               futures::select! {
                 res = handle.fuse() => {
+                  #[cfg(feature = "metrics")]
+                  metrics::histogram!(respond_label, resp_wait_start.elapsed().as_millis() as f64);
+
                   match res {
                     Ok(resp) => resp,
                     Err(e) => {
@@ -811,6 +796,51 @@ where
       tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
       Error::IO(e)
     })
+  }
+}
+
+#[cfg(feature = "metrics")]
+trait RequestMetricsExt {
+  fn enqueue_label(&self) -> &'static str;
+
+  fn respond_label(&self) -> &'static str;
+
+  fn decode_label(&self) -> &'static str;
+}
+
+#[cfg(feature = "metrics")]
+impl<I: Id, A: Address> RequestMetricsExt for Request<I, A> {
+  fn enqueue_label(&self) -> &'static str {
+    match self {
+      Self::AppendEntries(_) => "ruraft.net.rpc.enqueue.append_entries",
+      Self::Vote(_) => "ruraft.net.rpc.enqueue.vote",
+      Self::InstallSnapshot(_) => "ruraft.net.rpc.enqueue.install_snapshot",
+      Self::TimeoutNow(_) => "ruraft.net.rpc.enqueue.timeout_now",
+      Self::Heartbeat(_) => "ruraft.net.rpc.enqueue.heartbeat",
+      _ => unreachable!(),
+    }
+  }
+
+  fn respond_label(&self) -> &'static str {
+    match self {
+      Self::AppendEntries(_) => "ruraft.net.rpc.respond.append_entries",
+      Self::Vote(_) => "ruraft.net.rpc.respond.vote",
+      Self::InstallSnapshot(_) => "ruraft.net.rpc.respond.install_snapshot",
+      Self::TimeoutNow(_) => "ruraft.net.rpc.respond.timeout_now",
+      Self::Heartbeat(_) => "ruraft.net.rpc.respond.heartbeat",
+      _ => unreachable!(),
+    }
+  }
+
+  fn decode_label(&self) -> &'static str {
+    match self {
+      Self::AppendEntries(_) => "ruraft.net.rpc.decode.append_entries",
+      Self::Vote(_) => "ruraft.net.rpc.decode.vote",
+      Self::InstallSnapshot(_) => "ruraft.net.rpc.decode.install_snapshot",
+      Self::TimeoutNow(_) => "ruraft.net.rpc.decode.timeout_now",
+      Self::Heartbeat(_) => "ruraft.net.rpc.decode.heartbeat",
+      _ => unreachable!(),
+    }
   }
 }
 

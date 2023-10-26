@@ -22,6 +22,9 @@ use crate::{
   FinateStateMachine, Node, Role, State,
 };
 
+#[cfg(feature = "metrics")]
+use crate::metrics::SaturationMetric;
+
 mod candidate;
 mod follower;
 mod leader;
@@ -92,6 +95,9 @@ where
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
   pub(super) leader_tx: async_channel::Sender<bool>,
+
+  #[cfg(feature = "metrics")]
+  pub(super) saturation_metric: SaturationMetric,
 }
 
 impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
@@ -129,7 +135,7 @@ where
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
-  pub(super) fn spawn(self) {
+  pub(super) fn spawn(mut self) {
     R::spawn_detach(async move {
       loop {
         futures::select! {

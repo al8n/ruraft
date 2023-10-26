@@ -204,7 +204,7 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   fn get_log(
     &self,
     index: u64,
-  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Log<Self::Id, Self::Address>, Self::Error>> + Send;
 
   /// Stores a log entry
   fn store_log(
@@ -279,8 +279,7 @@ pub(crate) trait LogStorageExt: LogStorage {
         }
 
         match self.get_log(first_idx).await {
-          Ok(Some(log)) => return Ok(log),
-          Ok(None) => return Err(LogStorageExtError::NotFound),
+          Ok(log) => return Ok(log),
           Err(err) => {
             // We failed, keep trying to see if there is a new firstIndex
             last_fail_idx = first_idx;

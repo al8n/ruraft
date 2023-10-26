@@ -17,7 +17,7 @@ serde = ["dep:serde", "humantime-serde", "ruraft-core/serde"]
 # enable DNS node address resolver
 dns = ["agnostic/dns", "nodecraft/dns"]
 
-metrics = ["ruraft-core/metrics"]
+metrics = ["ruraft-core/metrics", "dep:metrics"]
 
 test = ["ruraft-core/test", "tempfile"]
 
@@ -37,6 +37,8 @@ wg = { workspace = true }
 
 humantime-serde = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+
+metrics = { workspace = true, optional = true }
 
 # test features related dependencies
 tempfile = { version = "3", optional = true }

@@ -22,7 +22,7 @@ where
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
-  pub(super) async fn run_follower(&self) -> Result<bool, ()> {
+  pub(super) async fn run_follower(&mut self) -> Result<bool, ()> {
     let mut did_warn = false;
     let leader = self.leader.load();
     let local = &self.local;
@@ -37,11 +37,14 @@ where
     }
 
     while self.state.role() == Role::Follower {
-      // r.mainThreadSaturation.sleeping()
+      #[cfg(feature = "metrics")]
+      self.saturation_metric.sleeping();
 
       futures::select! {
         rpc = self.rpc.recv().fuse() => {
-          // r.mainThreadSaturation.working()
+          #[cfg(feature = "metrics")]
+          self.saturation_metric.working();
+
           match rpc {
             Ok(rpc) => {
               let (tx, req) = rpc.into_components();
@@ -138,13 +141,11 @@ where
     // Verify the last log entry
     if req.prev_log_entry > 0 {
       let last = self.last_entry();
-      let mut prev_log_term = 0;
-      if req.prev_log_entry == last.index {
-        prev_log_term = last.term;
+      let prev_log_term = if req.prev_log_entry == last.index {
+        last.term
       } else {
         match self.storage.log_store().get_log(req.prev_log_entry).await {
-          Ok(Some(prev_log)) => prev_log_term = prev_log.term,
-          Ok(None) => {}
+          Ok(prev_log) => prev_log.term,
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
             resp.no_retry_backoff = true;
@@ -152,7 +153,7 @@ where
             return;
           }
         }
-      }
+      };
 
       if req.prev_log_term != prev_log_term {
         tracing::warn!(
@@ -171,7 +172,8 @@ where
 
     // Process any new entries
     if !req.entries.is_empty() {
-      let _start = Instant::now();
+      #[cfg(feature = "metrics")]
+      let start = Instant::now();
 
       // Delete any conflicting entries, skip any duplicates
       let last_log = self.last_log();
@@ -189,7 +191,7 @@ where
         }
 
         match ls.get_log(ent_idx).await {
-          Ok(Some(stored_entry)) => {
+          Ok(stored_entry) => {
             if entry.term != stored_entry.term {
               tracing::warn!(target = "ruraft.follower", from=%ent_idx, to=%last_log.index, "clearing log suffix");
               if let Err(e) = ls.remove_range(ent_idx..=last_log.index).await {
@@ -207,11 +209,6 @@ where
               pos = idx;
               break;
             }
-          }
-          Ok(None) => {
-            tracing::warn!(target = "ruraft.follower", index=%ent_idx, err="no entry match the index", "failed to get log entry");
-            respond!(tx.send(resp));
-            return;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%e, "failed to get log entry");
@@ -244,14 +241,17 @@ where
         self.set_last_log(last_log);
       }
 
-      // TODO: metrics
       #[cfg(feature = "metrics")]
-      {}
+      metrics::histogram!(
+        "ruraft.follower.append_entries",
+        start.elapsed().as_millis() as f64
+      );
     }
 
     // Update the commit index
     if req.leader_commit > 0 && req.leader_commit > self.commit_index() {
-      let _start = Instant::now();
+      #[cfg(feature = "metrics")]
+      let start = Instant::now();
       let idx = req.leader_commit.min(self.last_index());
       self.set_commit_index(idx);
       let latest = self.memberships.latest();
@@ -261,9 +261,11 @@ where
 
       self.process_logs(idx, None).await;
 
-      // TODO: metrics
       #[cfg(feature = "metrics")]
-      {}
+      metrics::histogram!(
+        "ruraft.follower.commit_index",
+        start.elapsed().as_millis() as f64
+      );
     }
 
     // Everything went well, set success

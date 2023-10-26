@@ -28,6 +28,9 @@ pub mod transport;
 /// utils functions or structs
 pub mod utils;
 
+#[cfg(feature = "metrics")]
+mod metrics;
+
 mod commitment;
 
 /// All unit test fns are exported in the `tests` module.

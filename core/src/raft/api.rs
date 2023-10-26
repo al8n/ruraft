@@ -197,7 +197,8 @@ where
       return e;
     }
 
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter!("ruraft.verify_leader");
 
     let (tx, rx) = oneshot::channel();
     match self.verify_tx.send(tx).await {
@@ -628,7 +629,9 @@ where
       return e;
     }
 
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter!("ruraft.apply");
+
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
       log: LogKind::User {
@@ -669,7 +672,9 @@ where
       return e;
     }
 
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter!("ruraft.barrier");
+
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
       log: LogKind::Barrier,
@@ -707,7 +712,9 @@ where
       return e;
     }
 
-    // TODO: metrics
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter!("ruraft.membership_change");
+
     let (tx, rx) = oneshot::channel();
     let req = MembershipChangeRequest { cmd, tx };
 
@@ -743,6 +750,9 @@ where
     if let Err(e) = self.is_shutdown() {
       return e;
     }
+
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter!("ruraft.snapshot");
 
     let (tx, rx) = oneshot::channel();
 
@@ -781,7 +791,9 @@ where
     timeout: Option<Duration>,
   ) -> Result<(), Error<F, S, T>> {
     self.is_shutdown_error()?;
-    // TODO: metrics
+
+    #[cfg(feature = "metrics")]
+    metrics::increment_counter!("ruraft.restore");
 
     let (tx, rx) = oneshot::channel();
 

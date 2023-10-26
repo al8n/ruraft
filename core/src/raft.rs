@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   future::Future,
   net::SocketAddr,
   sync::{
@@ -22,9 +23,16 @@ use crate::{
   options::{Options, ReloadableOptions},
   raft::{fsm::FSMRunner, runner::RaftRunner, snapshot::SnapshotRunner},
   sidecar::{NoopSidecar, Sidecar},
-  storage::{Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage},
+  storage::{
+    Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
+  },
   transport::{Address, AddressResolver, Id, Transport},
+  FinateStateMachineError, FinateStateMachineLog, FinateStateMachineLogKind,
+  FinateStateMachineSnapshot,
 };
+
+#[cfg(feature = "metrics")]
+use crate::metrics::SaturationMetric;
 
 mod api;
 pub use api::*;
@@ -35,6 +43,8 @@ mod snapshot;
 mod state;
 
 pub use state::*;
+
+use self::snapshot::{CountingReader, SnapshotRestoreMonitor};
 
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
@@ -261,6 +271,197 @@ where
   ) -> Result<Self, Error<F, S, T>> {
     Self::new_in(fsm, storage, transport, Some(sidecar), opts).await
   }
+
+  /// `recover`` is used to manually force a new membership in order to
+  /// recover from a loss of quorum where the current membership cannot be
+  /// restored, such as when several servers die at the same time. This works by
+  /// reading all the current state for this server, creating a snapshot with the
+  /// supplied membership, and then truncating the Raft log. This is the only
+  /// safe way to force a given membership without actually altering the log to
+  /// insert any new entries, which could cause conflicts with other servers with
+  /// different state.
+  ///
+  /// WARNING! This operation implicitly commits all entries in the Raft log, so
+  /// in general this is an extremely unsafe operation. If you've lost your other
+  /// servers and are performing a manual recovery, then you've also lost the
+  /// commit information, so this is likely the best you can do, but you should be
+  /// aware that calling this can cause Raft log entries that were in the process
+  /// of being replicated but not yet be committed to be committed.
+  ///
+  /// Note the [`FinateStateMachine`] passed here is used for the snapshot operations and will be
+  /// left in a state that should not be used by the application. Be sure to
+  /// discard this [`FinateStateMachine`] and any associated state and provide a fresh one when
+  /// calling NewRaft later.
+  ///
+  /// A typical way to recover the cluster is to shut down all servers and then
+  /// run RecoverCluster on every server using an identical membership. When
+  /// the cluster is then restarted, and election should occur and then Raft will
+  /// resume normal operation. If it's desired to make a particular server the
+  /// leader, this can be used to inject a new membership with that server as
+  /// the sole voter, and then join up other new clean-state peer servers using
+  /// the usual APIs in order to bring the cluster back into a known state.
+  pub async fn recover(
+    fsm: F,
+    storage: S,
+    membership: Membership<T::Id, <T::Resolver as AddressResolver>::Address>,
+    opts: Options,
+  ) -> Result<(), Error<F, S, T>> {
+    // Validate the options
+    opts.validate()?;
+
+    // Sanity check the Raft peer configuration.
+    membership
+      .validate()
+      .map_err(|e| Error::Raft(RaftError::Membership(e)))?;
+
+    // Refuse to recover if there's no existing state. This would be safe to
+    // do, but it is likely an indication of an operator error where they
+    // expect data to be there and it's not. By refusing, we force them
+    // to show intent to start a cluster fresh by explicitly doing a
+    // bootstrap, rather than quietly fire up a fresh cluster here.
+    let initial_state = Self::fetch_initial_state(&storage).await?;
+    if initial_state.is_clean_state() {
+      return Err(Error::Raft(RaftError::NoExistingState));
+    }
+
+    // Attempt to restore any snapshots we find, newest to oldest.
+    let ss = storage.snapshot_store();
+    let snaps = ss.list().await.map_err(|e| {
+      Error::storage(
+        <S::Error as StorageError>::snapshot(e)
+          .with_message(Cow::Borrowed("failed to list snapshots")),
+      )
+    })?;
+    let mut snapshot_index = 0;
+    let mut snapshot_term = 0;
+    let num_snapshots = snaps.len();
+
+    for snap in snaps {
+      let Ok(source) = ss.open(&snap.id()).await else {
+        // Skip this one and try the next. We will detect if we
+        // couldn't open any snapshots.
+        continue;
+      };
+
+      // Note this is the one place we call fsm.Restore without the
+      // fsmRestoreAndMeasure wrapper since this function should only be called to
+      // reset state on disk and the FSM passed will not be used for a running
+      // server instance. If the same process will eventually become a Raft peer
+      // then it will call NewRaft and restore again from disk then which will
+      // report metrics.
+      let cr = CountingReader::from(source);
+      let ctr = cr.ctr();
+      let monitor = SnapshotRestoreMonitor::<R>::new(ctr, snap.size, false);
+      let rst = fsm.restore(cr).await;
+      monitor.stop_and_wait().await;
+      match rst {
+        Ok(_) => {
+          snapshot_index = snap.index;
+          snapshot_term = snap.term;
+          break;
+        }
+        Err(_) => {
+          // Same here, skip and try the next one.
+          continue;
+        }
+      }
+    }
+    if num_snapshots > 0 && (snapshot_index == 0 || snapshot_term == 0) {
+      return Err(Error::Raft(RaftError::FailedRestoreSnapshots));
+    }
+
+    let logs = storage.log_store();
+    let mut last_index = snapshot_index;
+    let mut last_term = snapshot_term;
+    // Apply any Raft log entries past the snapshot.
+    let Some(last_log_index) = logs.last_index().await.map_err(|e| {
+      Error::storage(
+        <S::Error as StorageError>::log(e).with_message(Cow::Borrowed("failed to find last log")),
+      )
+    })?
+    else {
+      // This should never happen since we have a snapshot.
+      return Err(Error::Raft(RaftError::FailedLoadLogIndex));
+    };
+
+    for index in (snapshot_index + 1)..=last_log_index {
+      let entry = logs.get_log(index).await.map_err(|e| {
+        Error::storage(
+          <S::Error as StorageError>::log(e)
+            .with_message(Cow::Owned(format!("failed to get log at index at {index}"))),
+        )
+      })?;
+
+      if let LogKind::User { data, extension } = entry.kind {
+        fsm
+          .apply(FinateStateMachineLog::new(
+            entry.term,
+            entry.index,
+            FinateStateMachineLogKind::Log { data, extension },
+          ))
+          .await
+          .map_err(|e| {
+            Error::fsm(e.with_message(Cow::Owned(format!("failed to apply log at index {index}"))))
+          })?;
+      }
+
+      last_index = entry.index;
+      last_term = entry.term;
+    }
+
+    // Create a new snapshot, placing the configuration in as if it was
+    // committed at index 1.
+    let snapshot = fsm.snapshot().await.map_err(|e| {
+      Error::fsm(e.with_message(Cow::Borrowed("failed to snapshot finate state machine")))
+    })?;
+
+    let sink = ss
+      .create(
+        Default::default(),
+        last_term,
+        last_index,
+        Arc::new(membership),
+        1,
+      )
+      .await
+      .map_err(|e| {
+        Error::storage(
+          <S::Error as StorageError>::snapshot(e)
+            .with_message(Cow::Borrowed("failed to create snapshot")),
+        )
+      })?;
+
+    snapshot.persist(sink).await.map_err(|e| {
+      Error::fsm(
+        <F::Error as FinateStateMachineError>::snapshot(e)
+          .with_message(Cow::Borrowed("failed to persist snapshot")),
+      )
+    })?;
+
+    // Compact the log so that we don't get bad interference from any
+    // configuration change log entries that might be there.
+    let first_log_index = match logs.first_index().await {
+      Err(e) => {
+        return Err(Error::storage(
+          <S::Error as StorageError>::log(e).with_message(Cow::Borrowed("failed to get first log")),
+        ));
+      }
+      Ok(None) => {
+        // This should never happen since we have a snapshot.
+        return Err(Error::Raft(RaftError::FailedLoadLogIndex));
+      }
+      Ok(Some(index)) => index,
+    };
+
+    logs
+      .remove_range(first_log_index..=last_log_index)
+      .await
+      .map_err(|e| {
+        Error::storage(
+          <S::Error as StorageError>::log(e).with_message(Cow::Borrowed("log compaction failed")),
+        )
+      })
+  }
 }
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
@@ -342,25 +543,14 @@ where
     // Try to restore the last log index.
     let Some(last_log_index) = initial_state.last_log_index else {
       tracing::error!(target = "ruraft", err = "failed to load last log index");
-      return Err(Error::Raft(RaftError::FailedLoadLastLogIndex));
+      return Err(Error::Raft(RaftError::FailedLoadLogIndex));
     };
 
     // Get the last log entry.
-    let Some(last_log) = (if last_log_index > 0 {
-      ls.get_log(last_log_index).await.map_err(|e| {
-        tracing::error!(target = "ruraft", err=%e, "failed to get last log at index {}", last_log_index);
-        Error::log(e)
-      })?
-    } else {
-      None
-    }) else {
-      tracing::error!(
-        target = "ruraft",
-        err = "failed to get last log at index {}",
-        last_log_index
-      );
-      return Err(Error::Raft(RaftError::FailedLoadLastLog));
-    };
+    let last_log = ls.get_log(last_log_index).await.map_err(|e| {
+      tracing::error!(target = "ruraft", err=%e, "failed to get last log at index {}", last_log_index);
+      Error::log(e)
+    })?;
 
     // Restore snapshot
     let snp = storage.snapshot_store();
@@ -375,16 +565,15 @@ where
     // Scan through the log for any membership change entries.
     for index in (last_snapshot.index + 1)..=last_log_index {
       match ls.get_log(index).await {
-        Ok(Some(entry)) => {
+        Ok(entry) => {
           if let LogKind::Membership(m) = entry.kind {
             membership_index = entry.index;
             membership = m;
           }
         }
-        Ok(None) => {}
         Err(e) => {
           tracing::error!(target = "ruraft", index=%index, err=%e, "failed to get log");
-          panic!("{e}");
+          panic!("failed to get log: {e}");
         }
       }
     }
@@ -463,6 +652,8 @@ where
       leader_tx,
       verify_rx,
       user_restore_rx,
+      #[cfg(feature = "metrics")]
+      saturation_metric: SaturationMetric::new("ruraft.runner", Duration::from_secs(1)),
     }
     .spawn();
 
@@ -550,7 +741,7 @@ where
 
     let has_snapshots = !snapshots.is_empty();
     for snapshot in snapshots {
-      if Self::try_restore_single_snapshot(&fsm, snp, &snapshot, skip_restore_on_start).await {
+      if Self::try_restore_single_snapshot(fsm, snp, &snapshot, skip_restore_on_start).await {
         continue;
       }
 
