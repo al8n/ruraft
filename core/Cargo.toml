@@ -25,6 +25,7 @@ atomic = "0.6"
 bytes = { workspace = true, features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-skiplist = "0.1"
+either = "1"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["resolver", "agnostic"] }
 humantime = "2.1"

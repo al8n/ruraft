@@ -26,6 +26,9 @@ use crate::{
   transport::{Address, AddressResolver, Id, Transport},
 };
 
+mod api;
+pub use api::*;
+
 mod fsm;
 mod runner;
 mod snapshot;
@@ -170,11 +173,12 @@ where
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
 
-  apply_tx: async_channel::Sender<()>,
+  fsm_mutate_tx: async_channel::Sender<fsm::FSMRequest<F, S, T>>,
+
+  apply_tx: async_channel::Sender<ApplyRequest<F, Error<F, S, T>>>,
 
   /// Used to request the leader to make membership changes.
-  membership_change_tx:
-    async_channel::Sender<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  membership_change_tx: async_channel::Sender<MembershipChangeRequest<F, S, T>>,
 
   /// Used to tell leader that `reloadbale_options` has changed
   leader_notify_tx: async_channel::Sender<()>,
@@ -182,8 +186,11 @@ where
   /// Used to tell followers that `reloadbale_options` has changed
   follower_notify_tx: async_channel::Sender<()>,
 
-  leader_transfer_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
-  verify_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+  leader_transfer_tx: async_channel::Sender<(
+    Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    oneshot::Sender<Result<(), Error<F, S, T>>>,
+  )>,
+  verify_tx: async_channel::Sender<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
 
   leader_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
@@ -253,50 +260,6 @@ where
     opts: Options,
   ) -> Result<Self, Error<F, S, T>> {
     Self::new_in(fsm, storage, transport, Some(sidecar), opts).await
-  }
-
-  /// Returns the current state of the reloadable fields in Raft's
-  /// options. This is useful for programs to discover the current state for
-  /// reporting to users or tests. It is safe to call concurrently. It is
-  /// intended for reporting and testing purposes primarily; external
-  /// synchronization would be required to safely use this in a read-modify-write
-  /// pattern for reloadable options.
-  pub fn reloadable_options(&self) -> ReloadableOptions {
-    self.reloadable_options.load(Ordering::Acquire)
-  }
-
-  /// Returns the current options in use by the Raft instance.
-  pub fn options(&self) -> Options {
-    self.options.apply(self.reloadable_options())
-  }
-
-  /// Updates the options of a running raft node. If the new
-  /// options is invalid an error is returned and no changes made to the
-  /// instance. All fields will be copied from rc into the new options, even
-  /// if they are zero valued.
-  pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
-    rc.validate(self.options.leader_lease_timeout)?;
-    let _mu = self.reload_options_lock.lock().await;
-    let old = self.reloadable_options.swap(rc, Ordering::Release);
-
-    if rc.heartbeat_timeout() < old.heartbeat_timeout() {
-      // On leader, ensure replication loops running with a longer
-      // timeout than what we want now discover the change.
-      // On follower, update current timer to use the shorter new value.
-      let (lres, fres) = futures::future::join(
-        self.leader_notify_tx.send(()),
-        self.follower_notify_tx.send(()),
-      )
-      .await;
-      if let Err(e) = lres {
-        tracing::error!(target = "ruraft", err=%e, "failed to notify leader the options has been changed");
-      }
-
-      if let Err(e) = fres {
-        tracing::error!(target = "ruraft", err=%e, "failed to notify followers the options has been changed");
-      }
-    }
-    Ok(())
   }
 }
 
@@ -490,7 +453,7 @@ where
       transport,
       sidecar: sidecar.clone(),
       shutdown_rx: shutdown_rx.clone(),
-      fsm_mutate_tx,
+      fsm_mutate_tx: fsm_mutate_tx.clone(),
       leader_notify_rx,
       follower_notify_rx,
       apply_rx,
@@ -541,6 +504,7 @@ where
       apply_tx,
       user_snapshot_tx,
       user_restore_tx,
+      fsm_mutate_tx,
       leader_notify_tx,
       follower_notify_tx,
       leader_transfer_tx,

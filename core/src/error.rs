@@ -92,6 +92,14 @@ pub enum RaftError<T: Transport> {
   /// Returned when there is invalid membership.
   #[error("ruraft: {0}")]
   Membership(#[from] MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>),
+
+  /// Returned when the operation is canceled because of the other sender half of the channel is closed, e.g. apply, barrier and etc.
+  #[error("ruraft: operation canceled, the sender half of the channel is closed")]
+  Canceled,
+
+  /// Returned when the leader transfer to self.
+  #[error("ruraft: leader transfer to self")]
+  TransferToSelf,
 }
 
 impl<T: Transport> core::fmt::Debug for RaftError<T> {
