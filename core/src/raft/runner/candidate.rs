@@ -25,22 +25,28 @@ where
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
 
-  pub(super) async fn run_candidate(&mut self) -> Result<bool, ()> {
+  pub(super) async fn run_candidate(
+    &mut self,
+    #[cfg(feature = "metrics")]
+    saturation_metric: &mut SaturationMetric
+  ) -> Result<bool, ()> {
     let term = self.current_term() + 1;
     let local_id = self.transport.local_id();
     let local_addr = self.transport.local_addr();
     tracing::info!(target = "ruraft", id=%local_id, addr=%local_addr, term = %term, "entering candidate state");
+
     #[cfg(feature = "metrics")]
     metrics::increment_counter!("ruraft.state.candidate");
 
     // Start vote for us, and set a timeout
     let (votes_needed, vote_rx) = self.elect_self(local_id, local_addr).await;
+
     // Make sure the leadership transfer flag is reset after each run. Having this
     // flag will set the field LeadershipTransfer in a RequestVoteRequst to true,
     // which will make other servers vote even though they have a leader already.
     // It is important to reset that flag, because this priviledge could be abused
     // otherwise.
-    // scopeguard::defer!(self.candidate_from_leadership_transfer.store(false, Ordering::Release));
+    scopeguard::defer!(self.candidate_from_leadership_transfer.store(false, Ordering::Release));
 
     let opts = self.reloadable_options.load(Ordering::Acquire);
     let mut election_timeout = opts.election_timeout();
@@ -52,25 +58,28 @@ where
     tracing::debug!(target = "ruraft.candidate", needed = %votes_needed, term = %term, "calculated votes needed");
     while self.role() == Role::Candidate {
       #[cfg(feature = "metrics")]
-      self.saturation_metric.sleeping();
+      saturation_metric.sleeping();
 
       futures::select! {
         rpc = self.rpc.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
-          if let Ok(rpc) = rpc {
-            let (tx, req) = rpc.into_components();
-            self.handle_request(tx, req).await;
-          } else {
-            tracing::error!(target = "ruraft.candidate", "rpc consumer closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
+          match rpc {
+            Ok(rpc) => {
+              let (tx, req) = rpc.into_components();
+              self.handle_request(tx, req).await;
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "rpc consumer closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
+            }
           }
         }
         vote = vote_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
           
           if let Ok(vote) = vote {
             // Check if the term is greater than ours, bail
@@ -98,113 +107,134 @@ where
         }
         mc = self.membership_change_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Reject any operations since we are not the leader
-          if let Ok(mc) = mc {
-            if mc.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-              tracing::error!(target = "ruraft.candidate", "receive membership change request, but fail to send error response, receiver closed");
+          match mc {
+            Ok(mc) => {
+              if mc.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive membership change request, but fail to send error response, receiver closed");
+              }
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "membership change sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "membership change sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
+            }
           }
         }
         c = self.committed_membership_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Reject any operations since we are not the leader
-          if let Ok(c) = c {
-            if c.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-              tracing::error!(target = "ruraft.candidate", "receive committed membership request, but fail to send error response, receiver closed");
+          match c {
+            Ok(c) => {
+              if c.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive committed membership request, but fail to send error response, receiver closed");
+              }
+            },
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "membership sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "membership sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
           }
         }
         a = self.apply_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Reject any operations since we are not the leader
-          if let Ok(a) = a {
-            if a.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-              tracing::error!(target = "ruraft.candidate", "receive apply request, but fail to send error response, receiver closed");
+          match a {
+            Ok(a) => {
+              if a.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive apply request, but fail to send error response, receiver closed");
+              }
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "apply sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "apply sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
+            }
           }
         }
         v = self.verify_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Reject any operations since we are not the leader
-          if let Ok(v) = v {
-            if v.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-              tracing::error!(target = "ruraft.candidate", "receive verify leader request, but fail to send error response, receiver closed");
+          match v {
+            Ok(v) => {
+              if v.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive verify leader request, but fail to send error response, receiver closed");
+              }
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "verify sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "verify sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
+            }
           }
         }
         ur = self.user_restore_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Reject any operations since we are not the leader
-          if let Ok(ur) = ur {
-            if ur.1.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-              tracing::error!(target = "ruraft.candidate", "receive user restore request, but fail to send error response, receiver closed");
+          match ur {
+            Ok(ur) => {
+              if ur.1.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive user restore request, but fail to send error response, receiver closed");
+              }
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "user restore sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "user restore sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
+            }
           }
         }
         l = self.leader_transfer_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Reject any operations since we are not the leader
-          if let Ok(l) = l {
-            if l.1.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-              tracing::error!(target = "ruraft.candidate", "receive leader transfer request, but fail to send error response, receiver closed");
+          match l {
+            Ok(l) => {
+              if l.1.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive leader transfer request, but fail to send error response, receiver closed");
+              }
+            },
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "leader transfer sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "leader transfer sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
           }
         }
         _ = self.leader_notify_rx.recv().fuse() => {
           // ignore since we are not the leader
         },
         notify = self.follower_notify_rx.recv().fuse() => {
-          if notify.is_ok() {
-            let n_election_timeout = self.reloadable_options.load(Ordering::Acquire).election_timeout();
-            if n_election_timeout != election_timeout {
-              election_timeout = n_election_timeout;
-              election_timer = R::interval(random_timeout(election_timeout).unwrap());
+          match notify {
+            Ok(_) => {
+              let n_election_timeout = self.reloadable_options.load(Ordering::Acquire).election_timeout();
+              if n_election_timeout != election_timeout {
+                election_timeout = n_election_timeout;
+                election_timer = R::interval(random_timeout(election_timeout).unwrap());
+              }
+            },
+            Err(e) => {
+              tracing::error!(target = "ruraft.candidate", err=%e, "follower notify sender closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
+              return Err(());
             }
-          } else {
-            tracing::error!(target = "ruraft.candidate", "follower notify sender closed unexpectedly, shutting down...");
-            self.state.set_role(Role::Shutdown);
-            return Ok(false);
           }
         }
         _ = election_timer.next().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           // Election failed! Restart the election. We simply return,
 			    // which will kick us back into runCandidate
@@ -212,6 +242,7 @@ where
           return Ok(true);
         }
         _ = self.shutdown_rx.recv().fuse() => {
+          tracing::info!(target = "ruraft.candidate", "candidate received shutdown signal, shutdown...");
           return Ok(false);
         }
       }

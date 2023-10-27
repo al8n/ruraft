@@ -145,12 +145,11 @@ where
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
   last_contact: Arc<ArcSwapOption<Instant>>,
-  local: Arc<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  advertise_addr: SocketAddr,
   memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   shutdown_tx: async_channel::Sender<()>,
   /// Used to prevent concurrent shutdown
   shutdown: AtomicBool,
+  transport: Arc<T>,
 
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
@@ -629,12 +628,10 @@ where
     });
     let options = Arc::new(opts);
     let wg = AsyncWaitGroup::new();
-
+    let transport = Arc::new(transport);
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
-      local: local.clone(),
-      advertise_addr,
       memberships: memberships.clone(),
       rpc: transport.consumer(),
       candidate_from_leadership_transfer: AtomicBool::new(false),
@@ -642,7 +639,7 @@ where
       last_contact: last_contact.clone(),
       state: state.clone(),
       storage: storage.clone(),
-      transport: Arc::new(transport),
+      transport: transport.clone(),
       sidecar: sidecar.clone(),
       shutdown_rx: shutdown_rx.clone(),
       fsm_mutate_tx: fsm_mutate_tx.clone(),
@@ -656,10 +653,11 @@ where
       verify_rx,
       user_restore_rx,
       wg: wg.clone(),
-      #[cfg(feature = "metrics")]
-      saturation_metric: SaturationMetric::new("ruraft.runner", Duration::from_secs(1)),
     }
-    .spawn();
+    .spawn(
+      #[cfg(feature = "metrics")]
+      SaturationMetric::new("ruraft.runner", Duration::from_secs(1))
+    );
 
     FSMRunner::<F, S, T, R> {
       fsm,
@@ -686,8 +684,6 @@ where
 
     let this = Self {
       memberships,
-      local: local.clone(),
-      advertise_addr,
       options,
       reloadable_options,
       reload_options_lock: async_lock::Mutex::new(()),
@@ -697,6 +693,7 @@ where
       state,
       shutdown_tx,
       shutdown: AtomicBool::new(false),
+      transport,
       membership_change_tx,
       apply_tx,
       user_snapshot_tx,

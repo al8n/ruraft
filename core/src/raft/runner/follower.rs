@@ -23,28 +23,33 @@ where
   R: Runtime,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
-  pub(super) async fn run_follower(&mut self) -> Result<bool, ()> {
+  pub(super) async fn run_follower(
+    &mut self,
+    #[cfg(feature = "metrics")]
+    saturation_metric: &mut SaturationMetric
+  ) -> Result<bool, ()> {
     let mut did_warn = false;
     let leader = self.leader.load();
-    let local = &self.local;
+    let local_id = self.transport.local_id();
+    let local_addr = self.transport.local_addr();
 
     match leader.as_ref() {
       Some(l) => {
-        tracing::info!(target = "ruraft.follower", leader = %l.as_ref(), local = %local, "entering follower state");
+        tracing::info!(target = "ruraft.follower", leader = %l.as_ref(), id=%local_id, addr=%local_addr, "entering follower state");
       }
       None => {
-        tracing::warn!(target = "ruraft.follower", local = %local, "entering follower state without a leader");
+        tracing::warn!(target = "ruraft.follower", id=%local_id, addr=%local_addr, "entering follower state without a leader");
       }
     }
 
     while self.state.role() == Role::Follower {
       #[cfg(feature = "metrics")]
-      self.saturation_metric.sleeping();
+      saturation_metric.sleeping();
 
       futures::select! {
         rpc = self.rpc.recv().fuse() => {
           #[cfg(feature = "metrics")]
-          self.saturation_metric.working();
+          saturation_metric.working();
 
           match rpc {
             Ok(rpc) => {
@@ -52,13 +57,14 @@ where
               self.handle_request(tx, req).await;
             }
             Err(e) => {
-              tracing::error!(target = "ruraft.follower", err=%e, "failed to receive rpc request, producer has been dropped unexpectedly, shutting down...");
+              tracing::error!(target = "ruraft.follower", err=%e, "rpc consumer closed unexpectedly, shutting down...");
+              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
         }
         _ = self.shutdown_rx.recv().fuse() => {
-          tracing::info!(target = "ruraft.follower", "follower received shutdown signal, gracefully shutdown...");
+          tracing::info!(target = "ruraft.follower", "follower received shutdown signal, shutdown...");
           // Clear the leader to prevent forwarding
           self.leader.set(None);
           return Ok(false);

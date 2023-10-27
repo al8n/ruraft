@@ -47,8 +47,6 @@ where
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
   pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address>,
-  pub(super) local: Arc<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  pub(super) advertise_addr: SocketAddr,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   pub(super) candidate_from_leadership_transfer: AtomicBool,
   /// last_contact is the last time we had contact from the
@@ -98,8 +96,6 @@ where
   pub(super) leader_tx: async_channel::Sender<bool>,
 
   pub(super) wg: AsyncWaitGroup,
-  #[cfg(feature = "metrics")]
-  pub(super) saturation_metric: SaturationMetric,
 }
 
 impl<F, S, T, SC, R> core::ops::Deref for RaftRunner<F, S, T, SC, R>
@@ -138,7 +134,11 @@ where
   R: Runtime,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
-  pub(super) fn spawn(mut self) {
+  pub(super) fn spawn(
+    mut self,
+    #[cfg(feature = "metrics")]
+    mut saturation_metric: SaturationMetric
+  ) {
     super::spawn_local::<R, _>(self.wg.add(1), async move {
       loop {
         futures::select! {
@@ -153,7 +153,10 @@ where
             match self.state.role() {
               Role::Follower => {
                 self.spawn_sidecar(Role::Follower);
-                match self.run_follower().await {
+                match self.run_follower(
+                  #[cfg(feature = "metrics")]
+                  &mut saturation_metric
+                ).await {
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
@@ -163,7 +166,10 @@ where
               },
               Role::Candidate => {
                 self.spawn_sidecar(Role::Candidate);
-                match self.run_candidate().await {
+                match self.run_candidate(
+                  #[cfg(feature = "metrics")]
+                  &mut saturation_metric
+                ).await {
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
@@ -226,8 +232,8 @@ where
     // Setup a response
     let mut resp = AppendEntriesResponse::new(
       protocol_version,
-      self.local.id().clone(),
-      self.local.addr().clone(),
+      self.transport.local_id().clone(),
+      self.transport.local_addr().clone(),
     )
     .with_term(self.current_term())
     .with_last_log(self.last_index());
