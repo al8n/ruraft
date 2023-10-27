@@ -572,7 +572,7 @@ where
     let mut has_us = false;
     for (id, (_, suffrage)) in membership.membership.iter() {
       if suffrage.is_voter() {
-        if id.eq(self.local.id()) {
+        if id.eq(self.transport.local_id()) {
           has_us = true;
         } else {
           num_peers += 1;
@@ -906,7 +906,7 @@ where
     let (tx, rx) = oneshot::channel();
 
     if let Some(ref node) = target {
-      if node.id.eq(&self.local.id) {
+      if node.id.eq(self.transport.local_id()) {
         tracing::error!(target = "ruraft", "cannot transfer leadership to itself");
         return LeadershipTransferResponse::err(Error::Raft(RaftError::TransferToSelf));
       }
@@ -1128,8 +1128,8 @@ pub(super) struct MembershipChangeRequest<F: FinateStateMachine, S: Storage, T: 
 }
 
 pub(super) struct ApplyRequest<F: FinateStateMachine, E> {
-  log: LogKind<F::Id, F::Address>,
-  tx: oneshot::Sender<Result<F::Response, E>>,
+  pub(super) log: LogKind<F::Id, F::Address>,
+  pub(super) tx: oneshot::Sender<Result<F::Response, E>>,
 }
 
 macro_rules! resp {

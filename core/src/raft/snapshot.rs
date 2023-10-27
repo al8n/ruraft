@@ -9,6 +9,7 @@ use agnostic::Runtime;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
+use wg::AsyncWaitGroup;
 
 use crate::{
   error::{Error, RaftError},
@@ -71,6 +72,7 @@ where
     >,
   >,
   pub(super) opts: Arc<Atomic<ReloadableOptions>>,
+  pub(super) wg: AsyncWaitGroup,
   pub(super) shutdown_rx: async_channel::Receiver<()>,
 }
 
@@ -89,7 +91,7 @@ where
   R: Runtime,
 {
   pub(super) fn spawn(self) {
-    R::spawn_detach(async move {
+    super::spawn_local::<R, _>(self.wg.add(1), async move {
       loop {
         futures::select! {
           // unwrap safe here, because snapshot_interval cannot be zero.
