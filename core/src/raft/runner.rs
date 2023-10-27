@@ -1,7 +1,10 @@
 use std::{
   collections::HashMap,
   net::SocketAddr,
-  sync::{atomic::{AtomicBool, Ordering}, Arc},
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+  },
   time::Instant,
 };
 
@@ -12,14 +15,16 @@ use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use wg::AsyncWaitGroup;
 
-use super::{fsm::FSMRequest, Leader, MembershipChangeRequest, state::LastLog};
+use super::{fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest};
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
   options::{Options, ReloadableOptions},
   sidecar::Sidecar,
-  storage::{SnapshotStorage, Storage, LogStorage},
-  transport::{RpcConsumer, Transport, AppendEntriesRequest, AppendEntriesResponse, Request, Response},
+  storage::{LogStorage, SnapshotStorage, Storage},
+  transport::{
+    AppendEntriesRequest, AppendEntriesResponse, Request, Response, RpcConsumer, Transport,
+  },
   FinateStateMachine, Node, Role, State,
 };
 
@@ -136,8 +141,7 @@ where
 {
   pub(super) fn spawn(
     mut self,
-    #[cfg(feature = "metrics")]
-    mut saturation_metric: SaturationMetric
+    #[cfg(feature = "metrics")] mut saturation_metric: SaturationMetric,
   ) {
     super::spawn_local::<R, _>(self.wg.add(1), async move {
       loop {
@@ -191,6 +195,11 @@ where
   #[inline]
   fn set_last_contact(&self, instant: Instant) {
     self.last_contact.store(Some(Arc::new(instant)));
+  }
+
+  #[inline]
+  fn last_contact(&self) -> Option<Instant> {
+    self.last_contact.load().as_ref().map(|i| **i)
   }
 
   async fn handle_request(

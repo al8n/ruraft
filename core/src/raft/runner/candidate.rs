@@ -1,13 +1,16 @@
 use std::{sync::atomic::Ordering, time::Instant};
 
 use crate::{
+  error::RaftError,
+  membership::ServerSuffrage,
   storage::StableStorage,
-  transport::{VoteRequest, Header, VoteResponse}, membership::ServerSuffrage, utils::random_timeout, error::RaftError,
+  transport::{Header, VoteRequest, VoteResponse},
+  utils::random_timeout,
 };
 
 use super::*;
-use futures::{StreamExt, future::Either};
-use nodecraft::{Id, Address};
+use futures::{future::Either, StreamExt};
+use nodecraft::{Address, Id};
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
@@ -24,11 +27,9 @@ where
   R: Runtime,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
-
   pub(super) async fn run_candidate(
     &mut self,
-    #[cfg(feature = "metrics")]
-    saturation_metric: &mut SaturationMetric
+    #[cfg(feature = "metrics")] saturation_metric: &mut SaturationMetric,
   ) -> Result<bool, ()> {
     let term = self.current_term() + 1;
     let local_id = self.transport.local_id();
@@ -46,7 +47,9 @@ where
     // which will make other servers vote even though they have a leader already.
     // It is important to reset that flag, because this priviledge could be abused
     // otherwise.
-    scopeguard::defer!(self.candidate_from_leadership_transfer.store(false, Ordering::Release));
+    scopeguard::defer!(self
+      .candidate_from_leadership_transfer
+      .store(false, Ordering::Release));
 
     let opts = self.reloadable_options.load(Ordering::Acquire);
     let mut election_timeout = opts.election_timeout();
@@ -80,7 +83,7 @@ where
         vote = vote_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
-          
+
           if let Ok(vote) = vote {
             // Check if the term is greater than ours, bail
             if vote.resp.term > self.current_term() {
@@ -130,8 +133,8 @@ where
           // Reject any operations since we are not the leader
           match c {
             Ok(c) => {
-              if c.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
-                tracing::error!(target = "ruraft.candidate", "receive committed membership request, but fail to send error response, receiver closed");
+              if c.send(Ok(self.memberships.committed().clone())).is_err() {
+                tracing::error!(target = "ruraft.candidate", "receive committed membership request, but fail to send response, receiver closed");
               }
             },
             Err(e) => {
@@ -237,7 +240,7 @@ where
           saturation_metric.working();
 
           // Election failed! Restart the election. We simply return,
-			    // which will kick us back into runCandidate
+          // which will kick us back into runCandidate
           tracing::warn!(target = "ruraft.candidate", term = %term, "election timeout reached, restarting election");
           return Ok(true);
         }
@@ -256,7 +259,14 @@ where
   /// vote for ourself). This must only be called from the main thread.
   ///
   /// [`vote`]: crate::transport::Transport::vote
-  async fn elect_self(&self, local_id: &T::Id, local_addr: &<T::Resolver as AddressResolver>::Address) -> (usize, async_channel::Receiver<VoteResult<T::Id, <T::Resolver as AddressResolver>::Address>>) {
+  async fn elect_self(
+    &self,
+    local_id: &T::Id,
+    local_addr: &<T::Resolver as AddressResolver>::Address,
+  ) -> (
+    usize,
+    async_channel::Receiver<VoteResult<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  ) {
     let latest = self.memberships.latest().1.clone();
 
     // Create a response channel
@@ -268,7 +278,9 @@ where
     // Construct the request
     let last = self.last_entry();
     let term = self.current_term();
-    let leadership_transfer = self.candidate_from_leadership_transfer.load(Ordering::Acquire);
+    let leadership_transfer = self
+      .candidate_from_leadership_transfer
+      .load(Ordering::Acquire);
     let protocol_version = self.options.protocol_version;
 
     // For each peer, request a vote
@@ -309,7 +321,7 @@ where
         let trans = self.transport.clone();
         Either::Right(async move {
           tracing::debug!(target = "ruraft", term = %term, from = %id, address = %addr, "asking for vote");
-          
+
           super::super::spawn_local::<R, _>(wg.add(1), async move {
             #[cfg(feature = "metrics")]
             let start = Instant::now();
@@ -333,7 +345,7 @@ where
                     granted: false,
                   },
                   voter_id: id.clone(),
-                }  
+                }
               }
             };
 
@@ -352,7 +364,11 @@ where
     (quorum, rx)
   }
 
-  async fn persist_vote(stable: &S::Stable, term: u64, cand: Node<T::Id, <T::Resolver as AddressResolver>::Address>) -> Result<(), <S::Stable as StableStorage>::Error> {
+  async fn persist_vote(
+    stable: &S::Stable,
+    term: u64,
+    cand: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Result<(), <S::Stable as StableStorage>::Error> {
     stable.store_last_vote_term(term).await?;
     stable.store_last_vote_candidate(cand).await
   }

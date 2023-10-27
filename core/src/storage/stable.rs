@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use bytes::Bytes;
-use nodecraft::{Id, Address};
+use nodecraft::{Address, Id};
 
 use crate::Node;
 
@@ -46,10 +46,13 @@ pub trait StableStorage: Send + Sync + 'static {
   fn last_vote_term(&self) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
 
   /// Stores the last vote term.
-  fn store_last_vote_term(&self, term: u64) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  fn store_last_vote_term(&self, term: u64)
+    -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Returns the last vote candidate. `None` means no candidate has been persisted yet.
-  fn last_vote_candidate(&self) -> impl Future<Output = Result<Option<Node<Self::Id, Self::Address>>, Self::Error>> + Send;
+  fn last_vote_candidate(
+    &self,
+  ) -> impl Future<Output = Result<Option<Node<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Stores the last vote candidate.
   fn store_last_vote_candidate(

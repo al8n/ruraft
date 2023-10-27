@@ -656,7 +656,7 @@ where
     }
     .spawn(
       #[cfg(feature = "metrics")]
-      SaturationMetric::new("ruraft.runner", Duration::from_secs(1))
+      SaturationMetric::new("ruraft.runner", Duration::from_secs(1)),
     );
 
     FSMRunner::<F, S, T, R> {
@@ -704,7 +704,7 @@ where
       leader_transfer_tx,
       verify_tx,
       leader_rx,
-      wg
+      wg,
     };
 
     Ok(this)
@@ -802,8 +802,10 @@ where
   }
 }
 
-
-pub(crate) fn spawn_local<R: Runtime, F: std::future::Future + Send + 'static>(wg: AsyncWaitGroup, f: F) {
+pub(crate) fn spawn_local<R: Runtime, F: std::future::Future + Send + 'static>(
+  wg: AsyncWaitGroup,
+  f: F,
+) {
   R::spawn_detach(async move {
     f.await;
     wg.done();
