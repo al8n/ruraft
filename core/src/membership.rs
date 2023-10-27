@@ -238,6 +238,7 @@ impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> 
 /// These entries are appended to the log during membership changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Membership<I: Id, A: Address> {
+  pub(crate) voters: usize,
   pub(crate) servers: IndexMap<I, (A, ServerSuffrage)>,
 }
 
@@ -442,6 +443,7 @@ where
       u32::from_be_bytes(src[cur..cur + mem::size_of::<u32>()].try_into().unwrap()) as usize;
     cur += U32_SIZE;
 
+    let mut voters = 0;
     let mut servers = IndexMap::with_capacity(total_servers);
     while servers.len() < total_servers {
       let (readed, id) = I::decode(&src[cur..]).map_err(Self::Error::Id)?;
@@ -450,9 +452,12 @@ where
       cur += readed;
       let suffrage: ServerSuffrage = src[cur].try_into()?;
       cur += ServerSuffrage::SIZE;
+      if suffrage.is_voter() {
+        voters += 1;
+      }
       servers.insert(id, (addr, suffrage));
     }
-    Ok((len, Self { servers }))
+    Ok((len, Self { voters, servers }))
   }
 
   /// Decodes the value from the given reader.
@@ -478,6 +483,7 @@ where
     let mut cur = 0;
     reader.read_exact(&mut src)?;
     let mut servers = IndexMap::with_capacity(total_servers);
+    let mut voters = 0;
     while servers.len() < total_servers {
       let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
       cur += readed;
@@ -488,9 +494,13 @@ where
         .try_into()
         .map_err(|e| invalid_data(Self::Error::UnknownServerSuffrage(e)))?;
       cur += ServerSuffrage::SIZE;
+      if suffrage.is_voter() {
+        voters += 1;
+      }
+
       servers.insert(id, (addr, suffrage));
     }
-    Ok((len, Self { servers }))
+    Ok((len, Self { voters, servers }))
   }
 
   /// Decodes the value from the given async reader.
@@ -519,6 +529,7 @@ where
     let mut cur = 0;
     reader.read_exact(&mut src).await?;
     let mut servers = IndexMap::with_capacity(total_servers);
+    let mut voters = 0;
     while servers.len() < total_servers {
       let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
       cur += readed;
@@ -529,9 +540,14 @@ where
         .try_into()
         .map_err(|e| invalid_data(Self::Error::UnknownServerSuffrage(e)))?;
       cur += ServerSuffrage::SIZE;
+
+      if suffrage.is_voter() {
+        voters += 1;
+      }
+
       servers.insert(id, (addr, suffrage));
     }
-    Ok((len, Self { servers }))
+    Ok((len, Self { voters, servers }))
   }
 }
 
@@ -597,8 +613,14 @@ impl<I: Id, A: Address> Membership<I, A> {
   /// Create a new membership.
   pub fn new() -> Self {
     Self {
+      voters: 0,
       servers: IndexMap::new(),
     }
+  }
+
+  /// Returns the quorum size based on the current membership.
+  pub const fn quorum_size(&self) -> usize {
+    (self.voters / 2) + 1
   }
 
   /// Inserts a new server into the membership.
@@ -613,6 +635,9 @@ impl<I: Id, A: Address> Membership<I, A> {
 
     if self.contains_addr(&server.addr) {
       return Err(MembershipError::DuplicateAddress(server.addr));
+    }
+    if server.suffrage == ServerSuffrage::Voter {
+      self.voters += 1;
     }
 
     self

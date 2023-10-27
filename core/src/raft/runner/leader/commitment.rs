@@ -126,3 +126,9 @@ impl<I: Id, A: Address> Commitment<I, A> {
     self.0.lock().await.match_index(server, index).await;
   }
 }
+
+impl<I: Id, A: Address> Clone for Commitment<I, A> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
+}

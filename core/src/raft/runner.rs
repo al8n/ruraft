@@ -93,7 +93,7 @@ where
     Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
-  pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
+  pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
   pub(super) user_restore_rx: async_channel::Receiver<(
     <S::Snapshot as SnapshotStorage>::Source,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
@@ -137,6 +137,7 @@ where
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   pub(super) fn spawn(
@@ -181,7 +182,19 @@ where
                   }
                 }
               },
-              Role::Leader => todo!(),
+              Role::Leader => {
+                self.spawn_sidecar(Role::Leader);
+                match self.run_leader(
+                  #[cfg(feature = "metrics")]
+                  &mut saturation_metric
+                ).await {
+                  Ok(true) => self.stop_sidecar().await,
+                  Ok(false) | Err(_) => {
+                    self.stop_sidecar().await;
+                    self.set_role(Role::Shutdown);
+                  }
+                }
+              },
               Role::Shutdown => {
                 self.spawn_sidecar(Role::Shutdown);
               },

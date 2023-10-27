@@ -200,7 +200,7 @@ where
     Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
-  verify_tx: async_channel::Sender<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
+  verify_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
 
   leader_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,

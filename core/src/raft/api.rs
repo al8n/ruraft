@@ -1186,7 +1186,7 @@ resp!(
   #[doc = "Used for barrier and can return the [`FinateStateMachine`] response."]
   BarrierResponse<F::Response>,
   #[doc = "Used to verify the current node is still the leader. This is to prevent a stale read."]
-  VerifyResponse<bool>,
+  VerifyResponse<()>,
   #[doc = "A future that can be used to wait on the result of a snapshot. The returned future whose output is a [`SnapshotSource`](crate::storage::SnapshotSource)."]
   SnapshotResponse<Box<
     dyn Future<
