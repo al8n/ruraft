@@ -15,7 +15,9 @@ use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use wg::AsyncWaitGroup;
 
-use super::{fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest};
+use super::{
+  fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer, ObserverId,
+};
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
@@ -100,6 +102,11 @@ where
   )>,
   pub(super) leader_tx: async_channel::Sender<bool>,
 
+  pub(super) observers: Arc<
+    async_lock::RwLock<
+      HashMap<ObserverId, Observer<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    >,
+  >,
   pub(super) wg: AsyncWaitGroup,
 }
 
@@ -150,7 +157,7 @@ where
           _ = self.shutdown_rx.recv().fuse() => {
             tracing::info!(target = "ruraft", "raft runner received shutdown signal, gracefully shutdown...");
             // Clear the leader to prevent forwarding
-            self.leader.set(None);
+            self.leader.set(None, &self.observers).await;
             self.stop_sidecar().await;
             return;
           }
@@ -283,7 +290,11 @@ where
     // Save the current leader
     self
       .leader
-      .set(Some(Node::new(req.header.id.clone(), req.header.addr)));
+      .set(
+        Some(Node::new(req.header.id.clone(), req.header.addr)),
+        &self.observers,
+      )
+      .await;
 
     // Verify the last log entry
     if req.prev_log_entry > 0 {

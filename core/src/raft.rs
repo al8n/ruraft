@@ -1,9 +1,9 @@
 use std::{
   borrow::Cow,
+  collections::HashMap,
   future::Future,
-  net::SocketAddr,
   sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64},
     Arc,
   },
   time::{Duration, Instant},
@@ -13,8 +13,7 @@ use agnostic::Runtime;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
-use futures::{channel::oneshot, FutureExt};
-use metrics::atomics::AtomicU64;
+use futures::channel::oneshot;
 use wg::AsyncWaitGroup;
 
 use crate::{
@@ -39,24 +38,26 @@ mod api;
 pub use api::*;
 
 mod fsm;
-mod runner;
-mod snapshot;
-mod state;
 
+mod observer;
+pub use observer::*;
+
+mod runner;
+
+mod snapshot;
+use snapshot::{CountingReader, SnapshotRestoreMonitor};
+
+mod state;
 pub use state::*;
 
-use self::snapshot::{CountingReader, SnapshotRestoreMonitor};
-
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
-const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 
-const KEY_CURRENT_TERM: &[u8] = b"__ruraft_current_term__";
-const KEY_LAST_VOTE_TERM: &[u8] = b"__ruraft_last_vote_term__";
-const KEY_LAST_VOTE_FOR: &[u8] = b"__ruraft_last_vote_cand__";
+pub struct Node<I: Id, A: Address>(Arc<(I, A)>);
 
-pub struct Node<I: Id, A: Address> {
-  id: I,
-  addr: A,
+impl<I: Id, A: Address> Clone for Node<I, A> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
 }
 
 impl<I, A> core::fmt::Display for Node<I, A>
@@ -65,26 +66,26 @@ where
   A: Address,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}({})", self.id, self.addr)
+    write!(f, "{}({})", self.0 .0, self.0 .1)
   }
 }
 
 impl<I: Id, A: Address> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]
-  pub const fn id(&self) -> &I {
-    &self.id
+  pub fn id(&self) -> &I {
+    &self.0 .0
   }
 
   /// Returns the address of the leader.
   #[inline]
-  pub const fn addr(&self) -> &A {
-    &self.addr
+  pub fn addr(&self) -> &A {
+    &self.0 .1
   }
 
   #[inline]
-  pub const fn new(id: I, addr: A) -> Self {
-    Self { id, addr }
+  pub fn new(id: I, addr: A) -> Self {
+    Self(Arc::new((id, addr)))
   }
 }
 
@@ -102,20 +103,24 @@ impl<I: Id, A: Address> Leader<I, A> {
     Self(Arc::new(ArcSwapOption::new(None)))
   }
 
-  fn set(&self, leader: Option<Node<I, A>>) {
+  async fn set(
+    &self,
+    leader: Option<Node<I, A>>,
+    observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
+  ) {
     let new = leader.map(Arc::new);
     let old = self.0.swap(new.clone());
     match (new, old) {
       (None, None) => {}
-      (None, Some(old)) => {
-        // TODO: self.observe(LeaderObservation::none())
+      (None, Some(_)) => {
+        observe(observers, Observed::Leader(None)).await;
       }
       (Some(new), None) => {
-        // TODO: self.observe(LeaderObservation::new(new))
+        observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
       }
       (Some(new), Some(old)) => {
-        if old.addr != new.addr || old.id != new.id {
-          // TODO: self.observe(LeaderObservation::new(new))
+        if old.addr() != new.addr() || old.id() != new.id() {
+          observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
         }
       }
     }
@@ -127,7 +132,7 @@ impl<I: Id, A: Address> Leader<I, A> {
   }
 }
 
-pub struct RaftCore<F, S, T, SC, R>
+struct Inner<F, S, T, SC, R>
 where
   F: FinateStateMachine<
     Id = T::Id,
@@ -204,7 +209,48 @@ where
 
   leader_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
+  observers: Arc<
+    async_lock::RwLock<
+      HashMap<ObserverId, Observer<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    >,
+  >,
   wg: AsyncWaitGroup,
+}
+
+pub struct RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  inner: Arc<Inner<F, S, T, SC, R>>,
+}
+
+impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  fn clone(&self) -> Self {
+    Self {
+      inner: self.inner.clone(),
+    }
+  }
 }
 
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
@@ -492,8 +538,6 @@ where
 
     let storage = Arc::new(storage);
 
-    // Make sure we have a valid server address and ID.
-    let advertise_addr = transport.advertise_addr();
     let local_addr = transport.local_addr().clone();
     let local_id = transport.local_id().clone();
 
@@ -621,7 +665,6 @@ where
     let leader = Leader::none();
     let sidecar = sidecar.map(Arc::new);
     let last_contact = Arc::new(ArcSwapOption::from_pointee(None));
-    let local = Arc::new(Node::new(local_id, local_addr));
     let memberships = Arc::new(Memberships {
       committed: ArcSwap::from(membership.clone()),
       latest: ArcSwap::from(membership),
@@ -629,6 +672,7 @@ where
     let options = Arc::new(opts);
     let wg = AsyncWaitGroup::new();
     let transport = Arc::new(transport);
+    let observers = Arc::new(async_lock::RwLock::new(HashMap::new()));
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
@@ -652,6 +696,7 @@ where
       leader_tx,
       verify_rx,
       user_restore_rx,
+      observers: observers.clone(),
       wg: wg.clone(),
     }
     .spawn(
@@ -682,7 +727,7 @@ where
     }
     .spawn();
 
-    let this = Self {
+    let this = Inner {
       memberships,
       options,
       reloadable_options,
@@ -704,10 +749,13 @@ where
       leader_transfer_tx,
       verify_tx,
       leader_rx,
+      observers,
       wg,
     };
 
-    Ok(this)
+    Ok(Self {
+      inner: Arc::new(this),
+    })
   }
 
   async fn fetch_initial_state(s: &S) -> Result<InitialState<T>, Error<F, S, T>> {

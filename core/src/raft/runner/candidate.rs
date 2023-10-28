@@ -104,7 +104,7 @@ where
             if granted_votes >= votes_needed {
               tracing::info!(target = "ruraft.candidate", term = %term, tally = %granted_votes, "election won");
               self.state.set_role(Role::Leader);
-              self.leader.set(Some(Node::new(local_id.clone(), local_addr.clone())));
+              self.leader.set(Some(Node::new(local_id.clone(), local_addr.clone())), &self.observers);
               return Ok(true);
             }
           }

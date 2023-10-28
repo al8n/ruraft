@@ -126,6 +126,7 @@ where
       wg,
     } = self;
 
+    #[cfg(feature = "metrics")]
     let mut saturation = SaturationMetric::new("ruraft.fsm.runner", Duration::from_secs(1));
 
     super::spawn_local::<R, _>(wg.add(1), async move {
@@ -133,10 +134,12 @@ where
       let mut last_term = 0;
 
       loop {
+        #[cfg(feature = "metrics")]
         saturation.sleeping();
 
         futures::select! {
           req = mutate_rx.recv().fuse() => {
+            #[cfg(feature = "metrics")]
             saturation.working();
 
             match req {
@@ -208,6 +211,7 @@ where
             }
           }
           tx = snapshot_rx.recv().fuse() => {
+            #[cfg(feature = "metrics")]
             saturation.working();
             match tx {
               Ok(tx) => {

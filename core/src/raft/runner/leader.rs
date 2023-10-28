@@ -308,7 +308,7 @@ where
         Some(r) => {
           let peer: Arc<_> = r.peer.load().clone();
 
-          if peer.addr.ne(addr) {
+          if peer.addr().ne(addr) {
             tracing::info!(target = "ruraft.repl", peer=%id, "updating peer");
             r.peer.store(Arc::new(Node::new(id.clone(), addr.clone())));
           }

@@ -195,7 +195,7 @@ where
 
             // Heartbeat failed! Transition to the candidate state
             let last_leader = self.leader.load().clone();
-            self.leader.set(None);
+            self.leader.set(None, &self.observers).await;
 
             let (latest_index, latest) = {
               let latest = self.memberships.latest();
@@ -236,7 +236,7 @@ where
         _ = self.shutdown_rx.recv().fuse() => {
           tracing::info!(target = "ruraft.follower", "follower received shutdown signal, shutdown...");
           // Clear the leader to prevent forwarding
-          self.leader.set(None);
+          self.leader.set(None, &self.observers).await;
           return Ok(false);
         }
       }

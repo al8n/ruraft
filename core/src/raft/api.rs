@@ -45,18 +45,18 @@ where
   /// synchronization would be required to safely use this in a read-modify-write
   /// pattern for reloadable options.
   pub fn reloadable_options(&self) -> ReloadableOptions {
-    self.reloadable_options.load(Ordering::Acquire)
+    self.inner.reloadable_options.load(Ordering::Acquire)
   }
 
   /// Returns the current options in use by the Raft instance.
   pub fn options(&self) -> Options {
-    self.options.apply(self.reloadable_options())
+    self.inner.options.apply(self.reloadable_options())
   }
 
   /// Returns the latest membership. This may not yet be
   /// committed.
   pub fn membership(&self) -> LatestMembership<T::Id, <T::Resolver as AddressResolver>::Address> {
-    let membership = self.memberships.latest();
+    let membership = self.inner.memberships.latest();
     LatestMembership {
       index: membership.0,
       membership: membership.1.clone(),
@@ -66,20 +66,20 @@ where
   /// Returns the time of last contact by a leader.
   /// This only makes sense if we are currently a follower.
   pub fn last_contact(&self) -> Option<Instant> {
-    self.last_contact.load().as_ref().map(|i| **i)
+    self.inner.last_contact.load().as_ref().map(|i| **i)
   }
 
   /// Returns the last index in stable storage,
   /// either from the last log or from the last snapshot.
   pub fn last_index(&self) -> u64 {
-    self.state.last_index()
+    self.inner.state.last_index()
   }
 
   /// Returns the committed index.
   /// This API maybe helpful for server to implement the read index optimization
   /// as described in the Raft paper.
   pub fn commit_index(&self) -> u64 {
-    self.state.commit_index()
+    self.inner.state.commit_index()
   }
 
   /// Returns the last index applied to the [`FinateStateMachine`]. This is generally
@@ -92,14 +92,14 @@ where
   /// it to its internal state. Thus, the application's state may lag behind this
   /// index.
   pub fn applied_index(&self) -> u64 {
-    self.state.last_applied()
+    self.inner.state.last_applied()
   }
 
   /// Used to return the current leader address and ID of the cluster.
   /// It may return `None` if there is no current leader
   /// or the leader is unknown.
   pub fn leader(&self) -> Option<Arc<Node<T::Id, <T::Resolver as AddressResolver>::Address>>> {
-    self.leader.load().clone()
+    self.inner.leader.load().clone()
   }
 
   /// Used to get a stream which delivers signals on acquiring or
@@ -114,7 +114,7 @@ where
   /// `true` values, they may deduce that leadership was lost and regained while
   /// the the receiver was processing first leadership transition.
   pub fn leader_watcher(&self) -> LeaderWatcher {
-    LeaderWatcher(self.leader_rx.clone())
+    LeaderWatcher(self.inner.leader_rx.clone())
   }
 
   /// Used to apply a command to the [`FinateStateMachine`] in a highly consistent
@@ -201,7 +201,7 @@ where
     metrics::increment_counter!("ruraft.verify_leader");
 
     let (tx, rx) = oneshot::channel();
-    match self.verify_tx.send(tx).await {
+    match self.inner.verify_tx.send(tx).await {
       Ok(_) => VerifyResponse::ok(rx),
       Err(_) => VerifyResponse::err(Error::Raft(RaftError::Shutdown)),
     }
@@ -412,17 +412,17 @@ where
   pub async fn reload_options(&self, rc: ReloadableOptions) -> Result<(), Error<F, S, T>> {
     self.is_shutdown_error()?;
 
-    rc.validate(self.options.leader_lease_timeout)?;
-    let _mu = self.reload_options_lock.lock().await;
-    let old = self.reloadable_options.swap(rc, Ordering::Release);
+    rc.validate(self.inner.options.leader_lease_timeout)?;
+    let _mu = self.inner.reload_options_lock.lock().await;
+    let old = self.inner.reloadable_options.swap(rc, Ordering::Release);
 
     if rc.heartbeat_timeout() < old.heartbeat_timeout() {
       // On leader, ensure replication loops running with a longer
       // timeout than what we want now discover the change.
       // On follower, update current timer to use the shorter new value.
       let (lres, fres) = futures::future::join(
-        self.leader_notify_tx.send(()),
-        self.follower_notify_tx.send(()),
+        self.inner.leader_notify_tx.send(()),
+        self.inner.follower_notify_tx.send(()),
       )
       .await;
       if let Err(e) = lres {
@@ -442,13 +442,13 @@ where
   ///
   /// Returns `true`` if this call has shutdown the Raft and it was not shutdown already.
   pub fn shutdown(&self) -> bool {
-    if self.shutdown.load(Ordering::Acquire) {
+    if self.inner.shutdown.load(Ordering::Acquire) {
       return false;
     }
 
-    self.state.set_role(Role::Shutdown);
-    self.shutdown_tx.close();
-    self.shutdown.store(true, Ordering::Release);
+    self.inner.state.set_role(Role::Shutdown);
+    self.inner.shutdown_tx.close();
+    self.inner.shutdown.store(true, Ordering::Release);
     true
   }
 
@@ -564,15 +564,15 @@ where
   /// Return various internal stats. This
   /// should only be used for informative purposes or debugging.
   pub async fn stats(&self) -> RaftStats<T::Id, <T::Resolver as AddressResolver>::Address> {
-    let last_log = self.state.last_log();
-    let last_snapshot = self.state.last_snapshot();
+    let last_log = self.inner.state.last_log();
+    let last_snapshot = self.inner.state.last_snapshot();
     let membership = self.membership();
 
     let mut num_peers = 0;
     let mut has_us = false;
     for (id, (_, suffrage)) in membership.membership.iter() {
       if suffrage.is_voter() {
-        if id.eq(self.transport.local_id()) {
+        if id.eq(self.inner.transport.local_id()) {
           has_us = true;
         } else {
           num_peers += 1;
@@ -591,13 +591,13 @@ where
       last_snapshot_term: last_snapshot.term,
       latest_membership_index: membership.index,
       latest_membership: membership.membership,
-      role: self.state.role(),
-      term: self.state.current_term(),
-      commit_index: self.state.commit_index(),
-      applied_index: self.state.last_applied(),
+      role: self.inner.state.role(),
+      term: self.inner.state.current_term(),
+      commit_index: self.inner.state.commit_index(),
+      applied_index: self.inner.state.last_applied(),
       last_contact: self.last_contact(),
       num_peers,
-      fsm_pending: self.fsm_mutate_tx.len() as u64,
+      fsm_pending: self.inner.fsm_mutate_tx.len() as u64,
       snapshot_version: SnapshotVersion::V1,
       protocol_version: ProtocolVersion::V1,
     }
@@ -646,7 +646,7 @@ where
           _ = R::sleep(timeout).fuse() => {
             ApplyResponse::err(Error::Raft(RaftError::EnqueueTimeout))
           }
-          rst = self.apply_tx.send(req).fuse() => {
+          rst = self.inner.apply_tx.send(req).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
               ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
@@ -657,7 +657,7 @@ where
         }
       }
       None => {
-        if let Err(e) = self.apply_tx.send(req).await {
+        if let Err(e) = self.inner.apply_tx.send(req).await {
           tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
           ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
         } else {
@@ -686,7 +686,7 @@ where
         _ = R::sleep(timeout).fuse() => {
           BarrierResponse::err(Error::Raft(RaftError::EnqueueTimeout))
         }
-        rst = self.apply_tx.send(req).fuse() => {
+        rst = self.inner.apply_tx.send(req).fuse() => {
           if let Err(e) = rst {
             tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
             BarrierResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
@@ -695,7 +695,7 @@ where
           }
         },
       }
-    } else if let Err(e) = self.apply_tx.send(req).await {
+    } else if let Err(e) = self.inner.apply_tx.send(req).await {
       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
       BarrierResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
     } else {
@@ -720,7 +720,7 @@ where
 
     match timeout {
       Some(Duration::ZERO) | None => {
-        if let Err(e) = self.membership_change_tx.send(req).await {
+        if let Err(e) = self.inner.membership_change_tx.send(req).await {
           tracing::error!(target="ruraft", err=%e, "failed to send membership change request to the raft: membership change channel closed");
           return MembershipChangeResponse::err(Error::Raft(RaftError::Closed(
             "membership change channel closed",
@@ -730,7 +730,7 @@ where
       }
       Some(timeout) => {
         futures::select! {
-          rst = self.membership_change_tx.send(req).fuse() => {
+          rst = self.inner.membership_change_tx.send(req).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send membership change request to the raft: membership change channel closed");
               return MembershipChangeResponse::err(Error::Raft(RaftError::Closed("membership change channel closed")));
@@ -757,7 +757,7 @@ where
     let (tx, rx) = oneshot::channel();
 
     match timeout {
-      Some(Duration::ZERO) | None => match self.user_snapshot_tx.send(tx).await {
+      Some(Duration::ZERO) | None => match self.inner.user_snapshot_tx.send(tx).await {
         Ok(_) => SnapshotResponse::ok(rx),
         Err(e) => {
           tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
@@ -772,7 +772,7 @@ where
             tracing::error!(target = "ruraft", "failed to send snapshot request: user snapshot channel closed");
             SnapshotResponse::err(Error::Raft(RaftError::EnqueueTimeout))
           }
-          rst = self.user_snapshot_tx.send(tx).fuse() => {
+          rst = self.inner.user_snapshot_tx.send(tx).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
               return SnapshotResponse::err(Error::Raft(RaftError::Closed("user snapshot channel closed")));
@@ -800,7 +800,7 @@ where
     // Perform the restore.
     match timeout {
       None => {
-        if let Err(e) = self.user_restore_tx.send((source, tx)).await {
+        if let Err(e) = self.inner.user_restore_tx.send((source, tx)).await {
           tracing::error!(target="ruraft", err=%e, "failed to send restore request to the raft: user restore channel closed");
           return Err(Error::Raft(RaftError::Closed(
             "user restore channel closed",
@@ -819,6 +819,7 @@ where
             // snapshot with the contents of the restore.
             let (tx, rx) = oneshot::channel();
             if let Err(e) = self
+              .inner
               .apply_tx
               .send(ApplyRequest {
                 log: LogKind::Noop,
@@ -847,7 +848,7 @@ where
             tracing::error!(target="ruraft", "failed to send restore request to the raft: restore channel closed");
             Err(Error::Raft(RaftError::EnqueueTimeout))
           }
-          rst = self.user_restore_tx.send((source, tx)).fuse() => {
+          rst = self.inner.user_restore_tx.send((source, tx)).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send restore request to the raft: restore channel closed");
               return Err(Error::Raft(RaftError::Closed("user restore channel closed")));
@@ -870,7 +871,7 @@ where
                     tracing::error!(target="ruraft", "failed to send apply request to the raft: apply channel closed");
                     Err(Error::Raft(RaftError::EnqueueTimeout))
                   }
-                  rst = self.apply_tx.send(ApplyRequest { log: LogKind::Noop, tx }).fuse() => {
+                  rst = self.inner.apply_tx.send(ApplyRequest { log: LogKind::Noop, tx }).fuse() => {
                     if let Err(e) = rst {
                       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
                       return Err(Error::Raft(RaftError::Closed("apply channel closed")));
@@ -906,14 +907,14 @@ where
     let (tx, rx) = oneshot::channel();
 
     if let Some(ref node) = target {
-      if node.id.eq(self.transport.local_id()) {
+      if node.id().eq(self.inner.transport.local_id()) {
         tracing::error!(target = "ruraft", "cannot transfer leadership to itself");
         return LeadershipTransferResponse::err(Error::Raft(RaftError::TransferToSelf));
       }
     }
 
     futures::select! {
-      rst = self.leader_transfer_tx.send((target, tx)).fuse() => {
+      rst = self.inner.leader_transfer_tx.send((target, tx)).fuse() => {
         match rst {
           Ok(_) => LeadershipTransferResponse::ok(rx),
           Err(e) => {
@@ -929,7 +930,7 @@ where
   }
 
   fn is_shutdown<Future: Fut<F, S, T>>(&self) -> Result<(), Future> {
-    if self.shutdown.load(Ordering::Acquire) {
+    if self.inner.shutdown.load(Ordering::Acquire) {
       Err(Future::err(Error::Raft(RaftError::Shutdown)))
     } else {
       Ok(())
@@ -937,7 +938,7 @@ where
   }
 
   fn is_shutdown_error(&self) -> Result<(), Error<F, S, T>> {
-    if self.shutdown.load(Ordering::Acquire) {
+    if self.inner.shutdown.load(Ordering::Acquire) {
       Err(Error::Raft(RaftError::Shutdown))
     } else {
       Ok(())
