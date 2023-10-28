@@ -1,14 +1,20 @@
 use std::{
   collections::{HashSet, LinkedList},
-  sync::atomic::Ordering,
+  sync::atomic::{AtomicU64, Ordering},
   time::Duration,
 };
 
-use futures::{future::join_all, StreamExt};
+use futures::{future::join_all, FutureExt, Stream, StreamExt};
 use nodecraft::{Address, Id};
 
 use super::*;
-use crate::{error::RaftError, storage::Log, utils::random_timeout};
+use crate::{
+  error::RaftError,
+  observe,
+  storage::Log,
+  utils::{override_notify_bool, random_timeout},
+  Observed,
+};
 
 mod commitment;
 use commitment::Commitment;
@@ -127,22 +133,15 @@ where
     #[cfg(feature = "metrics")]
     metrics::increment_counter!("ruraft.state.leader");
 
-    // override_notify_bool(self.leader_tx, true);
+    override_notify_bool(&self.leader_tx, &self.leader_rx, true).await;
 
-    // Store the notify chan. It's not reloadable so shouldn't change before the
-    // defer below runs, but this makes sure we always notify the same chan if
-    // ever for both gaining and loosing leadership.
-
-    // TODO: implement
-    // notify := r.config().NotifyCh
-
-    // Push to the notify channel if given
-    // if notify != nil {
-    //   select {
-    //   case notify <- true:
-    //   case <-r.shutdownCh:
-    //   }
-    // }
+    // Push to the notify channel
+    futures::select! {
+      _ = self.shutdown_rx.recv().fuse() => {
+        return Ok(false);
+      }
+      _ = self.leadership_change_tx.send(true).fuse() => {}
+    }
 
     let (step_down_tx, step_down_rx) = async_channel::bounded(1);
     let latest = self.memberships.latest().1.clone();
@@ -165,8 +164,38 @@ where
     }
 
     // Start a replication routine for each peer
+    let current_term = self.current_term();
+    let last_idx = self.last_index();
+    for (id, (addr, _)) in latest.iter() {
+      if local_id.eq(id) {
+        continue;
+      }
 
-    let rst = self
+      tracing::info!(target = "ruraft.repl", peer=%id, "added peer, starting replication");
+      let n = Node::new(id.clone(), addr.clone());
+      let repl = Replication::<F, S, T>::new::<R>(
+        &self.wg,
+        n.clone(),
+        leader_state.commitment.clone(),
+        current_term,
+        last_idx + 1,
+        step_down_tx.clone(),
+      )
+      .await;
+      // TODO: spawn replication
+      let _ = repl.trigger_tx.send(()).await;
+      observe(
+        &self.observers,
+        Observed::Peer {
+          node: n,
+          removed: false,
+        },
+      )
+      .await;
+    }
+
+    // Sit in the leader loop until we step down
+    let (leader_state, rst) = self
       .leader_loop(
         leader_state,
         #[cfg(feature = "metrics")]
@@ -174,16 +203,16 @@ where
       )
       .await;
 
-    // TODO: cleanup logic
-
+    self.clean_leader_state(leader_state, stop_tx).await;
     rst
   }
 
+  /// The hot loop for a leader. It is invoked after all the various leader setup is done.
   async fn leader_loop(
     &self,
     mut leader_state: LeaderState<F, S, T>,
     #[cfg(feature = "metrics")] saturation_metric: &mut SaturationMetric,
-  ) -> Result<bool, ()> {
+  ) -> (LeaderState<F, S, T>, Result<bool, ()>) {
     // stepDown is used to track if there is an inflight log that
     // would cause us to lose leadership (specifically a RemovePeer of
     // ourselves). If this is the case, we must not allow any logs to
@@ -196,6 +225,15 @@ where
 
     let (verify_resp_tx, verify_resp_rx) = async_channel::bounded(64);
     let mut verify_id = 0u64;
+
+    let stable_membership_consumer = StableMembershipConsumer {
+      rx: self.membership_change_rx.clone(),
+      memberships: self.memberships.clone(),
+      commit_index: self.state.commit_index.clone(),
+      commitment: leader_state.commitment.clone(),
+    };
+    futures::pin_mut!(stable_membership_consumer);
+
     while self.state.role() == Role::Leader {
       #[cfg(feature = "metrics")]
       saturation_metric.sleeping();
@@ -212,10 +250,23 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.leader", err=%e, "rpc consumer closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
-              return Err(());
+              return (leader_state, Err(()));
             }
           }
+        }
+        _ = leader_state.step_down_rx.recv().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
+          self.state.set_role(Role::Follower, &self.observers).await;
+        }
+        f = self.leader_transfer_rx.recv().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
+        }
+        _ = leader_state.commit_rx.recv().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
+
         }
         v = self.verify_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
@@ -225,8 +276,7 @@ where
             Ok(v) => self.handle_verify_leader_request(v, &mut leader_state, &mut verify_id, verify_resp_tx.clone()).await,
             Err(e) => {
               tracing::error!(target = "ruraft.leader", err=%e, "verify leader sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
-              return Err(());
+              return (leader_state, Err(()));
             }
           }
         }
@@ -236,6 +286,65 @@ where
 
           let v = v.expect("verify response sender closed unexpectedly, please report this bug to https://github.com/al8n/ruraft");
           self.handle_verify_leader_response(&mut leader_state, v).await;
+        }
+        ur = self.user_restore_rx.recv().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
+        }
+        cm = self.committed_membership_rx.recv().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
+
+          match cm {
+            Ok(cm) => {
+              if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
+                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                tracing::debug!(target = "ruraft.leader", err=%err, "committed membership request received, but leadership transfer in progress");
+                if cm.send(Err(err)).is_err() {
+                  tracing::error!(target = "ruraft.leader", "committed membership response receiver closed, shutting down...");
+                  return (leader_state, Err(()));
+                }
+                continue;
+              }
+
+              if cm.send(Ok(self.memberships.committed().clone())).is_err() {
+                tracing::error!(target = "ruraft.leader", "committed membership response receiver closed");
+                return (leader_state, Err(()));
+              }
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.leader", err=%e, "committed membership response sender closed unexpectedly, shutting down...");
+              return (leader_state, Err(()));
+            }
+          }
+        }
+        m = stable_membership_consumer.next().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
+
+          match m {
+            Some(m) => {
+              if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
+                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                tracing::debug!(target = "ruraft.leader", err=%err, "membership change request received, but leadership transfer in progress");
+                if m.tx.send(Err(err)).is_err() {
+                  tracing::error!(target = "ruraft.leader", "membership change response receiver closed, shutting down...");
+                  return (leader_state, Err(()));
+                }
+                continue;
+              }
+
+              self.append_membership_entry(m).await;
+            }
+            None => {
+              tracing::error!(target = "ruraft.leader", "stable membership change response sender closed unexpectedly, shutting down...");
+              return (leader_state, Err(()));
+            }
+          }
+        }
+        new_log = self.apply_rx.recv().fuse() => {
+          #[cfg(feature = "metrics")]
+          saturation_metric.working();
         }
         _ = lease.next().fuse() => {
           #[cfg(feature = "metrics")]
@@ -256,11 +365,72 @@ where
           //  Ignore since we are not a follower
         }
         _ = self.shutdown_rx.recv().fuse() => {
-          return Ok(false);
+          return (leader_state, Ok(false));
         }
       }
     }
-    Ok(true)
+    (leader_state, Ok(true))
+  }
+
+  async fn clean_leader_state(
+    &self,
+    mut leader_state: LeaderState<F, S, T>,
+    stop_tx: async_channel::Sender<()>,
+  ) {
+    stop_tx.close();
+
+    // Since we were the leader previously, we update our
+    // last contact time when we step down, so that we are not
+    // reporting a last contact time from before we were the
+    // leader. Otherwise, to a client it would seem our data
+    // is extremely stale.
+    self.set_last_contact(Instant::now());
+
+    // Respond to all inflight operations
+    leader_state.inflight.into_iter().map(|a| {});
+
+    // Respond to any pending verify requests
+    leader_state.notify.into_iter().for_each(|(id, tx)| {
+      if tx
+        .send(Err(Error::Raft(RaftError::LeadershipLost)))
+        .is_err()
+      {
+        tracing::warn!(
+          target = "ruraft.leader",
+          id=%id,
+          "verify leader response receiver closed"
+        );
+      }
+    });
+
+    // If we are stepping down for some reason, no known leader.
+    // We may have stepped down due to an RPC call, which would
+    // provide the leader, so we cannot always blank this out.
+    {
+      let cleader = self.leader.load();
+      let local_id = self.transport.local_id();
+      let local_addr = self.transport.local_addr();
+      if let Some(cleader) = cleader.as_ref() {
+        if cleader.id().eq(local_id) && cleader.addr().eq(local_addr) {
+          self.leader.set(None, &self.observers).await;
+        }
+      }
+    }
+
+    // Notify that we are not the leader
+    override_notify_bool(&self.leader_tx, &self.leader_rx, false).await;
+
+    // Push to the notify channel
+    futures::select! {
+      _ = self.shutdown_rx.recv().fuse() => {
+        // On shutdown, make a best effort but do not block
+        futures::select! {
+          _ = self.leadership_change_tx.send(false).fuse() => {}
+          default => {}
+        }
+      }
+      _ = self.leadership_change_tx.send(false).fuse() => {}
+    }
   }
 
   /// Set up state and start asynchronous replication to
@@ -377,7 +547,7 @@ where
         target = "ruraft.leader",
         "new leader elected, stepping down"
       );
-      self.state.set_role(Role::Follower);
+      self.state.set_role(Role::Follower, &self.observers).await;
 
       if let Some(tx) = leader_state.notify.remove(&v.id) {
         if tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
@@ -407,6 +577,39 @@ where
           "receive verify leader response, but fail to find response sender"
         );
       }
+    }
+  }
+}
+
+/// What is the meaning of stable membership?
+///
+/// Have to wait until:
+/// 1. The latest configuration is committed, and
+/// 2. This leader has committed some entry (the noop) in this term
+///    https://groups.google.com/forum/#!msg/raft-dev/t4xj6dJTP6E/d2D9LrWRza8J
+#[pin_project::pin_project]
+struct StableMembershipConsumer<F: FinateStateMachine, S: Storage, T: Transport> {
+  commitment: Commitment<T::Id, <T::Resolver as AddressResolver>::Address>,
+  memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  commit_index: Arc<AtomicU64>,
+  #[pin]
+  rx: async_channel::Receiver<MembershipChangeRequest<F, S, T>>,
+}
+
+impl<F: FinateStateMachine, S: Storage, T: Transport> Stream for StableMembershipConsumer<F, S, T> {
+  type Item = MembershipChangeRequest<F, S, T>;
+
+  fn poll_next(
+    self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Option<Self::Item>> {
+    let this = self.project();
+    if this.memberships.latest().0 == this.memberships.committed().0
+      && this.commit_index.load(Ordering::Acquire) >= this.commitment.start_index()
+    {
+      this.rx.poll_next(cx)
+    } else {
+      std::task::Poll::Pending
     }
   }
 }

@@ -76,7 +76,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "rpc consumer closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -89,7 +88,7 @@ where
             // Check if the term is greater than ours, bail
             if vote.resp.term > self.current_term() {
               tracing::debug!(target = "ruraft.candidate", term = %vote.resp.term, "newer term discovered, fallback to follower");
-              self.state.set_role(Role::Follower);
+              self.state.set_role(Role::Follower, &self.observers).await;
               self.set_current_term(vote.resp.term);
               return Ok(true);
             }
@@ -103,8 +102,8 @@ where
             // Check if we've become the leader
             if granted_votes >= votes_needed {
               tracing::info!(target = "ruraft.candidate", term = %term, tally = %granted_votes, "election won");
-              self.state.set_role(Role::Leader);
-              self.leader.set(Some(Node::new(local_id.clone(), local_addr.clone())), &self.observers);
+              self.state.set_role(Role::Leader, &self.observers).await;
+              self.leader.set(Some(Node::new(local_id.clone(), local_addr.clone())), &self.observers).await;
               return Ok(true);
             }
           }
@@ -122,7 +121,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "membership change sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -140,7 +138,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "membership sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -158,7 +155,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "apply sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -176,7 +172,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "verify sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -194,7 +189,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "user restore sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -212,7 +206,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "leader transfer sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -231,7 +224,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "follower notify sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }

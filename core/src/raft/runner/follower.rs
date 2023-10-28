@@ -59,7 +59,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "rpc consumer closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -77,7 +76,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "membership change sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -95,7 +93,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "apply sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -113,7 +110,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "verify sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -131,7 +127,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "user restore sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -149,7 +144,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "leader transfer sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -167,7 +161,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "membership sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -223,7 +216,7 @@ where
                   } else {
                     tracing::warn!(target = "ruraft.follower", last_leader_id = "", last_leader_addr="", "heartbeat timeout reached, starting election");
                   }
-                  self.state.set_role(Role::Candidate);
+                  self.state.set_role(Role::Candidate, &self.observers).await;
                   return Ok(true);
                 } else if !did_warn {
                   tracing::warn!(target = "ruraft.follower", "heartbeat timeout reached, not part of a stable membership or a non-voter, not triggering a leader election");

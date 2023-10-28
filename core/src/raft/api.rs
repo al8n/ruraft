@@ -113,8 +113,20 @@ where
   /// latest leadership transition. For example, if a receiver receives subsequent
   /// `true` values, they may deduce that leadership was lost and regained while
   /// the the receiver was processing first leadership transition.
-  pub fn leader_watcher(&self) -> LeaderWatcher {
+  ///
+  /// If you want to watch all leadership transitions, use [`leadership_change_watcher`].
+  pub fn leadership_watcher(&self) -> LeaderWatcher {
     LeaderWatcher(self.inner.leader_rx.clone())
+  }
+
+  /// Used to get a stream which will receive all of leadership changes.
+  /// Unlike [`leadership_watcher`], no change will be overriden,
+  /// which means subsequent `true` values will never happen.
+  ///
+  /// [`leadership_watcher`]: struct.RaftCore.html#method.leader_watcher
+  #[must_use = "The `LeaderWatcher` returned by `leadership_change_watcher` must be aggressively consumed. Otherwise, you should consider to use `leadership_watcher`."]
+  pub fn leadership_change_watcher(&self) -> LeaderWatcher {
+    LeaderWatcher(self.inner.leadership_change_rx.clone())
   }
 
   /// Used to apply a command to the [`FinateStateMachine`] in a highly consistent
@@ -441,12 +453,16 @@ where
   /// It is safe to call this multiple times.
   ///
   /// Returns `true`` if this call has shutdown the Raft and it was not shutdown already.
-  pub fn shutdown(&self) -> bool {
+  pub async fn shutdown(&self) -> bool {
     if self.inner.shutdown.load(Ordering::Acquire) {
       return false;
     }
 
-    self.inner.state.set_role(Role::Shutdown);
+    self
+      .inner
+      .state
+      .set_role(Role::Shutdown, &self.inner.observers)
+      .await;
     self.inner.shutdown_tx.close();
     self.inner.shutdown.store(true, Ordering::Release);
     true

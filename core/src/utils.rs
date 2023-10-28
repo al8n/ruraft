@@ -10,6 +10,31 @@ pub fn make_dir_all<P: AsRef<Path>>(path: &P, mode: u32) -> io::Result<()> {
   DirBuilder::new().recursive(true).mode(mode).create(path)
 }
 
+pub(crate) async fn override_notify_bool(
+  tx: &async_channel::Sender<bool>,
+  rx: &async_channel::Receiver<bool>,
+  v: bool,
+) {
+  use futures::FutureExt;
+
+  futures::select! {
+    _ = tx.send(v).fuse() => {
+      // value sent, all done
+    }
+    _ = rx.recv().fuse() => {
+      // channel had an old value
+      futures::select! {
+        _ = tx.send(v).fuse() => {
+          // value sent, all done
+        }
+        default => {
+          panic!("race: channel was sent concurrently");
+        }
+      }
+    }
+  }
+}
+
 /// Returns a value that is between the min_val and 2x min_val.
 pub fn random_timeout(min_val: Duration) -> Option<Duration> {
   if min_val == Duration::from_secs(0) {

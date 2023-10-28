@@ -1,13 +1,19 @@
-use std::sync::{
-  atomic::{AtomicU64, Ordering},
-  Arc,
+use std::{
+  collections::HashMap,
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+  },
 };
 
 use atomic::Atomic;
-use nodecraft::resolver::AddressResolver;
+use nodecraft::{resolver::AddressResolver, Address, Id};
 use parking_lot::Mutex;
 
-use crate::{membership::Membership, storage::SnapshotMeta, transport::Transport};
+use crate::{
+  membership::Membership, observe, storage::SnapshotMeta, transport::Transport, Observed, Observer,
+  ObserverId,
+};
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,
 /// or Shutdown.
@@ -88,7 +94,7 @@ pub(crate) struct State {
   current_term: AtomicU64,
 
   /// Highest committed log entry
-  commit_index: AtomicU64,
+  commit_index: Arc<AtomicU64>,
 
   /// Last applied log to the FSM
   last_applied: AtomicU64,
@@ -104,8 +110,15 @@ impl State {
     self.role.load(Ordering::SeqCst)
   }
 
-  pub(crate) fn set_role(&self, role: Role) {
-    self.role.store(role, Ordering::Release)
+  pub(crate) async fn set_role<I: Id, A: Address>(
+    &self,
+    role: Role,
+    observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
+  ) {
+    let old = self.role.swap(role, Ordering::Release);
+    if old != role {
+      observe::<I, A>(observers, Observed::Role(role)).await;
+    }
   }
 
   pub(crate) fn current_term(&self) -> u64 {

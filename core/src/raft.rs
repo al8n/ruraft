@@ -208,6 +208,7 @@ where
   verify_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
 
   leader_rx: async_channel::Receiver<bool>,
+  leadership_change_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
   observers: Arc<
     async_lock::RwLock<
@@ -654,10 +655,11 @@ where
     let (user_restore_tx, user_restore_rx) = async_channel::unbounded();
     let (leader_transfer_tx, leader_transfer_rx) = async_channel::bounded(1);
     let (verify_tx, verify_rx) = async_channel::bounded(64);
-    let (leader_tx, leader_rx) = async_channel::unbounded();
+    let (leader_tx, leader_rx) = async_channel::bounded(1);
+    let (leadership_change_tx, leadership_change_rx) = async_channel::unbounded();
     let state = Arc::new(State {
       current_term: AtomicU64::new(current_term),
-      commit_index: AtomicU64::new(0),
+      commit_index: Arc::new(AtomicU64::new(0)),
       last_applied: AtomicU64::new(last_applied),
       last: last.clone(),
       role: Atomic::new(Role::Follower),
@@ -694,6 +696,8 @@ where
       committed_membership_rx,
       leader_transfer_rx,
       leader_tx,
+      leader_rx: leader_rx.clone(),
+      leadership_change_tx,
       verify_rx,
       user_restore_rx,
       observers: observers.clone(),
@@ -749,6 +753,7 @@ where
       leader_transfer_tx,
       verify_tx,
       leader_rx,
+      leadership_change_rx,
       observers,
       wg,
     };

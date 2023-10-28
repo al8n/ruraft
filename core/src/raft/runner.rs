@@ -101,7 +101,8 @@ where
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
   pub(super) leader_tx: async_channel::Sender<bool>,
-
+  pub(super) leader_rx: async_channel::Receiver<bool>,
+  pub(super) leadership_change_tx: async_channel::Sender<bool>,
   pub(super) observers: Arc<
     async_lock::RwLock<
       HashMap<ObserverId, Observer<T::Id, <T::Resolver as AddressResolver>::Address>>,
@@ -172,7 +173,7 @@ where
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
-                    self.set_role(Role::Shutdown);
+                    self.set_role(Role::Shutdown, &self.observers).await;
                   }
                 }
               },
@@ -185,7 +186,7 @@ where
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
-                    self.set_role(Role::Shutdown);
+                    self.set_role(Role::Shutdown, &self.observers).await;
                   }
                 }
               },
@@ -198,7 +199,7 @@ where
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
-                    self.set_role(Role::Shutdown);
+                    self.set_role(Role::Shutdown, &self.observers).await;
                   }
                 }
               },
@@ -282,7 +283,7 @@ where
           .load(Ordering::Acquire))
     {
       // Ensure transition to follower
-      self.set_role(Role::Follower);
+      self.set_role(Role::Follower, &self.observers).await;
       self.set_current_term(req.term);
       resp.term = req.term;
     }
