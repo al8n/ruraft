@@ -6,11 +6,13 @@ use std::{
 
 use futures::{future::join_all, FutureExt, Stream, StreamExt};
 use nodecraft::{Address, Id};
+use smallvec::SmallVec;
 
 use super::*;
 use crate::{
   error::RaftError,
   observe,
+  raft::ApplyRequest,
   storage::Log,
   utils::{override_notify_bool, random_timeout},
   Observed,
@@ -22,6 +24,7 @@ mod replication;
 use replication::Replication;
 
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
+const NUM_INLINED: usize = 4;
 
 pub(super) struct Verify<F: FinateStateMachine, S: Storage, T: Transport> {
   pub(super) id: u64,
@@ -193,6 +196,8 @@ where
       )
       .await;
     }
+    #[cfg(feature = "metrics")]
+    metrics::gauge!("ruraft.peers", latest.len() as f64);
 
     // Sit in the leader loop until we step down
     let (leader_state, rst) = self
@@ -262,11 +267,12 @@ where
         f = self.leader_transfer_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
+          todo!()
         }
         _ = leader_state.commit_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
-
+          todo!()
         }
         v = self.verify_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
@@ -290,6 +296,26 @@ where
         ur = self.user_restore_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
+
+          match ur {
+            Ok((src, tx)) => {
+              if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
+                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                tracing::debug!(target = "ruraft.leader", err=%err, "restore snapshot request received, but leadership transfer in progress");
+                if tx.send(Err(err)).is_err() {
+                  tracing::error!(target = "ruraft.leader", "restore snapshot response receiver closed, shutting down...");
+                  return (leader_state, Err(()));
+                }
+                continue;
+              }
+
+              self.restore_user_snapshot(src).await;
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.leader", err=%e, "restore snapshot response sender closed unexpectedly, shutting down...");
+              return (leader_state, Err(()));
+            }
+          }
         }
         cm = self.committed_membership_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
@@ -345,6 +371,26 @@ where
         new_log = self.apply_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
+
+          match new_log {
+            Ok(new_log) => {
+              if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
+                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                tracing::debug!(target = "ruraft.leader", err=%err, "apply request received, but leadership transfer in progress");
+                if new_log.tx.send(Err(err)).is_err() {
+                  tracing::error!(target = "ruraft.leader", "apply response receiver closed, shutting down...");
+                  return (leader_state, Err(()));
+                }
+                continue;
+              }
+
+              self.apply_new_log_entry(new_log, step_down).await;
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.leader", err=%e, "apply response sender closed unexpectedly, shutting down...");
+              return (leader_state, Err(()));
+            }
+          }
         }
         _ = lease.next().fuse() => {
           #[cfg(feature = "metrics")]
@@ -374,7 +420,7 @@ where
 
   async fn clean_leader_state(
     &self,
-    mut leader_state: LeaderState<F, S, T>,
+    leader_state: LeaderState<F, S, T>,
     stop_tx: async_channel::Sender<()>,
   ) {
     stop_tx.close();
@@ -433,61 +479,136 @@ where
     }
   }
 
-  /// Set up state and start asynchronous replication to
-  /// new peers, and stop replication to removed peers. Before removing a peer,
-  /// it'll instruct the replication routines to try to replicate to the current
-  /// index. This must only be called from the main thread.
-  async fn start_stop_replication(
+  // /// Set up state and start asynchronous replication to
+  // /// new peers, and stop replication to removed peers. Before removing a peer,
+  // /// it'll instruct the replication routines to try to replicate to the current
+  // /// index. This must only be called from the main thread.
+  // async fn start_stop_replication(
+  //   &self,
+  //   local_id: &T::Id,
+  //   leader_state: &mut LeaderState<F, S, T>,
+  //   step_down_tx: async_channel::Sender<()>,
+  // ) {
+  //   let latest = self.memberships.latest().1.clone();
+  //   let last_idx = self.last_index();
+  //   let mut in_membership = HashMap::with_capacity(latest.len());
+
+  //   // Start replication goroutines that need starting
+  //   for (id, (addr, suffrage)) in latest.iter() {
+  //     if id.eq(local_id) {
+  //       continue;
+  //     }
+
+  //     in_membership.insert(id.clone(), true);
+
+  //     match leader_state.repl_state.get(id) {
+  //       None => {
+  //         tracing::info!(target = "ruraft.repl", peer=%id, "added peer, starting replication");
+
+  //         let repl = Replication::<F, S, T>::new::<R>(
+  //           &self.wg,
+  //           Node::new(id.clone(), addr.clone()),
+  //           leader_state.commitment.clone(),
+  //           self.state.current_term(),
+  //           last_idx + 1,
+  //           step_down_tx.clone(),
+  //         )
+  //         .await;
+  //         // repl.trigger_tx.send(()).await.unwrap();
+  //         // TODO: implement
+  //         // r.leaderState.replState[server.ID] = s
+  //         // r.goFunc(func() { r.replicate(s) })
+  //         // asyncNotifyCh(s.triggerCh)
+  //         // r.observe(PeerObservation{Peer: server, Removed: false})
+  //       }
+  //       Some(r) => {
+  //         let peer: Arc<_> = r.peer.load().clone();
+
+  //         if peer.addr().ne(addr) {
+  //           tracing::info!(target = "ruraft.repl", peer=%id, "updating peer");
+  //           r.peer.store(Arc::new(Node::new(id.clone(), addr.clone())));
+  //         }
+  //       }
+  //     }
+  //   }
+  //   // Update peers metric
+  //   #[cfg(feature = "metrics")]
+  //   metrics::gauge!("ruraft.peers", latest.len() as f64);
+  // }
+
+  /// Used to manually consume an external snapshot, such as if restoring from a backup.
+  /// We will use the current Raft configuration, not the one from the snapshot,
+  /// so that we can restore into a new cluster.
+  /// We will also use the higher of the index of the snapshot, or the current index,
+  /// and then add 1 to that, so we force a new state with a hole in the Raft log,
+  /// so that the snapshot will be sent to followers and used for any new joiners.
+  /// This can only be run on the leader,
+  /// and returns a future that can be used to block until complete.
+  async fn restore_user_snapshot(&self, src: <S::Snapshot as SnapshotStorage>::Source) {
+    todo!()
+  }
+
+  /// Changes the membership and adds a new membership entry to the log.
+  async fn append_membership_entry(&self, req: MembershipChangeRequest<F, S, T>) {
+    todo!()
+  }
+
+  async fn apply_new_log_entry(&self, req: ApplyRequest<F, Error<F, S, T>>, step_down: bool) {
+    // Group commit, gather all the ready commits
+  }
+
+  /// Called on the leader to push a log to disk, mark it
+  /// as inflight and begin replication of it.
+  async fn dispatch_logs(
     &self,
-    local_id: &T::Id,
     leader_state: &mut LeaderState<F, S, T>,
-    step_down_tx: async_channel::Sender<()>,
+    reqs: SmallVec<[ApplyRequest<F, Error<F, S, T>>; NUM_INLINED]>,
   ) {
-    let latest = self.memberships.latest().1.clone();
+    #[cfg(feature = "metrics")]
+    let now = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer! {
+      metrics::histogram!("ruraft.leader.dispatch_logs", now.elapsed().as_millis() as f64);
+    }
+
+    let term = self.current_term();
     let last_idx = self.last_index();
-    let mut in_membership = HashMap::with_capacity(latest.len());
 
-    // Start replication goroutines that need starting
-    for (id, (addr, suffrage)) in latest.iter() {
-      if id.eq(local_id) {
-        continue;
-      }
+    let n = reqs.len();
 
-      in_membership.insert(id.clone(), true);
+    let logs = SmallVec::<[_; NUM_INLINED]>::with_capacity(n);
 
-      match leader_state.repl_state.get(id) {
-        None => {
-          tracing::info!(target = "ruraft.repl", peer=%id, "added peer, starting replication");
+    #[cfg(feature = "metrics")]
+    metrics::gauge!("ruraft.leader.dispatch_num_logs", n as f64);
 
-          let repl = Replication::<F, S, T>::new::<R>(
-            &self.wg,
-            Node::new(id.clone(), addr.clone()),
-            leader_state.commitment.clone(),
-            self.state.current_term(),
-            last_idx + 1,
-            step_down_tx.clone(),
-          )
-          .await;
-          // repl.trigger_tx.send(()).await.unwrap();
-          // TODO: implement
-          // r.leaderState.replState[server.ID] = s
-          // r.goFunc(func() { r.replicate(s) })
-          // asyncNotifyCh(s.triggerCh)
-          // r.observe(PeerObservation{Peer: server, Removed: false})
-        }
-        Some(r) => {
-          let peer: Arc<_> = r.peer.load().clone();
+    for req in reqs {
+      let log = Log {
+        term,
+        index: last_idx,
+        kind: req.log,
+        appended_at: now,
+      };
+      logs.push(log);
+      leader_state.inflight.push_back(req.tx);
+    }
 
-          if peer.addr().ne(addr) {
-            tracing::info!(target = "ruraft.repl", peer=%id, "updating peer");
-            r.peer.store(Arc::new(Node::new(id.clone(), addr.clone())));
-          }
-        }
+    // Write the log entry locally
+    let ls = self.storage.log_store();
+    match ls.store_many(&logs).await {
+      Ok(_) => {}
+      Err(e) => {
+        tracing::error!(target = "ruraft.leader", err=%e, "failed to commit logs");
       }
     }
-    // Update peers metric
-    #[cfg(feature = "metrics")]
-    metrics::gauge!("ruraft.peers", latest.len() as f64);
+
+    // Update the last log since it's on disk now
+    self.state.set_last_log(LastLog::new(last_idx, term));
+
+    // Notify the replicators of the new log
+    join_all(leader_state.repl_state.values().map(|repl| async move {
+      let _ = repl.trigger_tx.send(()).await;
+    }))
+    .await;
   }
 
   /// Causes the followers to attempt an immediate heartbeat.
