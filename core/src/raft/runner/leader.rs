@@ -382,7 +382,11 @@ where
                 continue;
               }
 
-              self.append_membership_entry(m).await;
+              self.append_membership_entry(
+                local_id,
+                &mut leader_state,
+                m
+              ).await;
             }
             None => {
               tracing::error!(target = "ruraft.leader", "stable membership change response sender closed unexpectedly, shutting down...");
@@ -581,8 +585,51 @@ where
   }
 
   /// Changes the membership and adds a new membership entry to the log.
-  async fn append_membership_entry(&self, req: MembershipChangeRequest<F, S, T>) {
-    todo!()
+  async fn append_membership_entry(
+    &self,
+    local_id: &T::Id,
+    leader_state: &mut LeaderState<F, S, T>,
+    req: MembershipChangeRequest<F, S, T>
+  ) {
+    let membership = {
+      let latest = self.memberships.latest().clone();
+      Membership::next(&latest.1, latest.0, req.cmd)
+    };
+
+    match membership {
+      Err(e) => {
+        let _ = req.tx.send(Err(Error::membership(e)));
+      },
+      Ok(membership) => {
+        tracing::info!(
+          target = "ruraft.leader",
+          servers = %membership,
+          "updating membership");
+        
+        // In pre-ID compatibility mode we translate all configuration changes
+        // in to an old remove peer message, which can handle all supported
+        // cases for peer changes in the pre-ID world (adding and removing
+        // voters)
+        let m = Arc::new(membership);
+        let (tx, _rx) = oneshot::channel();
+        let logs = smallvec::smallvec![ApplyRequest {
+          log: LogKind::Membership(m.clone()),
+          tx,
+        }];
+
+        let Some(LastLog { index, .. }) = self.dispatch_logs(local_id, leader_state, logs).await else {
+          return;
+        };
+
+        self.memberships.set_latest(m.clone(), index);
+        leader_state.commitment.set_membership(&m).await;
+        // TODO: start_stop_replication
+
+        // ignore the error, since if the receiver is closed
+        // which means users are no longer interested in the response
+        let _ = req.tx.send(Ok(index));
+      }
+    }
   }
 
   async fn apply_new_log_entry(
@@ -629,7 +676,7 @@ where
     local_id: &T::Id,
     leader_state: &mut LeaderState<F, S, T>,
     reqs: SmallVec<[ApplyRequest<F, Error<F, S, T>>; NUM_INLINED]>,
-  ) {
+  ) -> Option<LastLog> {
     let now = Instant::now();
     #[cfg(feature = "metrics")]
     scopeguard::defer! {
@@ -667,7 +714,7 @@ where
         let _ = tx.send(Err(Error::log(e.clone())));
       }
       self.state.set_role(Role::Follower, &self.observers).await;
-      return;
+      return None;
     }
 
     leader_state
@@ -683,6 +730,7 @@ where
       let _ = repl.trigger_tx.send(()).await;
     }))
     .await;
+    Some(LastLog::new(last_idx, term))
   }
 
   /// Used to check if we can contact a quorum of nodes
@@ -876,4 +924,9 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Stream for StableMembershi
       std::task::Poll::Pending
     }
   }
+}
+
+enum LogResponseSender<E> {
+  Membership(oneshot::Sender<Result<u64, E>>),
+  
 }
