@@ -50,8 +50,6 @@ use snapshot::{CountingReader, SnapshotRestoreMonitor};
 mod state;
 pub use state::*;
 
-const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
-
 pub struct Node<I: Id, A: Address>(Arc<(I, A)>);
 
 impl<I: Id, A: Address> Clone for Node<I, A> {

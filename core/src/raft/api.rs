@@ -184,7 +184,7 @@ where
   /// See also [`barrier_timeout`].
   ///
   /// [`barrier_timeout`]: struct.RaftCore.html#method.barrier_timeout
-  pub async fn barrier(&self) -> BarrierResponse<F, S, T> {
+  pub async fn barrier(&self) -> ApplyResponse<F, S, T> {
     self.barrier_in(None).await
   }
 
@@ -197,7 +197,7 @@ where
   /// See also [`barrier`].
   ///
   /// [`barrier`]: struct.RaftCore.html#method.barrier
-  pub async fn barrier_timeout(&self, timeout: Duration) -> BarrierResponse<F, S, T> {
+  pub async fn barrier_timeout(&self, timeout: Duration) -> ApplyResponse<F, S, T> {
     self.barrier_in(Some(timeout)).await
   }
 
@@ -683,7 +683,7 @@ where
     }
   }
 
-  async fn barrier_in(&self, timeout: Option<Duration>) -> BarrierResponse<F, S, T> {
+  async fn barrier_in(&self, timeout: Option<Duration>) -> ApplyResponse<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -700,22 +700,22 @@ where
     if let Some(timeout) = timeout {
       futures::select! {
         _ = R::sleep(timeout).fuse() => {
-          BarrierResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+          ApplyResponse::err(Error::Raft(RaftError::EnqueueTimeout))
         }
         rst = self.inner.apply_tx.send(req).fuse() => {
           if let Err(e) = rst {
             tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-            BarrierResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
+            ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
           } else {
-            BarrierResponse::ok(rx)
+            ApplyResponse::ok(rx)
           }
         },
       }
     } else if let Err(e) = self.inner.apply_tx.send(req).await {
       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-      BarrierResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
+      ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
     } else {
-      BarrierResponse::ok(rx)
+      ApplyResponse::ok(rx)
     }
   }
 

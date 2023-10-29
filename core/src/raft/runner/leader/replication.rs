@@ -1,6 +1,6 @@
 use agnostic::Runtime;
-use arc_swap::{ArcSwap, ArcSwapOption};
-use nodecraft::{resolver::AddressResolver, Address, Id};
+use arc_swap::ArcSwap;
+use nodecraft::resolver::AddressResolver;
 use parking_lot::Mutex;
 use std::{
   collections::{HashMap, HashSet},

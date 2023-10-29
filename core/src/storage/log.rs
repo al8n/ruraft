@@ -1,4 +1,9 @@
-use std::{future::Future, ops::RangeBounds, sync::Arc, time::Duration};
+use std::{
+  future::Future,
+  ops::RangeBounds,
+  sync::Arc,
+  time::{Duration, Instant},
+};
 
 use async_channel::Receiver;
 use bytes::Bytes;
@@ -7,7 +12,6 @@ use futures::FutureExt;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  utils::now_timestamp,
 };
 
 pub struct MembershipLog<I: Id, A: Address> {
@@ -129,7 +133,67 @@ pub struct Log<I: Id, A: Address> {
       )
     )
   )]
-  appended_at: u64,
+  #[cfg_attr(feature = "serde", serde(with = "serde_instant::option"))]
+  appended_at: Option<Instant>,
+}
+
+#[cfg(feature = "serde")]
+mod serde_instant {
+  use serde::{Deserialize, Serialize, Serializer};
+  use std::time::{Duration, Instant};
+
+  #[derive(Serialize, Deserialize)]
+  struct SerializableInstant {
+    secs: u64,
+    nanos: u32,
+  }
+
+  impl From<Instant> for SerializableInstant {
+    fn from(instant: Instant) -> Self {
+      let duration_since_epoch = instant.elapsed();
+      SerializableInstant {
+        secs: duration_since_epoch.as_secs(),
+        nanos: duration_since_epoch.subsec_nanos(),
+      }
+    }
+  }
+
+  impl Into<Instant> for SerializableInstant {
+    fn into(self) -> Instant {
+      Instant::now() - Duration::new(self.secs, self.nanos)
+    }
+  }
+
+  pub(super) mod option {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(
+      instant: &Option<Instant>,
+      serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+      let serializable_instant: Option<SerializableInstant> = (*instant).map(Into::into);
+      serializable_instant.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+      deserializer: D,
+    ) -> Result<Option<Instant>, D::Error> {
+      let serializable_instant = Option::<SerializableInstant>::deserialize(deserializer)?;
+      Ok(serializable_instant.map(Into::into))
+    }
+  }
+
+  pub fn serialize<S: Serializer>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error> {
+    let serializable_instant: SerializableInstant = instant.clone().into();
+    serializable_instant.serialize(serializer)
+  }
+
+  pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+  ) -> Result<Instant, D::Error> {
+    let serializable_instant = SerializableInstant::deserialize(deserializer)?;
+    Ok(serializable_instant.into())
+  }
 }
 
 impl<I: Id, A: Address> Log<I, A> {
@@ -143,7 +207,7 @@ impl<I: Id, A: Address> Log<I, A> {
         data,
         extension: Bytes::new(),
       },
-      appended_at: 0,
+      appended_at: None,
     }
   }
 
@@ -154,7 +218,7 @@ impl<I: Id, A: Address> Log<I, A> {
       index: 0,
       term: 0,
       kind: LogKind::User { data, extension },
-      appended_at: 0,
+      appended_at: None,
     }
   }
 
@@ -174,7 +238,7 @@ impl<I: Id, A: Address> Log<I, A> {
       index,
       term,
       kind,
-      appended_at: 0,
+      appended_at: None,
     }
   }
 }
@@ -185,7 +249,7 @@ impl<I: Id, A: Address> Log<I, A> {
 /// **N.B.** The implementation of [`LogStorage`] must be thread-safe.
 pub trait LogStorage: Clone + Send + Sync + 'static {
   /// The error type returned by the log storage.
-  type Error: std::error::Error + Send + Sync + 'static;
+  type Error: std::error::Error + Clone + Send + Sync + 'static;
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
@@ -306,8 +370,13 @@ pub(crate) trait LogStorageExt: LogStorage {
             // In error case emit 0 as the age
             let mut age_ms = 0;
             if let Ok(log) = self.oldest_log().await {
-              if log.appended_at != 0 {
-                age_ms = now_timestamp() - log.appended_at;
+              match log.appended_at {
+                Some(append_at) => {
+                  age_ms = append_at.elapsed().as_millis() as u64;
+                }
+                None => {
+                  age_ms = 0;
+                }
               }
             }
             metrics::gauge!("ruraft.log.oldest.ms", age_ms as f64);

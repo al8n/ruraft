@@ -1,11 +1,11 @@
 use std::{
-  collections::{HashSet, LinkedList},
+  collections::LinkedList,
   sync::atomic::{AtomicU64, Ordering},
   time::Duration,
 };
 
+use agnostic::Sleep;
 use futures::{future::join_all, FutureExt, Stream, StreamExt};
-use nodecraft::{Address, Id};
 use smallvec::SmallVec;
 
 use super::*;
@@ -13,8 +13,8 @@ use crate::{
   error::RaftError,
   observe,
   raft::ApplyRequest,
-  storage::Log,
-  utils::{override_notify_bool, random_timeout},
+  storage::{Log, LogKind, LogStorage},
+  utils::override_notify_bool,
   Observed,
 };
 
@@ -23,6 +23,7 @@ use commitment::Commitment;
 mod replication;
 use replication::Replication;
 
+const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 const NUM_INLINED: usize = 4;
 
@@ -82,7 +83,8 @@ struct LeaderState<F: FinateStateMachine, S: Storage, T: Transport> {
   commit_rx: async_channel::Receiver<()>,
   commitment: Commitment<T::Id, <T::Resolver as AddressResolver>::Address>,
   // list of log in log index order
-  inflight: LinkedList<Log<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  inflight:
+    LinkedList<oneshot::Sender<Result<<F as FinateStateMachine>::Response, Error<F, S, T>>>>,
   repl_state: HashMap<T::Id, Replication<F, S, T>>,
   notify: HashMap<u64, oneshot::Sender<Result<(), Error<F, S, T>>>>,
   step_down_rx: async_channel::Receiver<()>,
@@ -149,7 +151,7 @@ where
     let (step_down_tx, step_down_rx) = async_channel::bounded(1);
     let latest = self.memberships.latest().1.clone();
     let last_index = self.state.last_index() + 1;
-    let leader_state = LeaderState::<F, S, T>::new(last_index, &latest, step_down_rx);
+    let mut leader_state = LeaderState::<F, S, T>::new(last_index, &latest, step_down_rx);
     let (stop_tx, stop_rx) = async_channel::bounded(1);
 
     #[cfg(feature = "metrics")]
@@ -199,9 +201,27 @@ where
     #[cfg(feature = "metrics")]
     metrics::gauge!("ruraft.peers", latest.len() as f64);
 
+    // Dispatch a no-op log entry first. This gets this leader up to the latest
+    // possible commit index, even in the absence of client commands. This used
+    // to append a membership entry instead of a noop. However, that permits
+    // an unbounded number of uncommitted memberships in the log. We now
+    // maintain that there exists at most one uncommitted membership entry in
+    // any log, so we have to do proper no-ops here.
+    //
+    // we ignore the response here, since we are not waiting for it
+    let (noop_tx, _noop_rx) = oneshot::channel();
+    let noop = ApplyRequest {
+      log: LogKind::Noop,
+      tx: noop_tx,
+    };
+    self
+      .dispatch_logs(local_id, &mut leader_state, smallvec::smallvec![noop])
+      .await;
+
     // Sit in the leader loop until we step down
     let (leader_state, rst) = self
       .leader_loop(
+        local_id,
         leader_state,
         #[cfg(feature = "metrics")]
         saturation_metric,
@@ -215,6 +235,7 @@ where
   /// The hot loop for a leader. It is invoked after all the various leader setup is done.
   async fn leader_loop(
     &self,
+    local_id: &T::Id,
     mut leader_state: LeaderState<F, S, T>,
     #[cfg(feature = "metrics")] saturation_metric: &mut SaturationMetric,
   ) -> (LeaderState<F, S, T>, Result<bool, ()>) {
@@ -226,7 +247,8 @@ where
     // of peers.
     let mut step_down = false;
 
-    let mut lease = R::interval(self.options.leader_lease_timeout());
+    let lease = R::sleep(self.options.leader_lease_timeout());
+    futures::pin_mut!(lease);
 
     let (verify_resp_tx, verify_resp_rx) = async_channel::bounded(64);
     let mut verify_id = 0u64;
@@ -384,7 +406,7 @@ where
                 continue;
               }
 
-              self.apply_new_log_entry(new_log, step_down).await;
+              self.apply_new_log_entry(local_id, &mut leader_state, new_log, step_down).await;
             }
             Err(e) => {
               tracing::error!(target = "ruraft.leader", err=%e, "apply response sender closed unexpectedly, shutting down...");
@@ -392,11 +414,19 @@ where
             }
           }
         }
-        _ = lease.next().fuse() => {
+        _ = (&mut lease).fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
 
+          // Check if we've exceeded the lease, potentially stepping down
+          let max_diff = self.check_leader_lease(local_id, &mut leader_state).await;
 
+
+          // Next check interval should adjust for the last node we've
+          // contacted, without going negative
+          let check_interval = self.options.leader_lease_timeout().saturating_sub(max_diff).max(MIN_CHECK_INTERVAL);
+          // Renew the lease timer
+          lease.as_mut().reset(Instant::now() + check_interval);
         }
         _ = self.leader_notify_rx.recv().fuse() => {
           join_all(leader_state.repl_state.iter().map(|(id, repl)| {
@@ -433,7 +463,9 @@ where
     self.set_last_contact(Instant::now());
 
     // Respond to all inflight operations
-    leader_state.inflight.into_iter().map(|a| {});
+    leader_state.inflight.into_iter().for_each(|tx| {
+      let _ = tx.send(Err(Error::Raft(RaftError::LeadershipLost)));
+    });
 
     // Respond to any pending verify requests
     leader_state.notify.into_iter().for_each(|(id, tx)| {
@@ -553,18 +585,51 @@ where
     todo!()
   }
 
-  async fn apply_new_log_entry(&self, req: ApplyRequest<F, Error<F, S, T>>, step_down: bool) {
+  async fn apply_new_log_entry(
+    &self,
+    local_id: &T::Id,
+    leader_state: &mut LeaderState<F, S, T>,
+    req: ApplyRequest<F, Error<F, S, T>>,
+    step_down: bool,
+  ) {
     // Group commit, gather all the ready commits
+    let mut reqs: SmallVec<[_; NUM_INLINED]> = smallvec::smallvec![req];
+    'group: loop {
+      for _ in 0..self.options.max_append_entries {
+        futures::select! {
+          req = self.apply_rx.recv().fuse() => {
+            if let Ok(req) = req {
+              reqs.push(req);
+            } else {
+              break 'group;
+            }
+          }
+          default => {
+            break 'group;
+          }
+        }
+      }
+    }
+
+    // Dispatch the logs
+    if step_down {
+      // we're in the process of stepping down as leader, don't process anything new
+      for req in reqs {
+        let _ = req.tx.send(Err(Error::Raft(RaftError::LeadershipLost)));
+      }
+    } else {
+      self.dispatch_logs(local_id, leader_state, reqs).await;
+    }
   }
 
   /// Called on the leader to push a log to disk, mark it
   /// as inflight and begin replication of it.
   async fn dispatch_logs(
     &self,
+    local_id: &T::Id,
     leader_state: &mut LeaderState<F, S, T>,
     reqs: SmallVec<[ApplyRequest<F, Error<F, S, T>>; NUM_INLINED]>,
   ) {
-    #[cfg(feature = "metrics")]
     let now = Instant::now();
     #[cfg(feature = "metrics")]
     scopeguard::defer! {
@@ -576,7 +641,7 @@ where
 
     let n = reqs.len();
 
-    let logs = SmallVec::<[_; NUM_INLINED]>::with_capacity(n);
+    let mut logs = SmallVec::<[_; NUM_INLINED]>::with_capacity(n);
 
     #[cfg(feature = "metrics")]
     metrics::gauge!("ruraft.leader.dispatch_num_logs", n as f64);
@@ -586,7 +651,7 @@ where
         term,
         index: last_idx,
         kind: req.log,
-        appended_at: now,
+        appended_at: Some(now),
       };
       logs.push(log);
       leader_state.inflight.push_back(req.tx);
@@ -594,12 +659,21 @@ where
 
     // Write the log entry locally
     let ls = self.storage.log_store();
-    match ls.store_many(&logs).await {
-      Ok(_) => {}
-      Err(e) => {
-        tracing::error!(target = "ruraft.leader", err=%e, "failed to commit logs");
+    if let Err(e) = ls.store_logs(&logs).await {
+      tracing::error!(target = "ruraft.leader", err=%e, "failed to commit logs");
+      let new = LinkedList::new();
+      for tx in core::mem::replace(&mut leader_state.inflight, new) {
+        // TODO: log the error?
+        let _ = tx.send(Err(Error::log(e.clone())));
       }
+      self.state.set_role(Role::Follower, &self.observers).await;
+      return;
     }
+
+    leader_state
+      .commitment
+      .match_index(local_id, last_idx)
+      .await;
 
     // Update the last log since it's on disk now
     self.state.set_last_log(LastLog::new(last_idx, term));
@@ -609,6 +683,75 @@ where
       let _ = repl.trigger_tx.send(()).await;
     }))
     .await;
+  }
+
+  /// Used to check if we can contact a quorum of nodes
+  /// within the last leader lease interval. If not, we need to step down,
+  /// as we may have lost connectivity. Returns the maximum duration without
+  /// contact. This must only be called from the main thread.
+  async fn check_leader_lease(
+    &self,
+    local_id: &T::Id,
+    leader_state: &mut LeaderState<F, S, T>,
+  ) -> Duration {
+    // Track contacted nodes, we can always contact ourself
+    let mut contacted = 0;
+
+    // Store lease timeout for this one check invocation as we need to refer to it
+    // in the loop and would be confusing if it ever becomes reloadable and
+    // changes between iterations below.
+    let lease_timeout = self.options.leader_lease_timeout();
+
+    // Check each follower
+    let mut max_diff = Duration::ZERO;
+
+    let now = Instant::now();
+
+    let latest = self.memberships.latest().1.clone();
+    for (id, (addr, suffrage)) in latest.iter() {
+      if !suffrage.is_voter() {
+        continue;
+      }
+
+      if id.eq(local_id) {
+        contacted += 1;
+        continue;
+      }
+
+      let Some(repl) = leader_state.repl_state.get(id) else {
+        continue;
+      };
+
+      let diff = now - repl.last_contact();
+      if diff <= lease_timeout {
+        contacted += 1;
+        if diff > max_diff {
+          max_diff = diff;
+        }
+      } else {
+        // Log at least once at high value, then debug. Otherwise it gets very verbose.
+        if diff <= 3 * lease_timeout {
+          tracing::warn!(target = "ruraft.leader", peer=%id, "fail to contact");
+        } else {
+          tracing::debug!(target = "ruraft.leader", peer=%id, "fail to contact");
+        }
+      }
+
+      #[cfg(feature = "metrics")]
+      metrics::gauge!("ruraft.leader.last_contact", diff.as_millis() as f64);
+    }
+
+    // Verify we can contact a quorum
+    if contacted < latest.quorum_size() {
+      tracing::warn!(
+        target = "ruraft.leader",
+        "failed to contact quorum of nodes, stepping down"
+      );
+      self.state.set_role(Role::Follower, &self.observers).await;
+      #[cfg(feature = "metrics")]
+      metrics::increment_counter!("ruraft.transition.leader_lease_timeout");
+    }
+    max_diff
   }
 
   /// Causes the followers to attempt an immediate heartbeat.
