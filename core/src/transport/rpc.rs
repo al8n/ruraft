@@ -1,7 +1,7 @@
 use std::{
   future::Future,
   pin::Pin,
-  task::{Context, Poll},
+  task::{Context, Poll}, sync::Arc,
 };
 
 use futures::{channel::oneshot, Stream};
@@ -196,7 +196,7 @@ pub struct InstallSnapshotRequest<I: Id, A: Address> {
   last_log_term: u64,
 
   /// Cluster membership.
-  membership: Membership<I, A>,
+  membership: Arc<Membership<I, A>>,
 
   /// Log index where [`Membership`] entry was originally written.
   membership_index: u64,

@@ -19,7 +19,7 @@ use super::{
   fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer, ObserverId,
 };
 use crate::{
-  error::Error,
+  error::{Error, RaftError},
   membership::{Membership, Memberships},
   options::{Options, ReloadableOptions},
   sidecar::Sidecar,
@@ -304,7 +304,13 @@ where
         last.term
       } else {
         match self.storage.log_store().get_log(req.prev_log_entry).await {
-          Ok(prev_log) => prev_log.term,
+          Ok(Some(prev_log)) => prev_log.term,
+          Ok(None) => {
+            tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%Error::<F, S, T>::log_not_found(req.prev_log_entry), "previous log entry not found");
+            resp.no_retry_backoff = true;
+            respond!(tx.send(resp));
+            return;
+          }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
             resp.no_retry_backoff = true;
@@ -350,7 +356,7 @@ where
         }
 
         match ls.get_log(ent_idx).await {
-          Ok(stored_entry) => {
+          Ok(Some(stored_entry)) => {
             if entry.term != stored_entry.term {
               tracing::warn!(target = "ruraft.follower", from=%ent_idx, to=%last_log.index, "clearing log suffix");
               if let Err(e) = ls.remove_range(ent_idx..=last_log.index).await {
@@ -368,6 +374,11 @@ where
               pos = idx;
               break;
             }
+          }
+          Ok(None) => {
+            tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%Error::<F, S, T>::log_not_found(ent_idx), "failed to get log entry");
+            respond!(tx.send(resp));
+            return;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%e, "failed to get log entry");

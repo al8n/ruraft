@@ -107,6 +107,14 @@ pub enum RaftError<T: Transport> {
   )]
   NoExistingState,
 
+  /// Indicates a given log entry is not available.
+  #[error("ruraft: log(index = {0}) not found")]
+  LogNotFound(u64),
+
+  /// Returned when there are no snapshots in the storage.
+  #[error("ruraft: no snapshots found")]
+  NoSnapshots,
+
   /// Returned when trying to recover a raft cluster but cannot restore any of the available snapshots.
   #[error("ruraft: failed to restore any of the available snapshots")]
   FailedRestoreSnapshots,
@@ -194,5 +202,15 @@ where
     err: MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) -> Self {
     Self::Raft(RaftError::Membership(err))
+  }
+
+  #[inline]
+  pub(crate) const fn log_not_found(index: u64) -> Self {
+    Self::Raft(RaftError::LogNotFound(index))
+  }
+
+  #[inline]
+  pub(crate) const fn no_snapshots() -> Self {
+    Self::Raft(RaftError::NoSnapshots)
   }
 }

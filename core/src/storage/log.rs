@@ -268,7 +268,7 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   fn get_log(
     &self,
     index: u64,
-  ) -> impl Future<Output = Result<Log<Self::Id, Self::Address>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Stores a log entry
   fn store_log(
@@ -312,7 +312,7 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
 pub(crate) trait LogStorageExt: LogStorage {
   fn oldest_log(
     &self,
-  ) -> impl Future<Output = Result<Log<Self::Id, Self::Address>, LogStorageExtError<Self::Error>>> + Send
+  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, LogStorageExtError<Self::Error>>> + Send
   {
     async move {
       // We might get unlucky and have a truncate right between getting first log
@@ -369,7 +369,7 @@ pub(crate) trait LogStorageExt: LogStorage {
           _ = <Self::Runtime as agnostic::Runtime>::sleep(interval).fuse() => {
             // In error case emit 0 as the age
             let mut age_ms = 0;
-            if let Ok(log) = self.oldest_log().await {
+            if let Ok(Some(log)) = self.oldest_log().await {
               match log.appended_at {
                 Some(append_at) => {
                   age_ms = append_at.elapsed().as_millis() as u64;
@@ -437,7 +437,7 @@ pub(super) mod tests {
         panic!("{}: wanted no error but got err", case.name);
       }
 
-      if let Ok(got) = got {
+      if let Ok(Some(got)) = got {
         assert_eq!(
           got.index, case.want_idx,
           "{}: got index {}, want {}",

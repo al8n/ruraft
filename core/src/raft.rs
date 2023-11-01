@@ -431,12 +431,14 @@ where
     };
 
     for index in (snapshot_index + 1)..=last_log_index {
-      let entry = logs.get_log(index).await.map_err(|e| {
+      let Some(entry) = logs.get_log(index).await.map_err(|e| {
         Error::storage(
           <S::Error as StorageError>::log(e)
             .with_message(Cow::Owned(format!("failed to get log at index at {index}"))),
         )
-      })?;
+      })? else {
+        return Err(Error::log_not_found(index));
+      };
 
       if let LogKind::User { data, extension } = entry.kind {
         fsm
@@ -591,10 +593,13 @@ where
     };
 
     // Get the last log entry.
-    let last_log = ls.get_log(last_log_index).await.map_err(|e| {
+    let Some(last_log) = ls.get_log(last_log_index).await.map_err(|e| {
       tracing::error!(target = "ruraft", err=%e, "failed to get last log at index {}", last_log_index);
       Error::log(e)
-    })?;
+    })? else {
+      tracing::error!(target = "ruraft", index = %last_log_index, "last log not found");
+      return Err(Error::log_not_found(last_log_index));
+    };
 
     // Restore snapshot
     let snp = storage.snapshot_store();
@@ -609,11 +614,15 @@ where
     // Scan through the log for any membership change entries.
     for index in (last_snapshot.index + 1)..=last_log_index {
       match ls.get_log(index).await {
-        Ok(entry) => {
+        Ok(Some(entry)) => {
           if let LogKind::Membership(m) = entry.kind {
             membership_index = entry.index;
             membership = m;
           }
+        }
+        Ok(None) => {
+          tracing::error!(target = "ruraft", index=%index, err=%Error::<F, S, T>::log_not_found(index), "log entry not found");
+          return Err(Error::log_not_found(index));
         }
         Err(e) => {
           tracing::error!(target = "ruraft", index=%index, err=%e, "failed to get log");

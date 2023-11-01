@@ -623,8 +623,6 @@ where
         self.memberships.set_latest(m.clone(), index);
         leader_state.commitment.set_membership(&m).await;
         // TODO: start_stop_replication
-
-        
       }
     }
   }
