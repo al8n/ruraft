@@ -12,7 +12,7 @@ use super::*;
 use crate::{
   error::RaftError,
   observe,
-  raft::ApplyRequest,
+  raft::{ApplyRequest, ApplySender},
   storage::{Log, LogKind, LogStorage},
   utils::override_notify_bool,
   Observed,
@@ -83,8 +83,7 @@ struct LeaderState<F: FinateStateMachine, S: Storage, T: Transport> {
   commit_rx: async_channel::Receiver<()>,
   commitment: Commitment<T::Id, <T::Resolver as AddressResolver>::Address>,
   // list of log in log index order
-  inflight:
-    LinkedList<oneshot::Sender<Result<<F as FinateStateMachine>::Response, Error<F, S, T>>>>,
+  inflight: LinkedList<Inflight<F, Error<F, S, T>>>,
   repl_state: HashMap<T::Id, Replication<F, S, T>>,
   notify: HashMap<u64, oneshot::Sender<Result<(), Error<F, S, T>>>>,
   step_down_rx: async_channel::Receiver<()>,
@@ -212,7 +211,7 @@ where
     let (noop_tx, _noop_rx) = oneshot::channel();
     let noop = ApplyRequest {
       log: LogKind::Noop,
-      tx: noop_tx,
+      tx: ApplySender::Noop(noop_tx),
     };
     self
       .dispatch_logs(local_id, &mut leader_state, smallvec::smallvec![noop])
@@ -403,7 +402,7 @@ where
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
                 let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
                 tracing::debug!(target = "ruraft.leader", err=%err, "apply request received, but leadership transfer in progress");
-                if new_log.tx.send(Err(err)).is_err() {
+                if new_log.tx.send_err(err).is_err() {
                   tracing::error!(target = "ruraft.leader", "apply response receiver closed, shutting down...");
                   return (leader_state, Err(()));
                 }
@@ -467,8 +466,8 @@ where
     self.set_last_contact(Instant::now());
 
     // Respond to all inflight operations
-    leader_state.inflight.into_iter().for_each(|tx| {
-      let _ = tx.send(Err(Error::Raft(RaftError::LeadershipLost)));
+    leader_state.inflight.into_iter().for_each(|inf| {
+      let _ = inf.tx.send_err(Error::Raft(RaftError::LeadershipLost));
     });
 
     // Respond to any pending verify requests
@@ -589,7 +588,7 @@ where
     &self,
     local_id: &T::Id,
     leader_state: &mut LeaderState<F, S, T>,
-    req: MembershipChangeRequest<F, S, T>
+    req: MembershipChangeRequest<F, S, T>,
   ) {
     let membership = {
       let latest = self.memberships.latest().clone();
@@ -599,25 +598,25 @@ where
     match membership {
       Err(e) => {
         let _ = req.tx.send(Err(Error::membership(e)));
-      },
+      }
       Ok(membership) => {
         tracing::info!(
           target = "ruraft.leader",
           servers = %membership,
           "updating membership");
-        
+
         // In pre-ID compatibility mode we translate all configuration changes
         // in to an old remove peer message, which can handle all supported
         // cases for peer changes in the pre-ID world (adding and removing
         // voters)
         let m = Arc::new(membership);
-        let (tx, _rx) = oneshot::channel();
         let logs = smallvec::smallvec![ApplyRequest {
           log: LogKind::Membership(m.clone()),
-          tx,
+          tx: ApplySender::Membership(req.tx),
         }];
 
-        let Some(LastLog { index, .. }) = self.dispatch_logs(local_id, leader_state, logs).await else {
+        let Some(LastLog { index, .. }) = self.dispatch_logs(local_id, leader_state, logs).await
+        else {
           return;
         };
 
@@ -625,9 +624,7 @@ where
         leader_state.commitment.set_membership(&m).await;
         // TODO: start_stop_replication
 
-        // ignore the error, since if the receiver is closed
-        // which means users are no longer interested in the response
-        let _ = req.tx.send(Ok(index));
+        
       }
     }
   }
@@ -642,7 +639,7 @@ where
     // Group commit, gather all the ready commits
     let mut reqs: SmallVec<[_; NUM_INLINED]> = smallvec::smallvec![req];
     'group: loop {
-      for _ in 0..self.options.max_append_entries {
+      for _ in 0..self.options.max_append_entries() {
         futures::select! {
           req = self.apply_rx.recv().fuse() => {
             if let Ok(req) = req {
@@ -662,7 +659,7 @@ where
     if step_down {
       // we're in the process of stepping down as leader, don't process anything new
       for req in reqs {
-        let _ = req.tx.send(Err(Error::Raft(RaftError::LeadershipLost)));
+        let _ = req.tx.send_err(Error::Raft(RaftError::LeadershipLost));
       }
     } else {
       self.dispatch_logs(local_id, leader_state, reqs).await;
@@ -701,7 +698,10 @@ where
         appended_at: Some(now),
       };
       logs.push(log);
-      leader_state.inflight.push_back(req.tx);
+      leader_state.inflight.push_back(Inflight {
+        tx: req.tx.into(),
+        index: last_idx,
+      });
     }
 
     // Write the log entry locally
@@ -709,10 +709,11 @@ where
     if let Err(e) = ls.store_logs(&logs).await {
       tracing::error!(target = "ruraft.leader", err=%e, "failed to commit logs");
       let new = LinkedList::new();
-      for tx in core::mem::replace(&mut leader_state.inflight, new) {
+      for inf in core::mem::replace(&mut leader_state.inflight, new) {
         // TODO: log the error?
-        let _ = tx.send(Err(Error::log(e.clone())));
+        let _ = inf.tx.send_err(Error::log(e.clone()));
       }
+
       self.state.set_role(Role::Follower, &self.observers).await;
       return None;
     }
@@ -926,7 +927,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Stream for StableMembershi
   }
 }
 
-enum LogResponseSender<E> {
-  Membership(oneshot::Sender<Result<u64, E>>),
-  
+struct Inflight<F: FinateStateMachine, E> {
+  index: u64,
+  tx: ApplySender<F, E>,
 }

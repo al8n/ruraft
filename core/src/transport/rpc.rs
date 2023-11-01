@@ -265,12 +265,15 @@ pub struct HeartbeatResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
   header: Header<I, A>,
+
+  /// We may not succeed if we have a conflicting entry
+  success: bool,
 }
 
 impl<I: Id, A: Address> HeartbeatResponse<I, A> {
   /// Create a new HeartbeatResponse
-  pub const fn new(header: Header<I, A>) -> Self {
-    Self { header }
+  pub const fn new(header: Header<I, A>, success: bool) -> Self {
+    Self { header, success }
   }
 }
 

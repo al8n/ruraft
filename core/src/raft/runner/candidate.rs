@@ -149,7 +149,7 @@ where
           // Reject any operations since we are not the leader
           match a {
             Ok(a) => {
-              if a.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if a.tx.send_err(Error::Raft(RaftError::NotLeader)).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive apply request, but fail to send error response, receiver closed");
               }
             }

@@ -654,7 +654,7 @@ where
         data,
         extension: extension.unwrap_or_default(),
       },
-      tx,
+      tx: ApplySender::Log(tx),
     };
     match timeout {
       Some(timeout) => {
@@ -694,7 +694,7 @@ where
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
       log: LogKind::Barrier,
-      tx,
+      tx: ApplySender::Barrier(tx),
     };
 
     if let Some(timeout) = timeout {
@@ -839,7 +839,7 @@ where
               .apply_tx
               .send(ApplyRequest {
                 log: LogKind::Noop,
-                tx,
+                tx: ApplySender::Noop(tx),
               })
               .await
             {
@@ -887,7 +887,7 @@ where
                     tracing::error!(target="ruraft", "failed to send apply request to the raft: apply channel closed");
                     Err(Error::Raft(RaftError::EnqueueTimeout))
                   }
-                  rst = self.inner.apply_tx.send(ApplyRequest { log: LogKind::Noop, tx }).fuse() => {
+                  rst = self.inner.apply_tx.send(ApplyRequest { log: LogKind::Noop, tx: ApplySender::Noop(tx) }).fuse() => {
                     if let Err(e) = rst {
                       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
                       return Err(Error::Raft(RaftError::Closed("apply channel closed")));
@@ -1144,9 +1144,27 @@ pub(super) struct MembershipChangeRequest<F: FinateStateMachine, S: Storage, T: 
   pub(super) tx: oneshot::Sender<Result<u64, Error<F, S, T>>>,
 }
 
+pub(super) enum ApplySender<F: FinateStateMachine, E> {
+  Membership(oneshot::Sender<Result<u64, E>>),
+  Log(oneshot::Sender<Result<F::Response, E>>),
+  Barrier(oneshot::Sender<Result<F::Response, E>>),
+  Noop(oneshot::Sender<Result<(), E>>),
+}
+
+impl<F: FinateStateMachine, E> ApplySender<F, E> {
+  pub(super) fn send_err(self, err: E) -> Result<(), ()> {
+    match self {
+      Self::Membership(tx) => tx.send(Err(err)).map_err(|_| ()),
+      Self::Log(tx) => tx.send(Err(err)).map_err(|_| ()),
+      Self::Barrier(tx) => tx.send(Err(err)).map_err(|_| ()),
+      Self::Noop(tx) => tx.send(Err(err)).map_err(|_| ()),
+    }
+  }
+}
+
 pub(super) struct ApplyRequest<F: FinateStateMachine, E> {
   pub(super) log: LogKind<F::Id, F::Address>,
-  pub(super) tx: oneshot::Sender<Result<F::Response, E>>,
+  pub(super) tx: ApplySender<F, E>,
 }
 
 macro_rules! resp {

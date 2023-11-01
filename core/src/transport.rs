@@ -11,6 +11,8 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
+use crate::options::ProtocolVersion;
+
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
 /// `WireError` provides a standard interface to wrap and differentiate between
@@ -193,6 +195,18 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Provides the local unique identifier, helping in distinguishing this node from its peers.
   fn local_id(&self) -> &Self::Id;
+
+  /// Provides the protocol version used by the transport.
+  fn version(&self) -> ProtocolVersion;
+
+  /// Provides the header used for all RPC requests.
+  fn header(&self) -> Header<Self::Id, <Self::Resolver as AddressResolver>::Address> {
+    Header {
+      id: self.local_id().clone(),
+      addr: self.local_addr().clone(),
+      protocol_version: self.version(),
+    }
+  }
 
   /// Provides the concrete network address for peers in the Raft cluster to communicate with.
   fn advertise_addr(&self) -> SocketAddr;
