@@ -125,7 +125,7 @@ where
     observe(
       &self.observers,
       Observed::Peer {
-        node: remote,
+        id: remote.id().clone(),
         removed: false,
       },
     )
@@ -145,7 +145,7 @@ pub(super) struct Replication<F: FinateStateMachine, S: Storage, T: Transport> {
   /// removed from the cluster. In the follower removed case, it carries a log
   /// index; replication should be attempted with a best effort up through that
   /// index, before exiting.
-  stop_tx: async_channel::Sender<u64>,
+  pub(super) stop_tx: async_channel::Sender<u64>,
 
   /// Notify every time new entries are appended to the log.
   pub(super) trigger_tx: async_channel::Sender<()>,

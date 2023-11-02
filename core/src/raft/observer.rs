@@ -49,7 +49,7 @@ pub enum Observed<I: Id, A: Address> {
   /// Used for the data when leadership changes.
   Leader(Option<Node<I, A>>),
   /// Sent to observers when peers change.
-  Peer { node: Node<I, A>, removed: bool },
+  Peer { id: I, removed: bool },
   /// Sent when a node fails to heartbeat with the leader
   HeartbeatFailed { id: I, last_contact: Instant },
   /// Sent when a node resumes to heartbeat with the leader following failures

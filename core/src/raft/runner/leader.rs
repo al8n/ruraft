@@ -49,20 +49,10 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Verify<F, S, T> {
   pub(super) async fn vote(&self, leader: bool) {
     let mut votes = self.votes.lock().await;
 
-    match votes.1.take() {
-      Some(tx) => {
-        if leader {
-          votes.0 += 1;
-          if votes.0 >= self.quorum_size {
-            let _ = tx
-              .send(Verify {
-                id: self.id,
-                quorum_size: self.quorum_size,
-                votes: self.votes.clone(),
-              })
-              .await;
-          }
-        } else {
+    if let Some(tx) = votes.1.take() {
+      if leader {
+        votes.0 += 1;
+        if votes.0 >= self.quorum_size {
           let _ = tx
             .send(Verify {
               id: self.id,
@@ -71,8 +61,15 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Verify<F, S, T> {
             })
             .await;
         }
+      } else {
+        let _ = tx
+          .send(Verify {
+            id: self.id,
+            quorum_size: self.quorum_size,
+            votes: self.votes.clone(),
+          })
+          .await;
       }
-      None => return,
     }
   }
 }
@@ -213,6 +210,7 @@ where
       .leader_loop(
         local_id,
         leader_state,
+        step_down_tx,
         #[cfg(feature = "metrics")]
         saturation_metric,
       )
@@ -227,6 +225,7 @@ where
     &self,
     local_id: &T::Id,
     mut leader_state: LeaderState<F, S, T>,
+    step_down_tx: async_channel::Sender<()>,
     #[cfg(feature = "metrics")] saturation_metric: &mut SaturationMetric,
   ) -> (LeaderState<F, S, T>, Result<bool, ()>) {
     // stepDown is used to track if there is an inflight log that
@@ -375,7 +374,8 @@ where
               self.append_membership_entry(
                 local_id,
                 &mut leader_state,
-                m
+                &step_down_tx,
+                m,
               ).await;
             }
             None => {
@@ -505,62 +505,116 @@ where
     }
   }
 
-  // /// Set up state and start asynchronous replication to
-  // /// new peers, and stop replication to removed peers. Before removing a peer,
-  // /// it'll instruct the replication routines to try to replicate to the current
-  // /// index. This must only be called from the main thread.
-  // async fn start_stop_replication(
-  //   &self,
-  //   local_id: &T::Id,
-  //   leader_state: &mut LeaderState<F, S, T>,
-  //   step_down_tx: async_channel::Sender<()>,
-  // ) {
-  //   let latest = self.memberships.latest().1.clone();
-  //   let last_idx = self.last_index();
-  //   let mut in_membership = HashMap::with_capacity(latest.len());
+  /// Set up state and start asynchronous replication to
+  /// new peers, and stop replication to removed peers. Before removing a peer,
+  /// it'll instruct the replication routines to try to replicate to the current
+  /// index. This must only be called from the main thread.
+  async fn start_stop_replication(
+    &self,
+    local_id: &T::Id,
+    leader_state: &mut LeaderState<F, S, T>,
+    step_down_tx: &async_channel::Sender<()>,
+  ) {
+    let latest = self.memberships.latest().1.clone();
+    let last_idx = self.last_index();
+    let mut in_membership = HashMap::with_capacity(latest.len());
 
-  //   // Start replication goroutines that need starting
-  //   for (id, (addr, suffrage)) in latest.iter() {
-  //     if id.eq(local_id) {
-  //       continue;
-  //     }
+    // Start replication tasks that need starting
+    for (id, (addr, _)) in latest.iter() {
+      if id.eq(local_id) {
+        continue;
+      }
 
-  //     in_membership.insert(id.clone(), true);
+      in_membership.insert(id.clone(), true);
 
-  //     match leader_state.repl_state.get(id) {
-  //       None => {
-  //         tracing::info!(target = "ruraft.repl", peer=%id, "added peer, starting replication");
+      match leader_state.repl_state.get(id) {
+        None => {
+          tracing::info!(target = "ruraft.repl", peer=%id, "added peer, starting replication");
 
-  //         let repl = Replication::<F, S, T>::new::<R>(
-  //           &self.wg,
-  //           Node::new(id.clone(), addr.clone()),
-  //           leader_state.commitment.clone(),
-  //           self.state.current_term(),
-  //           last_idx + 1,
-  //           step_down_tx.clone(),
-  //         )
-  //         .await;
-  //         // repl.trigger_tx.send(()).await.unwrap();
-  //         // TODO: implement
-  //         // r.leaderState.replState[server.ID] = s
-  //         // r.goFunc(func() { r.replicate(s) })
-  //         // asyncNotifyCh(s.triggerCh)
-  //         // r.observe(PeerObservation{Peer: server, Removed: false})
-  //       }
-  //       Some(r) => {
-  //         let peer: Arc<_> = r.peer.load().clone();
+          self
+            .spawn_replication(
+              Node::new(id.clone(), addr.clone()),
+              leader_state,
+              self.current_term(),
+              last_idx + 1,
+              step_down_tx.clone(),
+            )
+            .await;
+        }
+        Some(r) => {
+          let peer = r.peer.load_full();
 
-  //         if peer.addr().ne(addr) {
-  //           tracing::info!(target = "ruraft.repl", peer=%id, "updating peer");
-  //           r.peer.store(Arc::new(Node::new(id.clone(), addr.clone())));
-  //         }
-  //       }
-  //     }
-  //   }
-  //   // Update peers metric
-  //   #[cfg(feature = "metrics")]
-  //   metrics::gauge!("ruraft.peers", latest.len() as f64);
-  // }
+          if peer.addr().ne(addr) {
+            tracing::info!(target = "ruraft.repl", peer=%id, "updating peer");
+            r.peer.store(Arc::new(Node::new(id.clone(), addr.clone())));
+          }
+        }
+      }
+    }
+
+    // Stop replication tasks that need stopping
+    let mut futs = futures::stream::FuturesUnordered::new();
+    leader_state.repl_state.retain(|id, repl| {
+      if in_membership.contains_key(id) {
+        true
+      } else {
+        tracing::info!(target = "ruraft.repl", peer=%id, "removing peer, stopping replication");
+        repl.stop_tx.close();
+        let id = id.clone();
+        futs.push(async move {
+          observe(&self.observers, Observed::Peer { id, removed: true }).await;
+        });
+        false
+      }
+    });
+
+    while futs.next().await.is_some() {}
+
+    // Update peers metric
+    #[cfg(feature = "metrics")]
+    metrics::gauge!("ruraft.peers", latest.len() as f64);
+  }
+
+  /// Handle commit event, return `true` if we should shutdown
+  async fn handle_commit(&self, local_id: &T::Id, leader_state: &mut LeaderState<F, S, T>) -> bool {
+    // Process the newly committed entries
+    let old_commit_index = self.current_term();
+    let commit_index = leader_state.commitment.get_commit_index().await;
+    self.set_commit_index(commit_index);
+
+    // New membership has been committed, set it as the committed
+		// value.
+    let (latest_index, latest) = {
+      let l = self.memberships.latest();
+      (l.0, l.1.clone())
+    };
+
+    let has_vote = latest.is_voter(local_id);
+    if latest_index > old_commit_index && latest_index <= commit_index{
+      self.memberships.set_committed(latest, latest_index);
+      if !has_vote {
+        return true;
+      }
+    }
+
+    let start = Instant::now();
+    let mut last_index_in_group = 0;
+
+    // Pull all inflight logs that are committed off the queue.
+    let mut inflight = core::mem::replace(&mut leader_state.inflight, LinkedList::new()).into_iter();
+    while let Some(inf) = inflight.next() {
+      let idx = inf.log.index;
+      if idx > commit_index {
+        // Don't go past the committed index
+
+      }
+
+      // Measure the commit time
+      
+    }
+
+    false
+  }
 
   /// Used to manually consume an external snapshot, such as if restoring from a backup.
   /// We will use the current Raft configuration, not the one from the snapshot,
@@ -579,6 +633,7 @@ where
     &self,
     local_id: &T::Id,
     leader_state: &mut LeaderState<F, S, T>,
+    step_down_tx: &async_channel::Sender<()>,
     req: MembershipChangeRequest<F, S, T>,
   ) {
     let membership = {
@@ -613,7 +668,9 @@ where
 
         self.memberships.set_latest(m.clone(), index);
         leader_state.commitment.set_membership(&m).await;
-        // TODO: start_stop_replication
+        self
+          .start_stop_replication(local_id, leader_state, step_down_tx)
+          .await;
       }
     }
   }
@@ -686,10 +743,10 @@ where
         kind: req.log,
         appended_at: Some(now),
       };
-      logs.push(log);
+      logs.push(log.clone());
       leader_state.inflight.push_back(Inflight {
-        tx: req.tx.into(),
-        index: last_idx,
+        tx: req.tx,
+        log
       });
     }
 
@@ -917,6 +974,6 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Stream for StableMembershi
 }
 
 struct Inflight<F: FinateStateMachine, E> {
-  index: u64,
+  log: Log<F::Id, F::Address>,
   tx: ApplySender<F, E>,
 }
