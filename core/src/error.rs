@@ -115,6 +115,10 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: no snapshots found")]
   NoSnapshots,
 
+  /// Returned when failing to replicate.
+  #[error("ruraft: replication failed")]
+  ReplicationFailed,
+
   /// Returned when trying to recover a raft cluster but cannot restore any of the available snapshots.
   #[error("ruraft: failed to restore any of the available snapshots")]
   FailedRestoreSnapshots,
@@ -212,5 +216,10 @@ where
   #[inline]
   pub(crate) const fn no_snapshots() -> Self {
     Self::Raft(RaftError::NoSnapshots)
+  }
+
+  #[inline]
+  pub(crate) const fn replication_failed() -> Self {
+    Self::Raft(RaftError::ReplicationFailed)
   }
 }

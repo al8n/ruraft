@@ -312,8 +312,9 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
 pub(crate) trait LogStorageExt: LogStorage {
   fn oldest_log(
     &self,
-  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, LogStorageExtError<Self::Error>>> + Send
-  {
+  ) -> impl Future<
+    Output = Result<Option<Log<Self::Id, Self::Address>>, LogStorageExtError<Self::Error>>,
+  > + Send {
     async move {
       // We might get unlucky and have a truncate right between getting first log
       // index and fetching it so keep trying until we succeed or hard fail.

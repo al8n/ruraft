@@ -66,7 +66,7 @@ where
   /// Returns the time of last contact by a leader.
   /// This only makes sense if we are currently a follower.
   pub fn last_contact(&self) -> Option<Instant> {
-    self.inner.last_contact.load().as_ref().map(|i| **i)
+    self.inner.last_contact.get()
   }
 
   /// Returns the last index in stable storage,

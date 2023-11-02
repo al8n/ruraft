@@ -1,7 +1,9 @@
 use std::{
   future::Future,
   pin::Pin,
-  task::{Context, Poll}, sync::Arc,
+  sync::Arc,
+  task::{Context, Poll},
+  time::Instant,
 };
 
 use futures::{channel::oneshot, Stream};
@@ -95,6 +97,21 @@ pub struct AppendEntriesRequest<I: Id, A: Address> {
   leader_commit: u64,
 }
 
+impl<I: Id, A: Address> AppendEntriesRequest<I, A> {
+  /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
+  /// are set to their default values.
+  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+    Self {
+      header: Header::new(version, id, addr),
+      term: 0,
+      prev_log_entry: 0,
+      prev_log_term: 0,
+      entries: Vec::new(),
+      leader_commit: 0,
+    }
+  }
+}
+
 /// The response returned from an
 /// [`AppendEntriesRequest`].
 #[viewit::viewit(setters(prefix = "with"))]
@@ -130,6 +147,35 @@ impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
       no_retry_backoff: false,
     }
   }
+}
+
+/// The response returned by a pipeline.
+///
+/// The difference between this and [`AppendEntriesResponse`] is that this
+/// keeps some extra information:
+///
+/// 1. the time that the append request was started
+/// 2. the original request's `term`
+/// 3. the number of entries the original request has
+/// 4. highest log index of the original request's entries
+#[viewit::viewit(getters(vis_all = "pub"), setters(prefix = "with"))]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PipelineAppendEntriesResponse<I: Id, A: Address> {
+  /// The term of the request
+  term: u64,
+
+  /// The highest log index of the [`AppendEntriesRequest`]'s entries
+  highest_log_index: Option<u64>,
+
+  /// The number of entries in the [`AppendEntriesRequest`]'s
+  num_entries: usize,
+
+  /// The time that the original request was started
+  start: Instant,
+
+  /// The response of the [`AppendEntriesRequest`]
+  #[viewit(getter(const, style = "ref"))]
+  resp: AppendEntriesResponse<I, A>,
 }
 
 /// The command used by a candidate to ask a Raft peer

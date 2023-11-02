@@ -17,6 +17,7 @@ use wg::AsyncWaitGroup;
 
 use super::{
   fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer, ObserverId,
+  OptionalContact,
 };
 use crate::{
   error::{Error, RaftError},
@@ -58,7 +59,7 @@ where
   pub(super) candidate_from_leadership_transfer: AtomicBool,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
-  pub(super) last_contact: Arc<ArcSwapOption<Instant>>,
+  pub(super) last_contact: OptionalContact,
   pub(super) leader: Leader<T::Id, <T::Resolver as AddressResolver>::Address>,
   pub(super) state: Arc<State>,
   pub(super) storage: Arc<S>,
@@ -215,12 +216,12 @@ where
 
   #[inline]
   fn set_last_contact(&self, instant: Instant) {
-    self.last_contact.store(Some(Arc::new(instant)));
+    self.last_contact.set(Some(instant));
   }
 
   #[inline]
   fn last_contact(&self) -> Option<Instant> {
-    self.last_contact.load().as_ref().map(|i| **i)
+    self.last_contact.get()
   }
 
   async fn handle_request(

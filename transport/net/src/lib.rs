@@ -292,7 +292,7 @@ where
 
   type Id = I;
 
-  // type Pipeline: AppendPipeline<Runtime = Self::Runtime>;
+  // type Pipeline: AppendEntriesPipeline<Runtime = Self::Runtime>;
 
   type Resolver = R;
 

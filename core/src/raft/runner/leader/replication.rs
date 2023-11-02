@@ -1,7 +1,7 @@
 use agnostic::Runtime;
 use arc_swap::ArcSwap;
 use atomic::Atomic;
-use futures::FutureExt;
+use futures::{channel::oneshot, FutureExt, Stream, StreamExt};
 use nodecraft::resolver::AddressResolver;
 use parking_lot::Mutex;
 use std::{
@@ -17,12 +17,17 @@ use wg::AsyncWaitGroup;
 
 use super::{super::super::spawn_local, Commitment, Node, Verify};
 use crate::{
+  error::{Error, RaftError},
   observe,
   options::ReloadableOptions,
-  storage::{Storage, LogStorage, SnapshotStorage, SnapshotSource},
-  transport::{Header, HeartbeatRequest, Transport, AppendEntriesRequest, InstallSnapshotRequest},
-  utils::{capped_exponential_backoff, random_timeout, backoff},
-  FinateStateMachine, Observed, Observer, ObserverId, error::{Error, RaftError}, Last, LastSnapshot,
+  raft::Contact,
+  storage::{LogStorage, SnapshotSource, SnapshotStorage, Storage},
+  transport::{
+    AppendEntriesPipeline, AppendEntriesPipelineFuture, AppendEntriesRequest, Header,
+    HeartbeatRequest, InstallSnapshotRequest, PipelineAppendEntriesResponse, Transport,
+  },
+  utils::{backoff, capped_exponential_backoff, random_timeout},
+  FinateStateMachine, Last, LastSnapshot, Observed, Observer, ObserverId,
 };
 
 const MAX_FAILURE_SCALE: u64 = 12;
@@ -47,7 +52,7 @@ pub(super) struct Replication<F: FinateStateMachine, S: Storage, T: Transport> {
 
   /// Used to provide a backchannel. By sending a
   /// deferErr, the sender can be notifed when the replication is done.
-  trigger_defer_error_tx: async_channel::Sender<()>,
+  trigger_defer_error_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
 
   /// Notify the runner to send out a heartbeat, which is used to check that
   /// this server is still leader.
@@ -60,7 +65,7 @@ pub(super) struct Replication<F: FinateStateMachine, S: Storage, T: Transport> {
   /// Updated to the current time whenever any response is
   /// received from the follower (successful or not). This is used to check
   /// whether the leader should step down (`check_leader_lease`).
-  last_contact: Arc<ArcSwap<Instant>>,
+  last_contact: Contact,
 }
 
 impl<F: FinateStateMachine, S: Storage, T: Transport> Replication<F, S, T>
@@ -141,7 +146,7 @@ where
 
   /// Returns the time of last contact.
   pub(super) fn last_contact(&self) -> Instant {
-    **self.last_contact.load()
+    self.last_contact.get()
   }
 }
 
@@ -178,12 +183,12 @@ pub(super) struct ReplicationRunner<F: FinateStateMachine, S: Storage, T: Transp
 
   /// Used to provide a backchannel. By sending a
   /// deferErr, the sender can be notifed when the replication is done.
-  trigger_defer_error_rx: async_channel::Receiver<()>,
+  trigger_defer_error_rx: async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
 
   /// Updated to the current time whenever any response is
   /// received from the follower (successful or not). This is used to check
   /// whether the leader should step down (`check_leader_lease`).
-  last_contact: Arc<ArcSwap<Instant>>,
+  last_contact: Contact,
 
   /// Counts the number of failed RPCs since the last success, which is
   /// used to apply backoff.
@@ -215,6 +220,8 @@ pub(super) struct ReplicationRunner<F: FinateStateMachine, S: Storage, T: Transp
   allow_pipeline: bool,
 
   max_append_entries: u64,
+
+  commit_timeout: Duration,
 }
 
 impl<F: FinateStateMachine, S, T: Transport> ReplicationRunner<F, S, T>
@@ -242,11 +249,35 @@ where
             _ => return,
           }
         },
-        _ = self.trigger_rx.recv().fuse() => {
-          todo!()
+        tx = self.trigger_defer_error_rx.recv().fuse() => {
+          match tx {
+            Ok(tx) => {
+              let last_log_idx = self.last.lock().log.index;
+              should_stop = self.replicate_to(last_log_idx).await;
+              if !should_stop {
+                let _ = tx.send(Ok(()));
+              } else {
+                let _ = tx.send(Err(Error::replication_failed()));
+              }
+            }
+            _ => return,
+          }
         }
-        _ = self.trigger_defer_error_rx.recv().fuse() => {
-          todo!()
+        _ = self.trigger_rx.recv().fuse() => {
+          let last_log_idx = self.last.lock().log.index;
+          should_stop = self.replicate_to(last_log_idx).await;
+        }
+        // This is _not_ our heartbeat mechanism but is to ensure
+        // followers quickly learn the leader's commit index when
+        // raft commits stop flowing naturally. The actual heartbeats
+        // can't do this to keep them unblocked by disk IO on the
+        // follower. See https://github.com/hashicorp/raft/issues/282.
+        _ = async {
+          let timeout = random_timeout(self.commit_timeout).unwrap();
+          <T::Runtime as Runtime>::sleep(timeout)
+        }.fuse() => {
+          let last_log_idx = self.last.lock().log.index;
+          should_stop = self.replicate_to(last_log_idx).await;
         }
       }
 
@@ -256,9 +287,109 @@ where
         self.allow_pipeline = false;
 
         // Replicates using a pipeline for high performance. This method
-	      // is not able to gracefully recover from errors, and so we fall back
-	      // to standard mode on failure.
+        // is not able to gracefully recover from errors, and so we fall back
+        // to standard mode on failure.
+        if let Err(e) = self.pipeline_replicate().await {}
+        continue;
+      }
+    }
+  }
 
+  /// Used when we have synchronized our state with the follower,
+  /// and want to switch to a higher performance pipeline mode of replication.
+  /// We only pipeline AppendEntries commands, and if we ever hit an error, we fall
+  /// back to the standard replication which can handle more complex situations.
+  async fn pipeline_replicate(&mut self) -> Result<(), Error<F, S, T>> {
+    let remote = self.peer.load_full();
+
+    // Create a new pipeline
+    let pipeline = self
+      .transport
+      .append_entries_pipeline((*remote).clone())
+      .await
+      .map_err(Error::transport)?;
+
+    let consumer = pipeline.consumer();
+
+    // Log start and stop of pipeline
+    tracing::info!(target = "ruraft.repl", remote=%remote, "starting pipeline");
+    scopeguard::defer!(
+      tracing::info!(target = "ruraft.repl", remote=%remote, "aborting pipeline replication")
+    );
+
+    // Create a shutdown and finish channel
+    let (stop_tx, stop_rx) = async_channel::bounded(1);
+    let (finish_tx, finish_rx) = async_channel::bounded(1);
+
+    // Start pipeline sends at the last good nextIndex
+    let next_idx = self.next_index.load(Ordering::Acquire);
+
+    let mut should_stop = false;
+    Ok(())
+  }
+
+  /// Used to send data over a pipeline. It is a helper to
+  /// pipelineReplicate.
+  async fn pipeline_send() -> bool {
+    
+    false
+  }
+
+  async fn pipeline_decode(
+    peer: Arc<ArcSwap<Node<T::Id, <T::Resolver as AddressResolver>::Address>>>,
+    mut consumer: impl Stream<Item = PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>>
+      + Unpin,
+    notify: Arc<Mutex<HashMap<u64, Verify<F, S, T>>>>,
+    next_index: Arc<AtomicU64>,
+    commitment: Commitment<T::Id, <T::Resolver as AddressResolver>::Address>,
+    last_contact: Contact,
+    stop_rx: async_channel::Receiver<()>,
+    finish_tx: async_channel::Sender<()>,
+    step_down_tx: async_channel::Sender<()>,
+  ) {
+    scopeguard::defer!(let _ = finish_tx.close(););
+
+    loop {
+      futures::select! {
+        resp = consumer.next().fuse() => {
+          match resp {
+            Some(resp) => {
+              let remote = peer.load_full();
+
+              #[cfg(feature = "metrics")]
+              append_stats(&remote, resp.start(), resp.num_entries as u64);
+
+              // Check for a newer term, stop running
+              if resp.resp.term > resp.term {
+                Self::handle_stale_term(
+                  &remote,
+                  &notify,
+                  &step_down_tx,
+                ).await;
+                return;
+              }
+
+              // Update the last contact
+              last_contact.update();
+
+              // Abort pipeline if not successful
+              if !resp.resp().success {
+                return;
+              }
+
+              // Update our replication state
+              Self::update_last_appended(remote.id(), &next_index, &commitment, &notify, resp.highest_log_index()).await;
+
+            }
+            None => {
+              tracing::error!(target = "ruraft.repl", err="pipeline closed", "failed to get next item from pipeline");
+              return;
+            }
+          }
+        },
+        _ = stop_rx.recv().fuse() => {
+          return;
+        }
       }
     }
   }
@@ -266,10 +397,33 @@ where
   /// used to replicate the logs up to a
   /// given last index.
   /// If the follower log is behind, we take care to bring them up to date.
-  /// 
+  ///
   /// Returns true if the replication should stop.
   async fn replicate_to(&mut self, last_index: u64) -> bool {
-    let mut should_stop = false;
+    macro_rules! check_more {
+      ($this:ident) => {{
+        // Check if there is more to replicate
+        // Poll the stop channel here in case we are looping and have been asked
+        // to stop, or have stepped down as leader. Even for the best effort case
+        // where we are asked to replicate to a given index and then shutdown,
+        // it's better to not loop in here to send lots of entries to a straggler
+        // that's leaving the cluster anyways.
+
+        futures::select! {
+          _ = $this.stop_rx.recv().fuse() => {
+            return true;
+          }
+          default => {}
+        }
+
+        // Check if there are more logs to replicate
+        if $this.next_index.load(Ordering::Acquire) <= last_index {
+          continue;
+        }
+        return false;
+      }};
+    }
+
     loop {
       // Prevent an excessive retry rate on errors
       if self.failures > 0 {
@@ -282,16 +436,77 @@ where
 
       let remote = self.peer.load_full();
 
-      match self.setup_append_entries(self.next_index.load(Ordering::Acquire), last_index).await {
-        Err(Error::Raft(RaftError::LogNotFound(index))) => {
-          
+      match self
+        .setup_append_entries(self.next_index.load(Ordering::Acquire), last_index)
+        .await
+      {
+        Err(Error::Raft(RaftError::LogNotFound(_))) => match self.send_latest_snapshot().await {
+          Err(e) => {
+            tracing::error!(target = "ruraft.repl", remote=%remote, err=%e, "failed to send snapshot");
+            return false;
+          }
+          Ok(true) => return true,
+          Ok(false) => check_more!(self),
         },
-        Err(e) => return should_stop,
+        Err(_) => return false,
         Ok(req) => {
-          
-        },
-      }
+          // Make the RPC call
+          let start = Instant::now();
+          #[cfg(feature = "metrics")]
+          let num_entries = req.entries.len();
+          let req_last_index = req.entries.last().map(|l| l.index);
 
+          match self.transport.append_entries(req).await {
+            Ok(resp) => {
+              #[cfg(feature = "metrics")]
+              append_stats(&remote, start, num_entries as u64);
+              // Check for a newer term, stop running
+              if resp.term > self.current_term {
+                Self::handle_stale_term(&remote, &self.notify, &self.step_down_tx).await;
+                return true;
+              }
+
+              // Update the last contact
+              self.set_last_contact();
+
+              // Update s based on success
+              if resp.success {
+                // Update our replication state
+                Self::update_last_appended(
+                  remote.id(),
+                  &self.next_index,
+                  &self.commitment,
+                  &self.notify,
+                  req_last_index,
+                );
+
+                // Clear any failures, allow pipelining
+                self.failures = 0;
+                self.allow_pipeline = true;
+              } else {
+                self
+                  .next_index
+                  .fetch_update(Ordering::Release, Ordering::Acquire, |next_idx| {
+                    Some((next_idx - 1).min(resp.last_log + 1).max(1))
+                  });
+                if resp.no_retry_backoff {
+                  self.failures = 0;
+                } else {
+                  self.failures += 1;
+                }
+                tracing::warn!(target = "ruraft.repl", remote=%remote, next = self.next_index.load(Ordering::Acquire), "append entries rejected, sending older logs");
+              }
+
+              check_more!(self);
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.repl", remote=%remote, err=%e, "failed to append entries");
+              self.failures += 1;
+              return false;
+            }
+          }
+        }
+      }
     }
   }
 
@@ -307,7 +522,7 @@ where
 
     // Check we have at least a single snapshot
     if snapshots.is_empty() {
-      tracing::error!(target = "ruraft.repl", err="no snapshots found");
+      tracing::error!(target = "ruraft.repl", err = "no snapshots found");
       return Err(Error::no_snapshots());
     }
     // Open the most recent snapshot
@@ -342,7 +557,6 @@ where
         return Err(Error::transport(e));
       }
       Ok(resp) => {
-
         #[cfg(feature = "metrics")]
         metrics::gauge!(
           format!("ruraft.repl.install_snapshot.{}", remote.id()),
@@ -351,7 +565,7 @@ where
 
         // Check for a newer term, stop running
         if resp.term > self.current_term {
-          self.handle_stale_term(&remote).await;
+          Self::handle_stale_term(&remote, &self.notify, &self.step_down_tx).await;
           return Ok(true);
         }
 
@@ -375,17 +589,44 @@ where
         }
         Ok(false)
       }
-    }    
+    }
   }
 
-  async fn handle_stale_term(&self, remote: &Node<T::Id, <T::Resolver as AddressResolver>::Address>) {
+  async fn handle_stale_term(
+    remote: &Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+    notify: &Mutex<HashMap<u64, Verify<F, S, T>>>,
+    step_down_tx: &async_channel::Sender<()>,
+  ) {
     tracing::error!(target = "ruraft.repl", remote=%remote, "peer has newer term, stopping replication");
-    Replication::notify_all(&self.notify, false).await;
-    let _ = self.step_down_tx.send(()).await;
+    Replication::notify_all(notify, false).await;
+    let _ = step_down_tx.send(()).await;
+  }
+
+  /// used to update follower replication state after a
+  /// successful AppendEntries RPC.
+  async fn update_last_appended(
+    id: &T::Id,
+    next_idx: &AtomicU64,
+    commitment: &Commitment<T::Id, <T::Resolver as AddressResolver>::Address>,
+    notify: &Mutex<HashMap<u64, Verify<F, S, T>>>,
+    last_index: Option<u64>,
+  ) {
+    // Mark any inflight logs as committed
+    if let Some(idx) = last_index {
+      next_idx.store(idx + 1, Ordering::Release);
+      commitment.match_index(id, idx).await;
+    }
+    // Notify still leader
+    Replication::notify_all(notify, true).await;
   }
 
   /// used to setup an append entries request.
-  async fn setup_append_entries(&self, next_idx: u64, last_idx: u64) -> Result<AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>, Error<F, S, T>> {
+  async fn setup_append_entries(
+    &self,
+    next_idx: u64,
+    last_idx: u64,
+  ) -> Result<AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>, Error<F, S, T>>
+  {
     let header = self.transport.header();
     let term = self.current_term;
     let ls = self.storage.log_store();
@@ -398,12 +639,20 @@ where
       leader_commit: self.committed_index.load(Ordering::Acquire),
     };
     self.set_previous_log(ls, next_idx, &mut req).await?;
-    self.set_new_logs(ls, next_idx, last_idx, &mut req).await.map(|_| req)
+    self
+      .set_new_logs(ls, next_idx, last_idx, &mut req)
+      .await
+      .map(|_| req)
   }
 
   /// Used to setup the PrevLogEntry and PrevLogTerm for an
   /// [`AppendEntriesRequest`] given the next index to replicate.
-  async fn set_previous_log(&self, ls: &S::Log, next_idx: u64, req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>) -> Result<(), Error<F, S, T>> {
+  async fn set_previous_log(
+    &self,
+    ls: &S::Log,
+    next_idx: u64,
+    req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Result<(), Error<F, S, T>> {
     let LastSnapshot {
       term: last_snapshot_term,
       index: last_snapshot_index,
@@ -412,29 +661,41 @@ where
     if next_idx == 1 {
       req.prev_log_entry = 0;
       req.prev_log_term = 0;
+      Ok(())
     } else if (next_idx - 1) == last_snapshot_index {
       req.prev_log_entry = last_snapshot_index;
       req.prev_log_term = last_snapshot_term;
+      Ok(())
     } else {
       match ls.get_log(next_idx - 1).await {
-        Ok(log) => {
+        Ok(Some(log)) => {
           req.prev_log_entry = log.index;
           req.prev_log_term = log.term;
+          Ok(())
+        }
+        Ok(None) => {
+          tracing::error!(target = "ruraft.repl", index=%(next_idx - 1), "failed to get log");
+          Err(Error::log_not_found(next_idx - 1))
         }
         Err(e) => {
           tracing::error!(target = "ruraft.repl", index=%(next_idx - 1), err=%e, "failed to get log");
-          return Err(Error::log(e));
+          Err(Error::log(e))
         }
       }
     }
-    Ok(())
   }
 
   /// Used to setup the logs which should be appended for a request.
-  async fn set_new_logs(&self, ls: &S::Log, next_idx: u64, last_idx: u64, req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>) -> Result<(), Error<F, S, T>> {
+  async fn set_new_logs(
+    &self,
+    ls: &S::Log,
+    next_idx: u64,
+    last_idx: u64,
+    req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Result<(), Error<F, S, T>> {
     // Append up to MaxAppendEntries or up to the lastIndex. we need to use a
-	  // consistent value for maxAppendEntries in the lines below in case it ever
-	  // becomes reloadable.
+    // consistent value for maxAppendEntries in the lines below in case it ever
+    // becomes reloadable.
     let match_index = (next_idx + self.max_append_entries - 1).min(last_idx);
     for i in next_idx..=match_index {
       match ls.get_log(i).await {
@@ -454,9 +715,8 @@ where
     Ok(())
   }
 
-
   fn set_last_contact(&self) {
-    self.last_contact.store(Arc::new(Instant::now()));
+    self.last_contact.update();
   }
 }
 
@@ -488,7 +748,6 @@ where
     //   });
 
     // });
-    
   }
 }
 
@@ -503,7 +762,7 @@ struct HeartbeatRunner<F: FinateStateMachine, S: Storage, T: Transport> {
   >,
   notify_all: Arc<Mutex<HashMap<u64, Verify<F, S, T>>>>,
   opts: Arc<Atomic<ReloadableOptions>>,
-  last_contact: Arc<ArcSwap<Instant>>,
+  last_contact: Contact,
   heartbeat_signal: async_channel::Receiver<()>,
   stop_heartbeat_rx: async_channel::Receiver<()>,
 }
@@ -554,7 +813,7 @@ where
             )
             .await;
           }
-          last_contact.store(Arc::new(Instant::now()));
+          last_contact.update();
           failures = 0;
           #[cfg(feature = "metrics")]
           metrics::gauge!(
@@ -575,7 +834,7 @@ where
             &observers,
             Observed::HeartbeatFailed {
               id: remote.id().clone(),
-              last_contact: **last_contact.load(),
+              last_contact: last_contact.get(),
             },
           )
           .await;
@@ -588,4 +847,37 @@ where
       }
     }
   }
+}
+
+#[cfg(feature = "metrics")]
+fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
+  remote: &Node<I, A>,
+  start: Instant,
+  logs: u64,
+) {
+  enum Kind<'a, I: nodecraft::Id> {
+    Rpc(&'a I),
+    Log(&'a I),
+  }
+
+  impl<'a, I: nodecraft::Id> core::fmt::Display for Kind<'a, I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+      match self {
+        Kind::Rpc(id) => write!(f, "ruraft.repl.append_entries.rpc.{}", id),
+        Kind::Log(id) => write!(f, "ruraft.repl.append_entries.logs.{}", id),
+      }
+    }
+  }
+
+  impl<'a, I: nodecraft::Id> Into<metrics::KeyName> for Kind<'a, I> {
+    fn into(self) -> metrics::KeyName {
+      metrics::KeyName::from(self.to_string())
+    }
+  }
+
+  let id = remote.id();
+  let log = Kind::Log(id);
+  let rpc = Kind::Rpc(id);
+  metrics::gauge!(rpc, start.elapsed().as_millis() as f64);
+  // metrics::counter!(log, logs as f64);
 }

@@ -1,11 +1,11 @@
 // // use agnostic::Runtime;
-// // use ruraft_core::transport::AppendPipeline;
+// // use ruraft_core::transport::AppendEntriesPipeline;
 
-// // pub struct NetAppendPipeline<R: Runtime> {
+// // pub struct NetAppendEntriesPipeline<R: Runtime> {
 // //   _marker: std::marker::PhantomData<R>,
 // // }
 
-// // impl<R: Runtime> NetAppendPipeline<R> {
+// // impl<R: Runtime> NetAppendEntriesPipeline<R> {
 // //   pub fn new() -> Self {
 // //     Self {
 // //       _marker: std::marker::PhantomData,
@@ -13,7 +13,7 @@
 // //   }
 // // }
 
-// // impl<R: Runtime> AppendPipeline for NetAppendPipeline<R> {
+// // impl<R: Runtime> AppendEntriesPipeline for NetAppendEntriesPipeline<R> {
 
 // // }
 
@@ -24,7 +24,7 @@
 
 // use super::*;
 
-// pub struct NetAppendPipeline<I: Id, A: Address> {}
+// pub struct NetAppendEntriesPipeline<I: Id, A: Address> {}
 
 // pub struct NetAppendFuture<I: Id, A: Address> {
 //   start: Instant,

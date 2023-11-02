@@ -87,6 +87,70 @@ impl<I: Id, A: Address> Node<I, A> {
   }
 }
 
+#[derive(Clone)]
+#[repr(transparent)]
+struct Contact(Arc<ArcSwap<Instant>>);
+
+impl Default for Contact {
+  #[inline]
+  fn default() -> Self {
+    Self::now()
+  }
+}
+
+impl Contact {
+  #[inline]
+  fn now() -> Self {
+    Self(Arc::new(ArcSwap::from_pointee(Instant::now())))
+  }
+
+  #[inline]
+  fn update(&self) {
+    self.0.store(Arc::new(Instant::now()));
+  }
+
+  #[inline]
+  fn set(&self, val: Instant) {
+    self.0.store(Arc::new(val));
+  }
+
+  #[inline]
+  fn get(&self) -> Instant {
+    **self.0.load()
+  }
+}
+
+#[derive(Clone)]
+#[repr(transparent)]
+struct OptionalContact(Arc<ArcSwapOption<Instant>>);
+
+impl OptionalContact {
+  #[inline]
+  fn none() -> Self {
+    Self(Arc::new(ArcSwapOption::from_pointee(None)))
+  }
+
+  #[inline]
+  fn now() -> Self {
+    Self(Arc::new(ArcSwapOption::from_pointee(Some(Instant::now()))))
+  }
+
+  #[inline]
+  fn update(&self) {
+    self.0.store(Some(Arc::new(Instant::now())));
+  }
+
+  #[inline]
+  fn set(&self, val: Option<Instant>) {
+    self.0.store(val.map(Arc::new));
+  }
+
+  #[inline]
+  fn get(&self) -> Option<Instant> {
+    self.0.load().map(|x| *x)
+  }
+}
+
 struct Leader<I: Id, A: Address>(Arc<ArcSwapOption<Node<I, A>>>);
 
 impl<I: Id, A: Address> Clone for Leader<I, A> {
@@ -147,7 +211,7 @@ where
   state: Arc<State>,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
-  last_contact: Arc<ArcSwapOption<Instant>>,
+  last_contact: OptionalContact,
   memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   shutdown_tx: async_channel::Sender<()>,
   /// Used to prevent concurrent shutdown
@@ -436,7 +500,8 @@ where
           <S::Error as StorageError>::log(e)
             .with_message(Cow::Owned(format!("failed to get log at index at {index}"))),
         )
-      })? else {
+      })?
+      else {
         return Err(Error::log_not_found(index));
       };
 
@@ -673,7 +738,7 @@ where
     });
     let leader = Leader::none();
     let sidecar = sidecar.map(Arc::new);
-    let last_contact = Arc::new(ArcSwapOption::from_pointee(None));
+    let last_contact = OptionalContact::none();
     let memberships = Arc::new(Memberships {
       committed: ArcSwap::from(membership.clone()),
       latest: ArcSwap::from(membership),
