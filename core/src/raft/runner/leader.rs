@@ -177,25 +177,16 @@ where
 
       tracing::info!(target = "ruraft.repl", peer=%id, "added peer, starting replication");
       let n = Node::new(id.clone(), addr.clone());
-      let repl = Replication::<F, S, T>::new::<R>(
-        &self.wg,
-        n.clone(),
-        leader_state.commitment.clone(),
-        current_term,
-        last_idx + 1,
-        step_down_tx.clone(),
-      )
-      .await;
-      // TODO: spawn replication
-      let _ = repl.trigger_tx.send(()).await;
-      observe(
-        &self.observers,
-        Observed::Peer {
-          node: n,
-          removed: false,
-        },
-      )
-      .await;
+
+      self
+        .spawn_replication(
+          n,
+          &mut leader_state,
+          current_term,
+          last_idx + 1,
+          step_down_tx.clone(),
+        )
+        .await;
     }
     #[cfg(feature = "metrics")]
     metrics::gauge!("ruraft.peers", latest.len() as f64);

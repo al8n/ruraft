@@ -110,7 +110,7 @@ pub trait Wire: Send + Sync + 'static {
 
 /// Provides utilities to pipeline [`AppendEntriesRequest`]s, aiming to
 /// enhance replication throughput by minimizing latency and maximizing bandwidth utilization.
-pub trait AppendEntriesPipeline {
+pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Specifies potential errors that can occur within the pipeline.
   type Error: std::error::Error + Send + Sync + 'static;
 
@@ -133,7 +133,7 @@ pub trait AppendEntriesPipeline {
   /// Retrieves a stream for consuming response futures once they are ready.
   fn consumer(
     &self,
-  ) -> impl Stream<Item = PipelineAppendEntriesResponse<Self::Id, Self::Address>> + Unpin;
+  ) -> impl Stream<Item = PipelineAppendEntriesResponse<Self::Id, Self::Address>> + Send + Unpin + 'static;
 
   /// Asynchronously appends entries to the target node and returns the associated response.
   fn append_entries(
@@ -234,10 +234,10 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Returns a [`AppendEntriesPipeline`] that can be used to pipeline
   /// [`AppendEntriesRequest`]s.
-  async fn append_entries_pipeline(
+  fn append_entries_pipeline(
     &self,
     target: Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-  ) -> Result<Self::Pipeline, Self::Error>;
+  ) -> impl Future<Output = Result<Self::Pipeline, Self::Error>> + Send;
 
   /// Sends the append entries requrest to the target node.
   fn append_entries(

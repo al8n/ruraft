@@ -147,7 +147,7 @@ impl OptionalContact {
 
   #[inline]
   fn get(&self) -> Option<Instant> {
-    self.0.load().map(|x| *x)
+    self.0.load().as_ref().map(|x| **x)
   }
 }
 

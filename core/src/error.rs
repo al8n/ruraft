@@ -111,6 +111,12 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: log(index = {0}) not found")]
   LogNotFound(u64),
 
+  /// Returned by the transport to
+  /// signal that pipeline replication is not supported in general, and that
+  /// no error message should be produced.
+  #[error("ruraft: pipeline replication not supported")]
+  PipelineReplicationNotSupported,
+
   /// Returned when there are no snapshots in the storage.
   #[error("ruraft: no snapshots found")]
   NoSnapshots,
