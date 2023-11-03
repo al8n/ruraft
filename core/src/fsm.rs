@@ -1,10 +1,9 @@
 use std::{borrow::Cow, future::Future, sync::Arc};
 
-use bytes::Bytes;
 use futures::AsyncRead;
 use nodecraft::{Address, Id};
 
-use crate::{membership::Membership, storage::SnapshotSink};
+use crate::{membership::Membership, storage::SnapshotSink, Data};
 
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
@@ -45,19 +44,19 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
   fn index(&self) -> u64;
 }
 
-pub enum FinateStateMachineLogKind<I: Id, A: Address> {
-  Log { data: Bytes, extension: Bytes },
+pub enum FinateStateMachineLogKind<I: Id, A: Address, D: Data> {
+  Log(Arc<D>),
   Membership(Arc<Membership<I, A>>),
 }
 
-pub struct FinateStateMachineLog<I: Id, A: Address> {
+pub struct FinateStateMachineLog<I: Id, A: Address, D: Data> {
   pub index: u64,
   pub term: u64,
-  pub kind: FinateStateMachineLogKind<I, A>,
+  pub kind: FinateStateMachineLogKind<I, A, D>,
 }
 
-impl<I: Id, A: Address> FinateStateMachineLog<I, A> {
-  pub fn new(term: u64, index: u64, kind: FinateStateMachineLogKind<I, A>) -> Self {
+impl<I: Id, A: Address, D: Data> FinateStateMachineLog<I, A, D> {
+  pub fn new(term: u64, index: u64, kind: FinateStateMachineLogKind<I, A, D>) -> Self {
     Self { index, term, kind }
   }
 }
@@ -82,6 +81,9 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// The address type of node.
   type Address: Address + Send + Sync + 'static;
 
+  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
+  type Data: Data;
+
   /// The async runtime used by the finate state machine.
   type Runtime: agnostic::Runtime;
 
@@ -91,7 +93,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// produce the same result on all peers in the cluster.
   fn apply(
     &self,
-    log: FinateStateMachineLog<Self::Id, Self::Address>,
+    log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
   ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
   /// Invoked once a batch of log entries has been committed and
@@ -105,7 +107,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// method if that method was called on the same Raft node as the FSM.
   fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address>>,
+    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>>,
   ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to

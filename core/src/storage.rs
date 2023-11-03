@@ -7,7 +7,10 @@ pub use stable::*;
 
 use std::{borrow::Cow, future::Future};
 
-use crate::transport::{Address, Id};
+use crate::{
+  transport::{Address, Id},
+  Data,
+};
 
 /// Represents a comprehensive set of errors arising from operations within the [`Storage`] trait.
 ///
@@ -88,6 +91,8 @@ pub trait Storage: Send + Sync + 'static {
   type Id: Id;
   /// The address type of node.
   type Address: Address;
+  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
+  type Data: Data;
 
   /// Stable storage
   type Stable: StableStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
@@ -96,7 +101,12 @@ pub trait Storage: Send + Sync + 'static {
   type Snapshot: SnapshotStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// Log storage
-  type Log: LogStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
+  type Log: LogStorage<
+    Id = Self::Id,
+    Address = Self::Address,
+    Data = Self::Data,
+    Runtime = Self::Runtime,
+  >;
 
   /// Membership storage
   type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;

@@ -160,9 +160,15 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,

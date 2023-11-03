@@ -1,12 +1,12 @@
 use std::{future::Future, ops::RangeBounds, sync::Arc, time::Instant};
 
-use bytes::Bytes;
 #[cfg(feature = "metrics")]
 use futures::FutureExt;
 
 use crate::{
   membership::Membership,
   transport::{Address, Id},
+  Data,
 };
 
 /// A log entry that contains a new membership.
@@ -38,29 +38,12 @@ impl<I: Id, A: Address> MembershipLog<I, A> {
 }
 
 /// Describes various types of log entries.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
-pub enum LogKind<I: Id, A: Address> {
-  /// Holds end-user data and extension.
-  User {
-    /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
-    data: Bytes,
-    /// Extensions holds an opaque byte slice of information for middleware. It
-    /// is up to the client of the library to properly modify this as it adds
-    /// layers and remove those layers when appropriate. This value is a part of
-    /// the log, so very large values could cause timing issues.
-    ///
-    /// N.B. It is _up to the client_ to handle upgrade paths. For instance if
-    /// using this with go-raftchunking, the client should ensure that all Raft
-    /// peers are using a version that can handle that extension before ever
-    /// actually triggering chunking behavior. It is sometimes sufficient to
-    /// ensure that non-leaders are upgraded first, then the current leader is
-    /// upgraded, but a leader changeover during this process could lead to
-    /// trouble, so gating extension behavior via some flag in the client
-    /// program is also a good idea.
-    extension: Bytes,
-  },
+pub enum LogKind<I: Id, A: Address, D: Data> {
+  /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
+  Data(Arc<D>),
   /// Used to assert leadership.
   Noop,
   /// Used to ensure all preceding operations have been
@@ -74,6 +57,17 @@ pub enum LogKind<I: Id, A: Address> {
   Membership(Arc<Membership<I, A>>),
 }
 
+impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
+  fn clone(&self) -> Self {
+    match self {
+      Self::Data(data) => Self::Data(data.clone()),
+      Self::Noop => Self::Noop,
+      Self::Barrier => Self::Barrier,
+      Self::Membership(membership) => Self::Membership(membership.clone()),
+    }
+  }
+}
+
 /// Log entries are replicated to all members of the Raft cluster
 /// and form the heart of the replicated state machine.
 ///
@@ -83,9 +77,9 @@ pub enum LogKind<I: Id, A: Address> {
   getters(vis_all = "pub"),
   setters(vis_all = "pub")
 )]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Log<I: Id, A: Address> {
+pub struct Log<I: Id, A: Address, D: Data> {
   /// Holds the kind of the log entry.
   #[viewit(
     getter(
@@ -96,7 +90,7 @@ pub struct Log<I: Id, A: Address> {
     ),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
   )]
-  kind: LogKind<I, A>,
+  kind: LogKind<I, A, D>,
 
   /// Holds the index of the log entry.
   #[viewit(
@@ -144,28 +138,25 @@ pub struct Log<I: Id, A: Address> {
   appended_at: Option<Instant>,
 }
 
-impl<I: Id, A: Address> Log<I, A> {
-  /// Create a [`Log`]
-  #[inline]
-  pub const fn new(data: Bytes) -> Self {
+impl<I: Id, A: Address, D: Data> Clone for Log<I, A, D> {
+  fn clone(&self) -> Self {
     Self {
-      index: 0,
-      term: 0,
-      kind: LogKind::User {
-        data,
-        extension: Bytes::new(),
-      },
-      appended_at: None,
+      index: self.index,
+      term: self.term,
+      kind: self.kind.clone(),
+      appended_at: self.appended_at,
     }
   }
+}
 
-  /// Create a [`Log`] with extension
+impl<I: Id, A: Address, D: Data> Log<I, A, D> {
+  /// Create a [`Log`]
   #[inline]
-  pub const fn with_extension(data: Bytes, extension: Bytes) -> Self {
+  pub fn new(data: D) -> Self {
     Self {
       index: 0,
       term: 0,
-      kind: LogKind::User { data, extension },
+      kind: LogKind::Data(Arc::new(data)),
       appended_at: None,
     }
   }
@@ -176,12 +167,12 @@ impl<I: Id, A: Address> Log<I, A> {
   }
 
   #[inline]
-  pub(crate) const fn is_user(&self) -> bool {
-    matches!(self.kind, LogKind::User { .. })
+  pub(crate) const fn is_data(&self) -> bool {
+    matches!(self.kind, LogKind::Data(_))
   }
 
   #[inline]
-  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A>) -> Self {
+  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A, D>) -> Self {
     Self {
       index,
       term,
@@ -205,6 +196,8 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   type Id: Id;
   /// The address type of node.
   type Address: Address;
+  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
+  type Data: Data;
 
   /// Returns the first index written. `None` or `Some(0)` means no entries.
   fn first_index(&self) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
@@ -216,18 +209,18 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   fn get_log(
     &self,
     index: u64,
-  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address, Self::Data>>, Self::Error>> + Send;
 
   /// Stores a log entry
   fn store_log(
     &self,
-    log: &Log<Self::Id, Self::Address>,
+    log: &Log<Self::Id, Self::Address, Self::Data>,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Stores multiple log entries. By default the logs stored may not be contiguous with previous logs (i.e. may have a gap in Index since the last log written). If an implementation can't tolerate this it may optionally implement `MonotonicLogStore` to indicate that this is not allowed. This changes Raft's behaviour after restoring a user snapshot to remove all previous logs instead of relying on a "gap" to signal the discontinuity between logs before the snapshot and logs after.
   fn store_logs(
     &self,
-    logs: &[Log<Self::Id, Self::Address>],
+    logs: &[Log<Self::Id, Self::Address, Self::Data>],
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Removes a range of log entries.
@@ -262,7 +255,10 @@ pub(crate) trait LogStorageExt: LogStorage {
   fn oldest_log(
     &self,
   ) -> impl Future<
-    Output = Result<Option<Log<Self::Id, Self::Address>>, LogStorageExtError<Self::Error>>,
+    Output = Result<
+      Option<Log<Self::Id, Self::Address, Self::Data>>,
+      LogStorageExtError<Self::Error>,
+    >,
   > + Send {
     async move {
       // We might get unlucky and have a truncate right between getting first log
@@ -347,7 +343,7 @@ pub(super) mod tests {
 
   struct TestCase {
     name: &'static str,
-    logs: Vec<Log<String, SocketAddr>>,
+    logs: Vec<Log<String, SocketAddr, Bytes>>,
     want_idx: u64,
     want_err: bool,
   }

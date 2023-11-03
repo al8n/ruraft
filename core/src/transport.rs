@@ -11,7 +11,7 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-use crate::{options::ProtocolVersion, Node};
+use crate::{options::ProtocolVersion, Data, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -63,6 +63,9 @@ pub trait Wire: Send + Sync + 'static {
   /// Denotes the network address format or specification used for nodes.
   type Address: Address;
 
+  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
+  type Data: Data;
+
   /// Represents the byte-array format produced after encoding,
   /// which is then suitable for transmission over the network.
   type Bytes: AsRef<[u8]> + Send + Sync + 'static;
@@ -74,7 +77,9 @@ pub trait Wire: Send + Sync + 'static {
   ///
   /// # Returns
   /// * `Result` - Returns the encoded byte array or an error if the encoding process fails.
-  fn encode_request(req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
+  fn encode_request(
+    req: &Request<Self::Id, Self::Address, Self::Data>,
+  ) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes a [`Response`] into its byte-array representation.
   ///
@@ -94,7 +99,7 @@ pub trait Wire: Send + Sync + 'static {
   /// * `Result` - Returns the decoded `Request` or an error if the decoding process encounters issues.
   fn decode_request(
     reader: impl AsyncRead + Unpin,
-  ) -> impl Future<Output = Result<Request<Self::Id, Self::Address>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error>> + Send;
 
   /// Decodes a [`Response`] instance from a provided asynchronous reader.
   ///
@@ -123,6 +128,9 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Network address representation of nodes.
   type Address: Address;
 
+  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
+  type Data: Data;
+
   /// Represents the pipeline's output or response to an appended entry.
   type Response: AppendEntriesPipelineFuture<
     Id = Self::Id,
@@ -138,7 +146,7 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Asynchronously appends entries to the target node and returns the associated response.
   fn append_entries(
     &self,
-    req: AppendEntriesRequest<Self::Id, Self::Address>,
+    req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
   ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
   /// Gracefully closes the pipeline and terminates any in-flight requests.
@@ -182,6 +190,9 @@ pub trait Transport: Send + Sync + 'static {
   /// Unique identifier for nodes.
   type Id: Id + Send + Sync + 'static;
 
+  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
+  type Data: Data;
+
   /// The pipeline used to increase the replication throughput by masking latency and better
   /// utilizing bandwidth.
   type Pipeline: AppendEntriesPipeline<
@@ -189,6 +200,7 @@ pub trait Transport: Send + Sync + 'static {
     Runtime = Self::Runtime,
     Id = Self::Id,
     Address = <Self::Resolver as AddressResolver>::Address,
+    Data = Self::Data,
   >;
 
   /// Resolves node addresses to concrete network addresses, like mapping a domain name to an IP.
@@ -198,7 +210,9 @@ pub trait Transport: Send + Sync + 'static {
   type Wire: Wire<Id = Self::Id, Address = <Self::Resolver as AddressResolver>::Address>;
 
   /// Consumes and responds to incoming RPC requests.
-  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address>;
+  fn consumer(
+    &self,
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>;
 
   /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
@@ -243,7 +257,7 @@ pub trait Transport: Send + Sync + 'static {
   fn append_entries(
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>,
   ) -> impl Future<
     Output = Result<
       AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
