@@ -15,7 +15,7 @@ use std::{
 };
 use wg::AsyncWaitGroup;
 
-use super::{super::super::spawn_local, Commitment, Node, Verify};
+use super::{super::super::spawn_local, Commitment, Node, Verify, State};
 use crate::{
   error::{Error, RaftError},
   observe,
@@ -27,7 +27,7 @@ use crate::{
     PipelineAppendEntriesResponse, Transport,
   },
   utils::{backoff, capped_exponential_backoff, random_timeout},
-  FinateStateMachine, Last, LastSnapshot, Observed, Observer, ObserverId,
+  FinateStateMachine, LastSnapshot, Observed, Observer, ObserverId,
 };
 
 const MAX_FAILURE_SCALE: u64 = 12;
@@ -87,8 +87,7 @@ where
       commitment: leader_state.commitment.clone(),
       current_term,
       next_index,
-      committed_index: self.commit_index.clone(),
-      last: self.last.clone(),
+      state: self.state.clone(),
       peer: peer.clone(),
       stop_rx,
       trigger_rx,
@@ -212,10 +211,7 @@ pub(super) struct ReplicationRunner<F: FinateStateMachine, S: Storage, T: Transp
   /// which may fall past the end of the log.
   next_index: Arc<AtomicU64>,
 
-  /// Highest committed log entry
-  committed_index: Arc<AtomicU64>,
-
-  last: Arc<Mutex<Last>>,
+  state: Arc<State>,
 
   /// Contains the network address and ID of the remote follower
   peer: Arc<ArcSwap<Node<T::Id, <T::Resolver as AddressResolver>::Address>>>,
@@ -309,7 +305,7 @@ where
           }
         },
         tx = self.trigger_defer_error_rx.recv().fuse() => {
-          let last_log_idx = self.last.lock().log.index;
+          let last_log_idx = self.state.last_log().index;
           should_stop = self.replicate_to(last_log_idx).await;
 
           if let Ok(tx) = tx {
@@ -323,7 +319,7 @@ where
           }
         }
         _ = self.trigger_rx.recv().fuse() => {
-          let last_log_idx = self.last.lock().log.index;
+          let last_log_idx = self.state.last_log().index;
           should_stop = self.replicate_to(last_log_idx).await;
         }
         // This is _not_ our heartbeat mechanism but is to ensure
@@ -335,7 +331,7 @@ where
           let timeout = random_timeout(self.commit_timeout).unwrap();
           <T::Runtime as Runtime>::sleep(timeout)
         }.fuse() => {
-          let last_log_idx = self.last.lock().log.index;
+          let last_log_idx = self.state.last_log().index;
           should_stop = self.replicate_to(last_log_idx).await;
         }
       }
@@ -427,7 +423,7 @@ where
             }
           }
           tx = self.trigger_defer_error_rx.recv().fuse() => {
-            let last_log_idx = self.last.lock().log.index;
+            let last_log_idx = self.state.last_log().index;
             should_stop = self.pipeline_send(&remote, &pipeline, &self.next_index, last_log_idx).await;
             if let Ok(tx) = tx {
               if !should_stop {
@@ -438,14 +434,14 @@ where
             }
           }
           _ = self.trigger_rx.recv().fuse() => {
-            let last_log_idx = self.last.lock().log.index;
+            let last_log_idx = self.state.last_log().index;
             should_stop = self.pipeline_send(&remote, &pipeline, &self.next_index, last_log_idx).await;
           }
           _ = {
             let timeout = random_timeout(self.commit_timeout).unwrap();
             <T::Runtime as Runtime>::sleep(timeout)
           }.fuse() => {
-            let last_log_idx = self.last.lock().log.index;
+            let last_log_idx = self.state.last_log().index;
             should_stop = self.pipeline_send(&remote, &pipeline, &self.next_index, last_log_idx).await;
           }
         }
@@ -739,7 +735,7 @@ where
       prev_log_entry: 0,
       prev_log_term: 0,
       entries: Vec::with_capacity(self.max_append_entries as usize),
-      leader_commit: self.committed_index.load(Ordering::Acquire),
+      leader_commit: self.state.commit_index(),
     };
     self.set_previous_log(ls, next_idx, &mut req).await?;
     self
@@ -759,7 +755,7 @@ where
     let LastSnapshot {
       term: last_snapshot_term,
       index: last_snapshot_index,
-    } = self.last.lock().snapshot;
+    } = self.state.last_snapshot();
 
     if next_idx == 1 {
       req.prev_log_entry = 0;
@@ -1013,7 +1009,7 @@ where
 fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
   remote: &Node<I, A>,
   start: Instant,
-  logs: u64,
+  _logs: u64,
 ) {
   enum Kind<'a, I: nodecraft::Id> {
     Rpc(&'a I),
@@ -1036,7 +1032,7 @@ fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
   }
 
   let id = remote.id();
-  let log = Kind::Log(id);
+  let _log = Kind::Log(id);
   let rpc = Kind::Rpc(id);
   metrics::gauge!(rpc, start.elapsed().as_millis() as f64);
   // metrics::counter!(log, logs as f64);

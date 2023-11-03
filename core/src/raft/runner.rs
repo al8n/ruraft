@@ -1,6 +1,5 @@
 use std::{
   collections::HashMap,
-  net::SocketAddr,
   sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -9,7 +8,6 @@ use std::{
 };
 
 use agnostic::Runtime;
-use arc_swap::ArcSwapOption;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
@@ -20,7 +18,7 @@ use super::{
   ObserverId, OptionalContact,
 };
 use crate::{
-  error::{Error, RaftError},
+  error::Error,
   membership::{Membership, Memberships},
   options::{Options, ReloadableOptions},
   sidecar::Sidecar,

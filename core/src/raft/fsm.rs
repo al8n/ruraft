@@ -73,6 +73,7 @@ pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage, T: Transport> {
   Restore {
     id: SnapshotId,
     tx: oneshot::Sender<Result<(), Error<F, S, T>>>,
+    shutdown_rx: async_channel::Receiver<()>,
   },
 }
 
@@ -94,7 +95,6 @@ where
   pub(super) mutate_rx: Receiver<FSMRequest<F, S, T>>,
   pub(super) snapshot_rx:
     Receiver<oneshot::Sender<Result<FSMSnapshot<F::Snapshot>, Error<F, S, T>>>>,
-  pub(super) batching_apply: bool,
   pub(super) wg: AsyncWaitGroup,
   pub(super) shutdown_rx: Receiver<()>,
 }
@@ -122,7 +122,6 @@ where
       mutate_rx,
       snapshot_rx,
       shutdown_rx,
-      batching_apply,
       wg,
     } = self;
 
@@ -171,6 +170,7 @@ where
               Ok(FSMRequest::Restore {
                 id,
                 tx,
+                shutdown_rx,
               }) => {
                 // Open the snapshot
                 let store = storage.snapshot_store();

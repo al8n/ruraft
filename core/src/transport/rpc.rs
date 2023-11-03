@@ -163,6 +163,7 @@ impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
 /// 4. highest log index of the original request's entries
 #[viewit::viewit(getters(vis_all = "pub"), setters(prefix = "with"))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PipelineAppendEntriesResponse<I: Id, A: Address> {
   /// The term of the request
   term: u64,
@@ -174,6 +175,7 @@ pub struct PipelineAppendEntriesResponse<I: Id, A: Address> {
   num_entries: usize,
 
   /// The time that the original request was started
+  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant"))]
   start: Instant,
 
   /// The response of the [`AppendEntriesRequest`]

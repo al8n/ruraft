@@ -13,13 +13,11 @@ use nodecraft::{resolver::AddressResolver, Address, Id};
 
 use crate::{
   sidecar::Sidecar,
-  storage::{SnapshotStorage, Storage},
+  storage::Storage,
   transport::{Transport, VoteRequest},
   FinateStateMachine, Node, RaftCore, Role,
 };
 pub use async_channel::{RecvError, TryRecvError};
-
-use super::runner::RaftRunner;
 
 /// Used to provide a unique ID for each observer to aid in
 /// deregistration.

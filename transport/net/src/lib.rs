@@ -574,7 +574,7 @@ where
       pool.insert(addr, conn);
     }
 
-    self.conn_size.fetch_add(1, Ordering::Release);
+    self.conn_size.fetch_add(1, Ordering::AcqRel);
   }
 
   async fn send(
@@ -587,7 +587,7 @@ where
       let mut pool = self.conn_pool.lock().await;
       match pool.remove(req.header().addr()) {
         Some(conn) => {
-          self.conn_size.fetch_sub(1, Ordering::Release);
+          self.conn_size.fetch_sub(1, Ordering::AcqRel);
           conn
         }
         None => {

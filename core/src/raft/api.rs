@@ -452,7 +452,7 @@ where
   /// This is not a graceful operation.
   /// It is safe to call this multiple times.
   ///
-  /// Returns `true`` if this call has shutdown the Raft and it was not shutdown already.
+  /// Returns `true` if this call has shutdown the Raft and it was not shutdown already.
   pub async fn shutdown(&self) -> bool {
     if self.inner.shutdown.load(Ordering::Acquire) {
       return false;

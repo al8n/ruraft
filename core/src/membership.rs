@@ -155,17 +155,6 @@ pub(crate) enum MembershipChangeCommand<I: Id, A: Address> {
 }
 
 impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
-  /// Returns a string representation of the command.
-  #[inline]
-  pub const fn as_str(&self) -> &'static str {
-    match self {
-      Self::AddVoter { .. } => "AddVoter",
-      Self::AddNonvoter { .. } => "AddNonvoter",
-      Self::DemoteVoter { .. } => "DemoteVoter",
-      Self::RemoveServer { .. } => "RemoveServer",
-    }
-  }
-
   /// Returns [`MembershipChangeCommand::AddVoter`].
   #[inline]
   pub const fn add_voter(id: I, addr: A, prev_index: u64) -> Self {

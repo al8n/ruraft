@@ -66,7 +66,7 @@ pub(crate) struct LastSnapshot {
 }
 
 impl LastSnapshot {
-  pub(crate) fn new(term: u64, index: u64) -> Self {
+  pub(crate) fn new(index: u64, term: u64) -> Self {
     Self { term, index }
   }
 }

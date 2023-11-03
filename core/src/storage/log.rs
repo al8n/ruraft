@@ -12,21 +12,34 @@ use futures::FutureExt;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
+  utils::serde_instant,
 };
 
+/// A log entry that contains a new membership.
+#[derive(Clone)]
 pub struct MembershipLog<I: Id, A: Address> {
-  pub membership: Arc<Membership<I, A>>,
-  pub index: u64,
-  pub term: u64,
+  membership: Arc<Membership<I, A>>,
+  index: u64,
+  term: u64,
 }
 
 impl<I: Id, A: Address> MembershipLog<I, A> {
-  pub(crate) fn new(term: u64, index: u64, membership: Arc<Membership<I, A>>) -> Self {
-    Self {
-      membership,
-      index,
-      term,
-    }
+  /// Returns the index of the log entry.
+  #[inline]
+  pub const fn index(&self) -> u64 {
+    self.index
+  }
+
+  /// Returns the term of the log entry.
+  #[inline]
+  pub const fn term(&self) -> u64 {
+    self.term
+  }
+
+  /// Returns the membership of the log entry.
+  #[inline]
+  pub const fn membership(&self) -> &Arc<Membership<I, A>> {
+    &self.membership
   }
 }
 
@@ -135,65 +148,6 @@ pub struct Log<I: Id, A: Address> {
   )]
   #[cfg_attr(feature = "serde", serde(with = "serde_instant::option"))]
   appended_at: Option<Instant>,
-}
-
-#[cfg(feature = "serde")]
-mod serde_instant {
-  use serde::{Deserialize, Serialize, Serializer};
-  use std::time::{Duration, Instant};
-
-  #[derive(Serialize, Deserialize)]
-  struct SerializableInstant {
-    secs: u64,
-    nanos: u32,
-  }
-
-  impl From<Instant> for SerializableInstant {
-    fn from(instant: Instant) -> Self {
-      let duration_since_epoch = instant.elapsed();
-      SerializableInstant {
-        secs: duration_since_epoch.as_secs(),
-        nanos: duration_since_epoch.subsec_nanos(),
-      }
-    }
-  }
-
-  impl Into<Instant> for SerializableInstant {
-    fn into(self) -> Instant {
-      Instant::now() - Duration::new(self.secs, self.nanos)
-    }
-  }
-
-  pub(super) mod option {
-    use super::*;
-
-    pub fn serialize<S: Serializer>(
-      instant: &Option<Instant>,
-      serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-      let serializable_instant: Option<SerializableInstant> = (*instant).map(Into::into);
-      serializable_instant.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-      deserializer: D,
-    ) -> Result<Option<Instant>, D::Error> {
-      let serializable_instant = Option::<SerializableInstant>::deserialize(deserializer)?;
-      Ok(serializable_instant.map(Into::into))
-    }
-  }
-
-  pub fn serialize<S: Serializer>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error> {
-    let serializable_instant: SerializableInstant = instant.clone().into();
-    serializable_instant.serialize(serializer)
-  }
-
-  pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-  ) -> Result<Instant, D::Error> {
-    let serializable_instant = SerializableInstant::deserialize(deserializer)?;
-    Ok(serializable_instant.into())
-  }
 }
 
 impl<I: Id, A: Address> Log<I, A> {

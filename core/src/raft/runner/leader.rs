@@ -13,8 +13,10 @@ use super::*;
 use crate::{
   error::RaftError,
   observe,
-  raft::{ApplyRequest, ApplySender},
-  storage::{Log, LogKind, LogStorage},
+  raft::{ApplyRequest, ApplySender, LastSnapshot},
+  storage::{
+    remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotSource, StorageError,
+  },
   transport::{TimeoutNowRequest, TransportError},
   utils::override_notify_bool,
   Observed,
@@ -351,7 +353,9 @@ where
                 continue;
               }
 
-              self.restore_user_snapshot(src).await;
+              if tx.send(self.restore_user_snapshot(&mut leader_state, src).await).is_err() {
+                tracing::error!(target = "ruraft.leader", "user restore snapshot response receiver closed");
+              }
             }
             Err(e) => {
               tracing::error!(target = "ruraft.leader", err=%e, "restore snapshot response sender closed unexpectedly, shutting down...");
@@ -742,8 +746,9 @@ where
     while next_index.load(Ordering::SeqCst) <= state.last_index() {
       let (tx, rx) = oneshot::channel();
       if trigger_defer_err_tx.send(tx).await.is_err() {
-        // TODO: send error
-        let _ = done_tx.send(Ok(())).await;
+        let _ = done_tx
+          .send(Err(Error::leadership_transfer_target_exits()))
+          .await;
         return;
       }
 
@@ -760,8 +765,7 @@ where
             }
             Ok(Ok(())) => {}
             Err(_) => {
-              // TODO: send error
-              let _ = done_tx.send(Ok(())).await;
+              let _ = done_tx.send(Err(Error::leadership_transfer_target_exits())).await;
               return;
             }
           }
@@ -906,8 +910,150 @@ where
   /// so that the snapshot will be sent to followers and used for any new joiners.
   /// This can only be run on the leader,
   /// and returns a future that can be used to block until complete.
-  async fn restore_user_snapshot(&self, src: <S::Snapshot as SnapshotStorage>::Source) {
-    todo!()
+  async fn restore_user_snapshot(
+    &self,
+    leader_state: &mut LeaderState<F, S, T>,
+    mut src: <S::Snapshot as SnapshotStorage>::Source,
+  ) -> Result<(), Error<F, S, T>> {
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.leader.restore_user_snapshot",
+      start.elapsed().as_millis() as f64
+    ));
+
+    // We don't support snapshots while there's a config change
+    // outstanding since the snapshot doesn't have a means to
+    // represent this state.
+    let committed_index = self.memberships.committed().0;
+    let (latest_index, latest) = {
+      let l = self.memberships.latest();
+      (l.0, l.1.clone())
+    };
+    if committed_index != latest_index {
+      return Err(Error::cannot_restore_snapshot(
+        committed_index,
+        latest_index,
+      ));
+    }
+
+    // Cancel any inflight requests.
+    let inflight = core::mem::take(&mut leader_state.inflight);
+    for inf in inflight {
+      let _ = inf.tx.send_err(Error::aborted_by_restore());
+    }
+
+    // We will overwrite the snapshot metadata with the current term,
+    // an index that's greater than the current index, or the last
+    // index in the snapshot. It's important that we leave a hole in
+    // the index so we know there's nothing in the Raft log there and
+    // replication will fault and send the snapshot.
+    let term = self.current_term();
+    let mut last_index = self.last_index();
+    let meta = src.meta();
+    let meta_index = meta.index();
+    let meta_size = meta.size();
+    if meta_index > last_index {
+      last_index = meta_index;
+    }
+    last_index += 1;
+
+    // Dump the snapshot. Note that we use the latest membership,
+    // not the one that came with the snapshot.
+    let mut sink = self
+      .storage
+      .snapshot_store()
+      .create(meta.version(), term, last_index, latest, latest_index)
+      .await
+      .map_err(|e| {
+        Error::storage(
+          <S::Error as StorageError>::snapshot(e)
+            .with_message(Cow::Borrowed("failed to create snapshot")),
+        )
+      })?;
+
+    let n = match futures::io::copy(&mut src, &mut sink).await {
+      Ok(n) => n,
+      Err(e) => {
+        if let Err(e) = sink.cancel().await {
+          tracing::error!(target = "ruraft.leader", err=%e, "failed to cancel snapshot");
+        }
+
+        return Err(Error::storage(
+          <S::Error as StorageError>::io(e).with_message(Cow::Borrowed("failed to copy snapshot")),
+        ));
+      }
+    };
+
+    if n != meta_size {
+      if let Err(e) = sink.cancel().await {
+        tracing::error!(target = "ruraft.leader", err=%e, "failed to cancel snapshot");
+      }
+      return Err(Error::storage(
+        <S::Error as StorageError>::io(std::io::Error::new(std::io::ErrorKind::Other, ""))
+          .with_message(Cow::Owned(format!(
+            "failed to write snapshot, size did not match ({} != {})",
+            n, meta_size
+          ))),
+      ));
+    }
+
+    let snapshot_id = sink.id();
+    if let Err(e) = sink.close().await {
+      return Err(Error::storage(
+        <S::Error as StorageError>::io(e).with_message(Cow::Borrowed("failed to close snapshot")),
+      ));
+    }
+    tracing::info!(
+      target = "ruraft.leader",
+      bytes = n,
+      "copied to local snapshot"
+    );
+
+    // Restore the snapshot into the FSM. If this fails we are in a
+    // bad state so we panic to take ourselves out.
+    let (tx, rx) = oneshot::channel();
+    let fsm = FSMRequest::Restore {
+      id: snapshot_id,
+      tx,
+      shutdown_rx: self.shutdown_rx.clone(),
+    };
+    futures::select! {
+      _ = self.fsm_mutate_tx.send(fsm).fuse() => {}
+      _ = self.shutdown_rx.recv().fuse() => {
+        return Err(Error::shutdown());
+      }
+    }
+    match rx.await {
+      Ok(Ok(())) => {}
+      Ok(Err(e)) => {
+        panic!("failed to restore snapshot: {e}");
+      }
+      Err(e) => {
+        panic!("failed to restore snapshot: {e}");
+      }
+    }
+
+    // We set the last log so it looks like we've stored the empty
+    // index we burned. The last applied is set because we made the
+    // FSM take the snapshot state, and we store the last snapshot
+    // in the stable store since we created a snapshot as part of
+    // this process.
+    self.set_last_log(LastLog::new(last_index, term));
+    self.set_last_applied(last_index);
+    self.set_last_snapshot(LastSnapshot::new(last_index, term));
+
+    // Remove old logs if r.logs is a MonotonicLogStore. Log any errors and continue.
+    let ls = self.storage.log_store();
+    if <S::Log as LogStorage>::is_monotonic() {
+      if let Err(e) = remove_old_logs::<S>(ls).await {
+        tracing::error!(target = "ruraft.leader", err=%e, "failed to remove old logs");
+      }
+    }
+
+    tracing::info!(target = "ruraft.leader", index=%last_index, "restored user snapshot");
+    Ok(())
   }
 
   /// Changes the membership and adds a new membership entry to the log.
@@ -1086,7 +1232,7 @@ where
     let now = Instant::now();
 
     let latest = self.memberships.latest().1.clone();
-    for (id, (addr, suffrage)) in latest.iter() {
+    for (id, (_, suffrage)) in latest.iter() {
       if !suffrage.is_voter() {
         continue;
       }

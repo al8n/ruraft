@@ -784,7 +784,6 @@ where
       storage: storage.clone(),
       mutate_rx: fsm_mutate_rx,
       snapshot_rx: fsm_snapshot_rx,
-      batching_apply: opts.batch_apply,
       wg: wg.clone(),
       shutdown_rx: shutdown_rx.clone(),
     }

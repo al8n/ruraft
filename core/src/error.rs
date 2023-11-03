@@ -55,6 +55,10 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: cannot take snapshot now, wait until the membership entry at {committed} has been applied (have applied {snapshot})")]
   CantTakeSnapshot { committed: u64, snapshot: u64 },
 
+  /// Returned when trying to create a snapshot, but the membership change has not been applied.
+  #[error("ruraft: cannot restore snapshot now, wait until the membership entry at {latest} has been applied (have applied {committed})")]
+  CantRestoreSnapshot { committed: u64, latest: u64 },
+
   /// Returned when an operation is attempted
   /// that's not supported by the current protocol version.
   #[error("ruraft: operation not supported with current protocol version")]
@@ -81,9 +85,13 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: lost leadership during transfer (expected)")]
   LeadershipLostDuringTransfer,
 
-  /// Returned
+  /// Returned when we cannot find a target node to transfer leadership to.
   #[error("ruraft: cannot find a target node to transfer leadership to")]
   LeadershipTransferNoTarget,
+
+  /// Returned when we are transfering the leadership to a target, but the target exits.
+  #[error("ruraft: leadership transfer target exits")]
+  LeadershipTransferTargetExits,
 
   /// Returned when there are some snapshots in the storage,
   /// but none of them can be loaded.
@@ -267,8 +275,8 @@ where
   }
 
   #[inline]
-  pub(crate) const fn transfer_to_self() -> Self {
-    Self::Raft(RaftError::TransferToSelf)
+  pub(crate) const fn leadership_transfer_target_exits() -> Self {
+    Self::Raft(RaftError::LeadershipTransferTargetExits)
   }
 
   #[inline]
@@ -276,5 +284,20 @@ where
     node: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) -> Self {
     Self::Raft(RaftError::NoReplicationState(node))
+  }
+
+  #[inline]
+  pub(crate) const fn cannot_restore_snapshot(committed: u64, latest: u64) -> Self {
+    Self::Raft(RaftError::CantRestoreSnapshot { committed, latest })
+  }
+
+  #[inline]
+  pub(crate) const fn aborted_by_restore() -> Self {
+    Self::Raft(RaftError::AbortedByRestore)
+  }
+
+  #[inline]
+  pub(crate) const fn shutdown() -> Self {
+    Self::Raft(RaftError::Shutdown)
   }
 }
