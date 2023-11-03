@@ -125,7 +125,8 @@ where
     } = self;
 
     #[cfg(feature = "metrics")]
-    let mut saturation = SaturationMetric::new("ruraft.fsm.runner", std::time::Duration::from_secs(1));
+    let mut saturation =
+      SaturationMetric::new("ruraft.fsm.runner", std::time::Duration::from_secs(1));
 
     super::spawn_local::<R, _>(wg.add(1), async move {
       let mut last_index = 0;

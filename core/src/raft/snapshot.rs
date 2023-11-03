@@ -1,12 +1,11 @@
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 use std::{
   borrow::Cow,
   future::Future,
   sync::{atomic::Ordering, Arc},
   time::Duration,
 };
-#[cfg(feature = "metrics")]
-use std::time::Instant;
-
 
 use agnostic::Runtime;
 use atomic::Atomic;
@@ -46,7 +45,7 @@ where
   R: Runtime,
 {
   pub(super) store: Arc<S>,
-  pub(super) last: Arc<parking_lot::Mutex<super::Last>>,
+  pub(super) state: Arc<super::State>,
   /// Used to trigger a new snapshot being taken
   pub(super) fsm_snapshot_tx: async_channel::Sender<
     oneshot::Sender<Result<FSMSnapshot<<F as FinateStateMachine>::Snapshot>, Error<F, S, T>>>,
@@ -244,7 +243,7 @@ where
             metrics::histogram!("ruraft.snapshot.persist", persist_start.elapsed().as_millis() as f64);
 
             // Update the last stable snapshot info.
-            self.last.lock().snapshot = LastSnapshot::new(snap.term, snap.index);
+            self.state.set_last_snapshot(LastSnapshot::new(snap.index, snap.term));
 
             // Compact the logs.
             self.compact_logs(snap.index).await
@@ -265,7 +264,7 @@ where
   /// a new snapshot.
   async fn should_snapshot(&self) -> bool {
     // Check the last snapshot index
-    let last_snapshot = self.last.lock().snapshot;
+    let last_snapshot = self.state.last_snapshot();
 
     // Check the last log index
     match self.store.log_store().last_index().await {
@@ -294,7 +293,7 @@ where
       start.elapsed().as_millis() as f64
     ));
 
-    let last_log = self.last.lock().log;
+    let last_log = self.state.last_log();
     compact_logs_with_trailing::<S>(
       self.store.log_store(),
       snap_idx,

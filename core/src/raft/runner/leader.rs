@@ -489,7 +489,7 @@ where
     // reporting a last contact time from before we were the
     // leader. Otherwise, to a client it would seem our data
     // is extremely stale.
-    self.set_last_contact(Instant::now());
+    self.update_last_contact();
 
     // Respond to all inflight operations
     leader_state.inflight.into_iter().for_each(|inf| {
@@ -1174,6 +1174,7 @@ where
       };
       logs.push(log.clone());
       leader_state.inflight.push_back(Inflight {
+        #[cfg(feature = "metrics")]
         dispatch: now,
         tx: req.tx,
         log,

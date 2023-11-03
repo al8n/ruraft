@@ -1,9 +1,4 @@
-use std::{
-  future::Future,
-  ops::RangeBounds,
-  sync::Arc,
-  time::Instant,
-};
+use std::{future::Future, ops::RangeBounds, sync::Arc, time::Instant};
 
 use bytes::Bytes;
 #[cfg(feature = "metrics")]
@@ -255,7 +250,7 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   }
 }
 
-// #[cfg(feature = "metrics")]
+#[cfg(feature = "metrics")]
 pub(crate) enum LogStorageExtError<E: std::error::Error> {
   LogStorageError(E),
   NotFound,
@@ -309,7 +304,6 @@ pub(crate) trait LogStorageExt: LogStorage {
     }
   }
 
-  #[cfg(feature = "metrics")]
   fn emit_metrics(
     &self,
     interval: std::time::Duration,

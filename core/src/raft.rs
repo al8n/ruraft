@@ -109,11 +109,6 @@ impl Contact {
   }
 
   #[inline]
-  fn set(&self, val: Instant) {
-    self.0.store(Arc::new(val));
-  }
-
-  #[inline]
   fn get(&self) -> Instant {
     **self.0.load()
   }
@@ -130,18 +125,8 @@ impl OptionalContact {
   }
 
   #[inline]
-  fn now() -> Self {
-    Self(Arc::new(ArcSwapOption::from_pointee(Some(Instant::now()))))
-  }
-
-  #[inline]
   fn update(&self) {
     self.0.store(Some(Arc::new(Instant::now())));
-  }
-
-  #[inline]
-  fn set(&self, val: Option<Instant>) {
-    self.0.store(val.map(Arc::new));
   }
 
   #[inline]
@@ -199,15 +184,18 @@ struct Shutdown {
   shutdown: AtomicBool,
 
   lock: async_lock::RwLock<()>,
+
+  wg: AsyncWaitGroup,
 }
 
 impl Shutdown {
   #[inline]
-  fn new(shutdown_tx: async_channel::Sender<()>) -> Self {
+  fn new(shutdown_tx: async_channel::Sender<()>, wg: AsyncWaitGroup) -> Self {
     Self {
       shutdown_tx,
       shutdown: AtomicBool::new(false),
       lock: async_lock::RwLock::new(()),
+      wg,
     }
   }
 
@@ -221,10 +209,12 @@ impl Shutdown {
     state: &State,
     observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
   ) -> bool {
+    self.shutdown.store(true, Ordering::Release);
+    let closed = self.shutdown_tx.close();
     let _mu = self.lock.write().await;
     state.set_role(Role::Shutdown, observers).await;
-    self.shutdown.store(true, Ordering::Release);
-    self.shutdown_tx.close()
+    self.wg.wait().await;
+    closed
   }
 }
 
@@ -310,7 +300,6 @@ where
       HashMap<ObserverId, Observer<T::Id, <T::Resolver as AddressResolver>::Address>>,
     >,
   >,
-  wg: AsyncWaitGroup,
 }
 
 pub struct RaftCore<F, S, T, SC, R>
@@ -607,6 +596,12 @@ where
         )
       })
   }
+
+  /// Returns the sidecar, if any.
+  #[inline]
+  pub fn sidecar(&self) -> Option<&SC> {
+    self.inner.sidecar.as_deref()
+  }
 }
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
@@ -780,7 +775,7 @@ where
     let wg = AsyncWaitGroup::new();
     let transport = Arc::new(transport);
     let observers = Arc::new(async_lock::RwLock::new(HashMap::new()));
-    let shutdown = Arc::new(Shutdown::new(shutdown_tx));
+    let shutdown = Arc::new(Shutdown::new(shutdown_tx, wg.clone()));
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
@@ -827,12 +822,12 @@ where
 
     SnapshotRunner::<F, S, T, R> {
       store: storage,
-      last,
+      state: state.clone(),
       fsm_snapshot_tx,
       committed_membership_tx,
       user_snapshot_rx,
       opts: reloadable_options.clone(),
-      wg: wg.clone(),
+      wg,
       shutdown_rx,
     }
     .spawn();
@@ -860,7 +855,6 @@ where
       leader_rx,
       leadership_change_rx,
       observers,
-      wg,
     };
 
     Ok(Self {

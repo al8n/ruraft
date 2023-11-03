@@ -214,8 +214,8 @@ where
   }
 
   #[inline]
-  fn set_last_contact(&self, instant: Instant) {
-    self.last_contact.set(Some(instant));
+  fn update_last_contact(&self) {
+    self.last_contact.update();
   }
 
   #[inline]
@@ -437,7 +437,7 @@ where
 
     // Everything went well, set success
     resp.success = true;
-    self.set_last_contact(Instant::now());
+    self.update_last_contact();
     respond!(tx.send(resp));
   }
 
@@ -497,6 +497,7 @@ where
 }
 
 struct Inflight<F: FinateStateMachine, E> {
+  #[cfg(feature = "metrics")]
   dispatch: Instant,
   log: Log<F::Id, F::Address>,
   tx: ApplySender<F, E>,
