@@ -6,6 +6,7 @@ use crate::{
   options::OptionsError,
   storage::{LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
   transport::Transport,
+  Node,
 };
 
 /// Raft errors.
@@ -72,6 +73,18 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: leadership transfer in progress")]
   LeadershipTransferInProgress,
 
+  /// Returned when the leader transfer times out.
+  #[error("ruraft: leadership transfer timeout")]
+  LeadershipTransferTimeout,
+
+  /// Returned when the leadership was lost caused by leadership transfer.
+  #[error("ruraft: lost leadership during transfer (expected)")]
+  LeadershipLostDuringTransfer,
+
+  /// Returned
+  #[error("ruraft: cannot find a target node to transfer leadership to")]
+  LeadershipTransferNoTarget,
+
   /// Returned when there are some snapshots in the storage,
   /// but none of them can be loaded.
   #[error("ruraft: failed to load any existing snapshots")]
@@ -124,6 +137,10 @@ pub enum RaftError<T: Transport> {
   /// Returned when failing to replicate.
   #[error("ruraft: replication failed")]
   ReplicationFailed,
+
+  /// Returned when failing to find replication state.
+  #[error("ruraft: cannot find replication state for node {0}")]
+  NoReplicationState(Node<T::Id, <T::Resolver as AddressResolver>::Address>),
 
   /// Returned when trying to recover a raft cluster but cannot restore any of the available snapshots.
   #[error("ruraft: failed to restore any of the available snapshots")]
@@ -227,5 +244,37 @@ where
   #[inline]
   pub(crate) const fn replication_failed() -> Self {
     Self::Raft(RaftError::ReplicationFailed)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_timeout() -> Self {
+    Self::Raft(RaftError::LeadershipTransferTimeout)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_in_progress() -> Self {
+    Self::Raft(RaftError::LeadershipTransferInProgress)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_lost_during_transfer() -> Self {
+    Self::Raft(RaftError::LeadershipLostDuringTransfer)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_no_target() -> Self {
+    Self::Raft(RaftError::LeadershipTransferNoTarget)
+  }
+
+  #[inline]
+  pub(crate) const fn transfer_to_self() -> Self {
+    Self::Raft(RaftError::TransferToSelf)
+  }
+
+  #[inline]
+  pub(crate) const fn no_replication_state(
+    node: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Self {
+    Self::Raft(RaftError::NoReplicationState(node))
   }
 }

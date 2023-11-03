@@ -16,15 +16,15 @@ use nodecraft::resolver::AddressResolver;
 use wg::AsyncWaitGroup;
 
 use super::{
-  fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer, ObserverId,
-  OptionalContact,
+  api::ApplySender, fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer,
+  ObserverId, OptionalContact,
 };
 use crate::{
   error::{Error, RaftError},
   membership::{Membership, Memberships},
   options::{Options, ReloadableOptions},
   sidecar::Sidecar,
-  storage::{LogStorage, SnapshotStorage, Storage},
+  storage::{Log, LogStorage, SnapshotStorage, Storage},
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, Request, Response, RpcConsumer, Transport,
   },
@@ -292,10 +292,7 @@ where
     // Save the current leader
     self
       .leader
-      .set(
-        Some(Node::new(req.header.id.clone(), req.header.addr)),
-        &self.observers,
-      )
+      .set(Some(req.header.from().clone()), &self.observers)
       .await;
 
     // Verify the last log entry
@@ -468,7 +465,11 @@ where
   /// pass futures = `None`.
   /// Leaders call this when entries are committed. They pass the futures from any
   /// inflight logs.
-  async fn process_logs(&self, index: u64, futures: Option<HashMap<u64, ()>>) {
+  async fn process_logs(
+    &self,
+    index: u64,
+    futures: Option<HashMap<u64, Inflight<F, Error<F, S, T>>>>,
+  ) {
     todo!()
   }
 
@@ -494,4 +495,10 @@ where
       }
     }
   }
+}
+
+struct Inflight<F: FinateStateMachine, E> {
+  dispatch: Instant,
+  log: Log<F::Id, F::Address>,
+  tx: ApplySender<F, E>,
 }

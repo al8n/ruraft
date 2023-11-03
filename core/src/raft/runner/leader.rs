@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   collections::LinkedList,
   sync::atomic::{AtomicU64, Ordering},
   time::Duration,
@@ -14,6 +15,7 @@ use crate::{
   observe,
   raft::{ApplyRequest, ApplySender},
   storage::{Log, LogKind, LogStorage},
+  transport::{TimeoutNowRequest, TransportError},
   utils::override_notify_bool,
   Observed,
 };
@@ -76,7 +78,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Verify<F, S, T> {
 
 struct LeaderState<F: FinateStateMachine, S: Storage, T: Transport> {
   // indicates that a leadership transfer is in progress.
-  leadership_transfer_in_progress: AtomicBool,
+  leadership_transfer_in_progress: Arc<AtomicBool>,
   commit_rx: async_channel::Receiver<()>,
   commitment: Commitment<T::Id, <T::Resolver as AddressResolver>::Address>,
   // list of log in log index order
@@ -95,7 +97,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> LeaderState<F, S, T> {
     let (commit_tx, commit_rx) = async_channel::bounded(1);
     let commitment = Commitment::new(commit_tx, latest, start_index);
     Self {
-      leadership_transfer_in_progress: AtomicBool::new(false),
+      leadership_transfer_in_progress: Arc::new(AtomicBool::new(false)),
       commit_rx,
       commitment,
       inflight: LinkedList::new(),
@@ -275,15 +277,44 @@ where
           saturation_metric.working();
           self.state.set_role(Role::Follower, &self.observers).await;
         }
-        f = self.leader_transfer_rx.recv().fuse() => {
+        ev = self.leader_transfer_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
-          todo!()
+
+          match ev {
+            Err(e) => {
+              tracing::error!(target = "ruraft.leader", err=%e, "leader transfer sender closed unexpectedly, shutting down...");
+              return (leader_state, Err(()));
+            }
+            Ok((target, tx)) => {
+              if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
+                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                tracing::debug!(target = "ruraft.leader", err=%err, "leader transfer request received, but leadership transfer in progress");
+                if tx.send(Err(err)).is_err() {
+                  tracing::error!(target = "ruraft.leader", "leader transfer response receiver closed, shutting down...");
+                  return (leader_state, Err(()));
+                }
+                continue;
+              }
+
+              self.handle_leader_transfer(local_id, &mut leader_state, target, tx).await;
+            }
+          }
         }
         _ = leader_state.commit_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
           saturation_metric.working();
-          todo!()
+          step_down = self.handle_commit(local_id, &mut leader_state).await;
+
+          if step_down {
+            if self.options.shutdown_on_remove {
+              tracing::info!(target = "ruraft.leader", "removed ourself, shutting down...");
+              // TODO: self.shutdown()
+            } else {
+              tracing::info!(target = "ruraft.leader", "removed ourself, transitioning to follower");
+              self.state.set_role(Role::Follower, &self.observers).await;
+            }
+          }
         }
         v = self.verify_rx.recv().fuse() => {
           #[cfg(feature = "metrics")]
@@ -575,6 +606,228 @@ where
     metrics::gauge!("ruraft.peers", latest.len() as f64);
   }
 
+  async fn handle_leader_transfer(
+    &self,
+    local_id: &T::Id,
+    leader_state: &mut LeaderState<F, S, T>,
+    target: Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    tx: oneshot::Sender<Result<(), Error<F, S, T>>>,
+  ) {
+    if let Some(ref t) = target {
+      tracing::debug!(target = "ruraft.leader", id=%t.id(), address=%t.addr(), "starting leadership transfer");
+    } else {
+      tracing::debug!(target = "ruraft.leader", "starting leadership transfer");
+    }
+
+    // When we are leaving leaderLoop, we are no longer
+    // leader, so we should stop transferring.
+    let (left_leader_loop_tx, left_leader_loop_rx) = async_channel::bounded::<()>(1);
+    scopeguard::defer!(let _ = left_leader_loop_tx.close(););
+
+    let (stop_tx, stop_rx) = async_channel::bounded(1);
+    let (done_tx, done_rx) = async_channel::bounded(1);
+
+    // This is intentionally being setup outside of the
+    // leadership_transfer function. Because the timeout_now
+    // call is blocking and there is no way to abort that
+    // in case eg the timer expires.
+    // The leadership_transfer function is controlled with
+    // the stop channel and done channel.
+    // No matter how this exits, have this function set
+    // leadership transfer to false before we return
+    //
+    // Note that this leaves a window where callers of
+    // leadership_transfer() and
+    // may start executing after they get their future but before
+    // this routine has set leadership_transfer_in_progress back to false.
+    // It may be safe to modify things such that set_leadership_transfer_in_progress
+    // is set to false before calling future.Respond, but that still needs
+    // to be tested and this situation mirrors what callers already had to deal with.
+    {
+      let opts = self.reloadable_options.clone();
+      let leadership_transfer_in_progress = leader_state.leadership_transfer_in_progress.clone();
+      R::spawn_detach(async move {
+        scopeguard::defer!(leadership_transfer_in_progress.store(false, Ordering::Release));
+        futures::select! {
+          _ = R::sleep(opts.load(Ordering::Acquire).election_timeout()).fuse() => {
+            stop_tx.close();
+            let err = Error::leadership_transfer_timeout();
+            tracing::debug!(target = "ruraft.leader", err=%err, "leadership transfer timeout");
+            let _ = tx.send(Err(err));
+            let _ = done_rx.recv().await;
+          }
+          _ = left_leader_loop_rx.recv().fuse() => {
+            stop_tx.close();
+            let err = Error::leadership_lost_during_transfer();
+            tracing::debug!(target = "ruraft.leader", err=%err, "lost leadership during transfer (expected)");
+            let _ = tx.send(Err(err));
+            let _ = done_rx.recv().await;
+          }
+          err = done_rx.recv().fuse() => {
+            match err {
+              Ok(Err(e)) => {
+                let _ = tx.send(Err(e));
+              }
+              Ok(Ok(())) => {
+                let _ = tx.send(Ok(()));
+              }
+              Err(e) => {
+                tracing::error!(target = "ruraft.leader", err=%e, "done signal sender was closed unexpectedly");
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // leader_state.repl_state is accessed here before
+    // starting leadership transfer asynchronously because
+    // leader_state is only supposed to be accessed in the
+    // leaderloop.
+
+    let Some(target) = target.or_else(|| self.pick_server(local_id, leader_state)) else {
+      let _ = done_tx
+        .send(Err(Error::leadership_transfer_no_target()))
+        .await;
+      return;
+    };
+
+    let Some(repl_state) = leader_state.repl_state.get(target.id()) else {
+      let _ = done_tx.send(Err(Error::no_replication_state(target))).await;
+      return;
+    };
+
+    leader_state
+      .leadership_transfer_in_progress
+      .store(true, Ordering::Release);
+
+    {
+      let state = self.state.clone();
+      let transport = self.transport.clone();
+      let next_index = repl_state.next_index.clone();
+      let trigger_defer_error_tx = repl_state.trigger_defer_error_tx.clone();
+      R::spawn_detach(async move {
+        Self::leadearship_transfer(
+          target,
+          state,
+          transport,
+          next_index,
+          trigger_defer_error_tx,
+          stop_rx,
+          done_tx,
+        )
+        .await
+      })
+    }
+  }
+
+  async fn leadearship_transfer(
+    target: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+    state: Arc<State>,
+    trans: Arc<T>,
+    next_index: Arc<AtomicU64>,
+    trigger_defer_err_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+    stop_rx: async_channel::Receiver<()>,
+    done_tx: async_channel::Sender<Result<(), Error<F, S, T>>>,
+  ) {
+    // make sure we are not already stopped
+    futures::select! {
+      _ = stop_rx.recv().fuse() => {
+        let _ = done_tx.send(Ok(())).await;
+        return;
+      }
+      default => {}
+    }
+
+    while next_index.load(Ordering::SeqCst) <= state.last_index() {
+      let (tx, rx) = oneshot::channel();
+      if trigger_defer_err_tx.send(tx).await.is_err() {
+        // TODO: send error
+        let _ = done_tx.send(Ok(())).await;
+        return;
+      }
+
+      futures::select! {
+        _ = stop_rx.recv().fuse() => {
+          let _ = done_tx.send(Ok(())).await;
+          return;
+        }
+        err = rx.fuse() => {
+          match err {
+            Ok(Err(e)) => {
+              let _ = done_tx.send(Err(e)).await;
+              return;
+            }
+            Ok(Ok(())) => {}
+            Err(_) => {
+              // TODO: send error
+              let _ = done_tx.send(Ok(())).await;
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    // Step ?: the thesis describes in chap 6.4.1: Using clocks to reduce
+    // messaging for read-only queries. If this is implemented, the lease
+    // has to be reset as well, in case leadership is transferred. This
+    // implementation also has a lease, but it serves another purpose and
+    // doesn't need to be reset. The lease mechanism in our raft lib, is
+    // setup in a similar way to the one in the thesis, but in practice
+    // it's a timer that just tells the leader how often to check
+    // heartbeats are still coming in.
+
+    // Step 3: send timeout_now message to target server.
+
+    if let Err(e) = trans
+      .timeout_now(
+        &target,
+        TimeoutNowRequest {
+          header: trans.header(),
+        },
+      )
+      .await
+    {
+      let _ = done_tx
+        .send(Err(Error::transport(e.with_message(Cow::Owned(format!(
+          "failed to make TimeoutNow rpc to {target}"
+        ))))))
+        .await;
+      return;
+    }
+    let _ = done_tx.send(Ok(())).await;
+  }
+
+  /// Returns the follower that is most up to date and participating in quorum.
+  /// Because it accesses leaderstate, it should only be called from the leaderloop.
+  fn pick_server(
+    &self,
+    local_id: &T::Id,
+    leader_state: &LeaderState<F, S, T>,
+  ) -> Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>> {
+    let latest = self.memberships.latest().1.clone();
+    let mut current = 0;
+    let mut tmp = None;
+    for (id, (addr, suffrage)) in latest.iter() {
+      if id.eq(local_id) || !suffrage.is_voter() {
+        continue;
+      }
+
+      let Some(state) = leader_state.repl_state.get(id) else {
+        continue;
+      };
+
+      let next_idx = state.next_index.load(Ordering::SeqCst);
+      if next_idx > current {
+        current = next_idx;
+        tmp = Some((id, addr));
+      }
+    }
+
+    tmp.map(|(id, addr)| Node::new(id.clone(), addr.clone()))
+  }
+
   /// Handle commit event, return `true` if we should shutdown
   async fn handle_commit(&self, local_id: &T::Id, leader_state: &mut LeaderState<F, S, T>) -> bool {
     // Process the newly committed entries
@@ -583,14 +836,14 @@ where
     self.set_commit_index(commit_index);
 
     // New membership has been committed, set it as the committed
-		// value.
+    // value.
     let (latest_index, latest) = {
       let l = self.memberships.latest();
       (l.0, l.1.clone())
     };
 
     let has_vote = latest.is_voter(local_id);
-    if latest_index > old_commit_index && latest_index <= commit_index{
+    if latest_index > old_commit_index && latest_index <= commit_index {
       self.memberships.set_committed(latest, latest_index);
       if !has_vote {
         return true;
@@ -598,20 +851,49 @@ where
     }
 
     let start = Instant::now();
-    let mut last_index_in_group = 0;
 
     // Pull all inflight logs that are committed off the queue.
-    let mut inflight = core::mem::replace(&mut leader_state.inflight, LinkedList::new()).into_iter();
-    while let Some(inf) = inflight.next() {
-      let idx = inf.log.index;
-      if idx > commit_index {
-        // Don't go past the committed index
+    let inflight = core::mem::take(&mut leader_state.inflight);
 
-      }
+    let mut group_futs = HashMap::new();
+    let mut last_idx_in_group = 0;
+    let mut num_commits = 0;
 
-      // Measure the commit time
-      
+    let remaining = inflight
+      .into_iter()
+      .filter_map(|inf| {
+        let idx = inf.log.index;
+        if idx > commit_index {
+          // Don't go past the committed index
+          Some(inf)
+        } else {
+          num_commits += 1;
+          #[cfg(feature = "metrics")]
+          metrics::histogram!(
+            "ruraft.leader.commit_time",
+            inf.dispatch.elapsed().as_millis() as f64
+          );
+          group_futs.insert(idx, inf);
+          last_idx_in_group = idx;
+          None
+        }
+      })
+      .collect::<LinkedList<_>>();
+
+    let _ = core::mem::replace(&mut leader_state.inflight, remaining);
+
+    // Process the group
+    if !group_futs.is_empty() {
+      self.process_logs(last_idx_in_group, Some(group_futs)).await;
     }
+
+    // Measure the time to enqueue batch of logs for FSM to apply
+    #[cfg(feature = "metrics")]
+    metrics::histogram!("ruraft.fsm.enqueue", start.elapsed().as_millis() as f64);
+
+    // Count the number of logs enqueued
+    #[cfg(feature = "metrics")]
+    metrics::gauge!("ruraft.leader.commit_num_logs", num_commits as f64);
 
     false
   }
@@ -745,8 +1027,9 @@ where
       };
       logs.push(log.clone());
       leader_state.inflight.push_back(Inflight {
+        dispatch: now,
         tx: req.tx,
-        log
+        log,
       });
     }
 
@@ -971,9 +1254,4 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Stream for StableMembershi
       std::task::Poll::Pending
     }
   }
-}
-
-struct Inflight<F: FinateStateMachine, E> {
-  log: Log<F::Id, F::Address>,
-  tx: ApplySender<F, E>,
 }

@@ -12,6 +12,7 @@ use crate::{
   membership::Membership,
   options::{ProtocolVersion, SnapshotVersion},
   storage::Log,
+  Node,
 };
 
 use super::{Address, Id};
@@ -43,31 +44,30 @@ pub struct Header<I, A> {
     getter(
       const,
       style = "ref",
-      attrs(doc = "Get the server id of the request or response"),
+      attrs(doc = "Get the node of the request or response"),
     ),
-    setter(attrs(doc = "Set the server id of the request or response"),)
+    setter(attrs(doc = "Set the node of the request or response"),)
   )]
-  id: I,
-  /// The addr of the node sending the RPC Request or Response
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Get the target address of the request or response"),
-    ),
-    setter(attrs(doc = "Set the target address of the request or response"),)
-  )]
-  addr: A,
+  from: Node<I, A>,
 }
 
 impl<I: Id, A: Address> Header<I, A> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
       protocol_version: version,
-      id,
-      addr,
+      from: Node::new(id, addr),
+    }
+  }
+}
+
+impl<I, A> From<(ProtocolVersion, Node<I, A>)> for Header<I, A> {
+  #[inline]
+  fn from((version, from): (ProtocolVersion, Node<I, A>)) -> Self {
+    Self {
+      protocol_version: version,
+      from,
     }
   }
 }
@@ -100,9 +100,12 @@ pub struct AppendEntriesRequest<I: Id, A: Address> {
 impl<I: Id, A: Address> AppendEntriesRequest<I, A> {
   /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
   /// are set to their default values.
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
-      header: Header::new(version, id, addr),
+      header: Header {
+        protocol_version: version,
+        from: Node::new(id, addr),
+      },
       term: 0,
       prev_log_entry: 0,
       prev_log_term: 0,
@@ -138,7 +141,7 @@ pub struct AppendEntriesResponse<I, A> {
 }
 
 impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
       header: Header::new(version, id, addr),
       term: 0,

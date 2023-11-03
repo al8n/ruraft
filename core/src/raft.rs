@@ -1,6 +1,7 @@
 use std::{
   borrow::Cow,
   collections::HashMap,
+  fmt::Display,
   future::Future,
   sync::{
     atomic::{AtomicBool, AtomicU64},
@@ -50,25 +51,23 @@ use snapshot::{CountingReader, SnapshotRestoreMonitor};
 mod state;
 pub use state::*;
 
-pub struct Node<I: Id, A: Address>(Arc<(I, A)>);
+#[derive(Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Node<I, A>(Arc<(I, A)>);
 
-impl<I: Id, A: Address> Clone for Node<I, A> {
+impl<I, A> Clone for Node<I, A> {
   fn clone(&self) -> Self {
     Self(self.0.clone())
   }
 }
 
-impl<I, A> core::fmt::Display for Node<I, A>
-where
-  I: Id,
-  A: Address,
-{
+impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}({})", self.0 .0, self.0 .1)
   }
 }
 
-impl<I: Id, A: Address> Node<I, A> {
+impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]
   pub fn id(&self) -> &I {

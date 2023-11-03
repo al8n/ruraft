@@ -312,14 +312,16 @@ where
         let wg = self.wg.clone();
         let txx = tx.clone();
         let trans = self.transport.clone();
+        let target = Node::new(id, addr);
         Either::Right(async move {
-          tracing::debug!(target = "ruraft", term = %term, from = %id, address = %addr, "asking for vote");
+          tracing::debug!(target = "ruraft", term = %term, from = %local_id, address = %local_addr, "asking for vote");
 
           super::super::spawn_local::<R, _>(wg.add(1), async move {
             #[cfg(feature = "metrics")]
             let start = Instant::now();
-            let res = match trans.vote(VoteRequest {
-              header: Header::new(protocol_version, id.clone(), addr.clone()),
+
+            let res = match trans.vote(&target, VoteRequest {
+              header: trans.header(),
               term,
               last_log_index: last.index,
               last_log_term: last.term,
@@ -327,23 +329,27 @@ where
             }).await {
               Ok(resp) => VoteResult {
                 resp,
-                voter_id: id.clone(),
+                voter_id: target.id().clone(),
               },
               Err(e) => {
-                tracing::error!(target = "ruraft", to = %id, address=%addr, err=%e, "failed to make vote rpc");
+                tracing::error!(target = "ruraft", to = %target, err=%e, "failed to make vote rpc");
                 VoteResult {
                   resp: VoteResponse {
-                    header: Header::new(protocol_version, id.clone(), addr.clone()),
+                    header: Header {
+                      protocol_version,
+                      from: target.clone(),
+                    },
                     term,
                     granted: false,
                   },
-                  voter_id: id.clone(),
+                  voter_id: target.id().clone(),
                 }
               }
             };
 
+
             if let Err(e) = txx.send(res).await {
-              tracing::error!(target = "ruraft", to = %id, address=%addr, err=%e, "failed to send back vote result, receiver closed");
+              tracing::error!(target = "ruraft", to = %target, err=%e, "failed to send back vote result, receiver closed");
             }
 
             #[cfg(feature = "metrics")]

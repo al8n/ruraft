@@ -211,11 +211,11 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Provides the header used for all RPC requests.
   fn header(&self) -> Header<Self::Id, <Self::Resolver as AddressResolver>::Address> {
-    Header {
-      id: self.local_id().clone(),
-      addr: self.local_addr().clone(),
-      protocol_version: self.version(),
-    }
+    Header::new(
+      self.version(),
+      self.local_id().clone(),
+      self.local_addr().clone(),
+    )
   }
 
   /// Provides the concrete network address for peers in the Raft cluster to communicate with.
@@ -242,6 +242,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Sends the append entries requrest to the target node.
   fn append_entries(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
@@ -253,6 +254,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Sends the vote request to the target node.
   fn vote(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
@@ -264,6 +266,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to push a snapshot down to a follower.
   fn install_snapshot(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     source: impl AsyncRead + Send,
   ) -> impl Future<
@@ -276,6 +279,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to start a leadership transfer to the target node.
   fn timeout_now(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
@@ -287,6 +291,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to send a heartbeat to the target node.
   fn heartbeat(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<

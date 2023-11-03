@@ -136,7 +136,7 @@ where
 pub(super) struct Replication<F: FinateStateMachine, S: Storage, T: Transport> {
   /// The index of the next log entry to send to the follower,
   /// which may fall past the end of the log.
-  next_index: Arc<AtomicU64>,
+  pub(super) next_index: Arc<AtomicU64>,
 
   /// Contains the network address and ID of the remote follower
   pub(super) peer: Arc<ArcSwap<Node<T::Id, <T::Resolver as AddressResolver>::Address>>>,
@@ -152,7 +152,8 @@ pub(super) struct Replication<F: FinateStateMachine, S: Storage, T: Transport> {
 
   /// Used to provide a backchannel. By sending a
   /// deferErr, the sender can be notifed when the replication is done.
-  trigger_defer_error_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
+  pub(super) trigger_defer_error_tx:
+    async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
 
   /// Notify the runner to send out a heartbeat, which is used to check that
   /// this server is still leader.
@@ -555,7 +556,7 @@ where
           let num_entries = req.entries.len();
           let req_last_index = req.entries.last().map(|l| l.index);
 
-          match self.transport.append_entries(req).await {
+          match self.transport.append_entries(&remote, req).await {
             Ok(resp) => {
               #[cfg(feature = "metrics")]
               append_stats(&remote, start, num_entries as u64);
@@ -652,7 +653,7 @@ where
     // make the call
     let start = Instant::now();
     let meta_idx = meta.index();
-    match self.transport.install_snapshot(req, snap).await {
+    match self.transport.install_snapshot(&remote, req, snap).await {
       Err(e) => {
         tracing::error!(target = "ruraft.repl", remote=%remote, id=%snap_id, err=%e, "failed to install snapshot");
         self.failures += 1;
@@ -963,12 +964,12 @@ where
         header: trans.header(),
         term: current_term,
       };
-      match trans.heartbeat(req).await {
+      match trans.heartbeat(&remote, req).await {
         Ok(resp) => {
           if failures > 0 {
             observe(
               &observers,
-              Observed::HeartbeatResumed(resp.header.id().clone()),
+              Observed::HeartbeatResumed(resp.header.from().id().clone()),
             )
             .await;
           }
