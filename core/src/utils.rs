@@ -10,6 +10,31 @@ pub fn make_dir_all<P: AsRef<Path>>(path: &P, mode: u32) -> io::Result<()> {
   DirBuilder::new().recursive(true).mode(mode).create(path)
 }
 
+pub(crate) async fn override_notify_bool(
+  tx: &async_channel::Sender<bool>,
+  rx: &async_channel::Receiver<bool>,
+  v: bool,
+) {
+  use futures::FutureExt;
+
+  futures::select! {
+    _ = tx.send(v).fuse() => {
+      // value sent, all done
+    }
+    _ = rx.recv().fuse() => {
+      // channel had an old value
+      futures::select! {
+        _ = tx.send(v).fuse() => {
+          // value sent, all done
+        }
+        default => {
+          panic!("race: channel was sent concurrently");
+        }
+      }
+    }
+  }
+}
+
 /// Returns a value that is between the min_val and 2x min_val.
 pub fn random_timeout(min_val: Duration) -> Option<Duration> {
   if min_val == Duration::from_secs(0) {
@@ -125,4 +150,63 @@ pub const fn decode_varint(buf: &[u8]) -> Option<u64> {
 
 pub(crate) fn invalid_data<E: std::error::Error + Send + Sync + 'static>(err: E) -> std::io::Error {
   std::io::Error::new(std::io::ErrorKind::InvalidData, err)
+}
+
+#[cfg(feature = "serde")]
+pub(crate) mod serde_instant {
+  use serde::{Deserialize, Serialize, Serializer};
+  use std::time::{Duration, Instant};
+
+  #[derive(Serialize, Deserialize)]
+  struct SerializableInstant {
+    secs: u64,
+    nanos: u32,
+  }
+
+  impl From<Instant> for SerializableInstant {
+    fn from(instant: Instant) -> Self {
+      let duration_since_epoch = instant.elapsed();
+      SerializableInstant {
+        secs: duration_since_epoch.as_secs(),
+        nanos: duration_since_epoch.subsec_nanos(),
+      }
+    }
+  }
+
+  impl From<SerializableInstant> for Instant {
+    fn from(val: SerializableInstant) -> Self {
+      Instant::now() - Duration::new(val.secs, val.nanos)
+    }
+  }
+
+  pub(crate) mod option {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(
+      instant: &Option<Instant>,
+      serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+      let serializable_instant: Option<SerializableInstant> = (*instant).map(Into::into);
+      serializable_instant.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+      deserializer: D,
+    ) -> Result<Option<Instant>, D::Error> {
+      let serializable_instant = Option::<SerializableInstant>::deserialize(deserializer)?;
+      Ok(serializable_instant.map(Into::into))
+    }
+  }
+
+  pub fn serialize<S: Serializer>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error> {
+    let serializable_instant: SerializableInstant = (*instant).into();
+    serializable_instant.serialize(serializer)
+  }
+
+  pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+  ) -> Result<Instant, D::Error> {
+    let serializable_instant = SerializableInstant::deserialize(deserializer)?;
+    Ok(serializable_instant.into())
+  }
 }

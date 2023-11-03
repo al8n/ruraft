@@ -1,4 +1,9 @@
-use std::{future::Future, ops::RangeBounds, sync::Arc, time::Duration};
+use std::{
+  future::Future,
+  ops::RangeBounds,
+  sync::Arc,
+  time::{Duration, Instant},
+};
 
 use async_channel::Receiver;
 use bytes::Bytes;
@@ -7,22 +12,34 @@ use futures::FutureExt;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  utils::now_timestamp,
+  utils::serde_instant,
 };
 
+/// A log entry that contains a new membership.
+#[derive(Clone)]
 pub struct MembershipLog<I: Id, A: Address> {
-  pub membership: Arc<Membership<I, A>>,
-  pub index: u64,
-  pub term: u64,
+  membership: Arc<Membership<I, A>>,
+  index: u64,
+  term: u64,
 }
 
 impl<I: Id, A: Address> MembershipLog<I, A> {
-  pub(crate) fn new(term: u64, index: u64, membership: Arc<Membership<I, A>>) -> Self {
-    Self {
-      membership,
-      index,
-      term,
-    }
+  /// Returns the index of the log entry.
+  #[inline]
+  pub const fn index(&self) -> u64 {
+    self.index
+  }
+
+  /// Returns the term of the log entry.
+  #[inline]
+  pub const fn term(&self) -> u64 {
+    self.term
+  }
+
+  /// Returns the membership of the log entry.
+  #[inline]
+  pub const fn membership(&self) -> &Arc<Membership<I, A>> {
+    &self.membership
   }
 }
 
@@ -129,7 +146,8 @@ pub struct Log<I: Id, A: Address> {
       )
     )
   )]
-  appended_at: u64,
+  #[cfg_attr(feature = "serde", serde(with = "serde_instant::option"))]
+  appended_at: Option<Instant>,
 }
 
 impl<I: Id, A: Address> Log<I, A> {
@@ -143,7 +161,7 @@ impl<I: Id, A: Address> Log<I, A> {
         data,
         extension: Bytes::new(),
       },
-      appended_at: 0,
+      appended_at: None,
     }
   }
 
@@ -154,7 +172,7 @@ impl<I: Id, A: Address> Log<I, A> {
       index: 0,
       term: 0,
       kind: LogKind::User { data, extension },
-      appended_at: 0,
+      appended_at: None,
     }
   }
 
@@ -174,7 +192,7 @@ impl<I: Id, A: Address> Log<I, A> {
       index,
       term,
       kind,
-      appended_at: 0,
+      appended_at: None,
     }
   }
 }
@@ -185,7 +203,7 @@ impl<I: Id, A: Address> Log<I, A> {
 /// **N.B.** The implementation of [`LogStorage`] must be thread-safe.
 pub trait LogStorage: Clone + Send + Sync + 'static {
   /// The error type returned by the log storage.
-  type Error: std::error::Error + Send + Sync + 'static;
+  type Error: std::error::Error + Clone + Send + Sync + 'static;
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
@@ -204,7 +222,7 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   fn get_log(
     &self,
     index: u64,
-  ) -> impl Future<Output = Result<Log<Self::Id, Self::Address>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Stores a log entry
   fn store_log(
@@ -248,8 +266,9 @@ pub(crate) enum LogStorageExtError<E: std::error::Error> {
 pub(crate) trait LogStorageExt: LogStorage {
   fn oldest_log(
     &self,
-  ) -> impl Future<Output = Result<Log<Self::Id, Self::Address>, LogStorageExtError<Self::Error>>> + Send
-  {
+  ) -> impl Future<
+    Output = Result<Option<Log<Self::Id, Self::Address>>, LogStorageExtError<Self::Error>>,
+  > + Send {
     async move {
       // We might get unlucky and have a truncate right between getting first log
       // index and fetching it so keep trying until we succeed or hard fail.
@@ -305,9 +324,14 @@ pub(crate) trait LogStorageExt: LogStorage {
           _ = <Self::Runtime as agnostic::Runtime>::sleep(interval).fuse() => {
             // In error case emit 0 as the age
             let mut age_ms = 0;
-            if let Ok(log) = self.oldest_log().await {
-              if log.appended_at != 0 {
-                age_ms = now_timestamp() - log.appended_at;
+            if let Ok(Some(log)) = self.oldest_log().await {
+              match log.appended_at {
+                Some(append_at) => {
+                  age_ms = append_at.elapsed().as_millis() as u64;
+                }
+                None => {
+                  age_ms = 0;
+                }
               }
             }
             metrics::gauge!("ruraft.log.oldest.ms", age_ms as f64);
@@ -368,7 +392,7 @@ pub(super) mod tests {
         panic!("{}: wanted no error but got err", case.name);
       }
 
-      if let Ok(got) = got {
+      if let Ok(Some(got)) = got {
         assert_eq!(
           got.index, case.want_idx,
           "{}: got index {}, want {}",

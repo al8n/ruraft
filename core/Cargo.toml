@@ -21,6 +21,7 @@ arc-swap = "1.6"
 agnostic = { workspace = true }
 async-lock = { workspace = true }
 async-channel = { workspace = true }
+async-broadcast = "0.6"
 atomic = "0.6"
 bytes = { workspace = true, features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }

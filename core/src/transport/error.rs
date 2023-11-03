@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use nodecraft::{resolver::AddressResolver, Transformable};
 
 use super::{Id, Wire};
@@ -31,6 +33,9 @@ pub trait TransportError: std::error::Error + From<std::io::Error> + Send + Sync
 
   /// Constructs an error resulting from IO operations within the transport.
   fn io(err: std::io::Error) -> Self;
+
+  /// With extra message to explain the error.
+  fn with_message(self, msg: Cow<'static, str>) -> Self;
 
   /// Provides a flexible mechanism to define custom errors using a descriptive message.
   ///

@@ -73,6 +73,7 @@ pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage, T: Transport> {
   Restore {
     id: SnapshotId,
     tx: oneshot::Sender<Result<(), Error<F, S, T>>>,
+    shutdown_rx: async_channel::Receiver<()>,
   },
 }
 
@@ -94,7 +95,6 @@ where
   pub(super) mutate_rx: Receiver<FSMRequest<F, S, T>>,
   pub(super) snapshot_rx:
     Receiver<oneshot::Sender<Result<FSMSnapshot<F::Snapshot>, Error<F, S, T>>>>,
-  pub(super) batching_apply: bool,
   pub(super) wg: AsyncWaitGroup,
   pub(super) shutdown_rx: Receiver<()>,
 }
@@ -122,10 +122,10 @@ where
       mutate_rx,
       snapshot_rx,
       shutdown_rx,
-      batching_apply,
       wg,
     } = self;
 
+    #[cfg(feature = "metrics")]
     let mut saturation = SaturationMetric::new("ruraft.fsm.runner", Duration::from_secs(1));
 
     super::spawn_local::<R, _>(wg.add(1), async move {
@@ -133,10 +133,12 @@ where
       let mut last_term = 0;
 
       loop {
+        #[cfg(feature = "metrics")]
         saturation.sleeping();
 
         futures::select! {
           req = mutate_rx.recv().fuse() => {
+            #[cfg(feature = "metrics")]
             saturation.working();
 
             match req {
@@ -168,6 +170,7 @@ where
               Ok(FSMRequest::Restore {
                 id,
                 tx,
+                shutdown_rx,
               }) => {
                 // Open the snapshot
                 let store = storage.snapshot_store();
@@ -208,6 +211,7 @@ where
             }
           }
           tx = snapshot_rx.recv().fuse() => {
+            #[cfg(feature = "metrics")]
             saturation.working();
             match tx {
               Ok(tx) => {

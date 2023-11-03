@@ -1,6 +1,5 @@
 use std::{
   collections::HashMap,
-  net::SocketAddr,
   sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -9,19 +8,21 @@ use std::{
 };
 
 use agnostic::Runtime;
-use arc_swap::ArcSwapOption;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use wg::AsyncWaitGroup;
 
-use super::{fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest};
+use super::{
+  api::ApplySender, fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer,
+  ObserverId, OptionalContact,
+};
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
   options::{Options, ReloadableOptions},
   sidecar::Sidecar,
-  storage::{LogStorage, SnapshotStorage, Storage},
+  storage::{Log, LogStorage, SnapshotStorage, Storage},
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, Request, Response, RpcConsumer, Transport,
   },
@@ -56,7 +57,7 @@ where
   pub(super) candidate_from_leadership_transfer: AtomicBool,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
-  pub(super) last_contact: Arc<ArcSwapOption<Instant>>,
+  pub(super) last_contact: OptionalContact,
   pub(super) leader: Leader<T::Id, <T::Resolver as AddressResolver>::Address>,
   pub(super) state: Arc<State>,
   pub(super) storage: Arc<S>,
@@ -93,13 +94,19 @@ where
     Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
-  pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
+  pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
   pub(super) user_restore_rx: async_channel::Receiver<(
     <S::Snapshot as SnapshotStorage>::Source,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
   pub(super) leader_tx: async_channel::Sender<bool>,
-
+  pub(super) leader_rx: async_channel::Receiver<bool>,
+  pub(super) leadership_change_tx: async_channel::Sender<bool>,
+  pub(super) observers: Arc<
+    async_lock::RwLock<
+      HashMap<ObserverId, Observer<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    >,
+  >,
   pub(super) wg: AsyncWaitGroup,
 }
 
@@ -137,6 +144,7 @@ where
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   pub(super) fn spawn(
@@ -149,7 +157,7 @@ where
           _ = self.shutdown_rx.recv().fuse() => {
             tracing::info!(target = "ruraft", "raft runner received shutdown signal, gracefully shutdown...");
             // Clear the leader to prevent forwarding
-            self.leader.set(None);
+            self.leader.set(None, &self.observers).await;
             self.stop_sidecar().await;
             return;
           }
@@ -164,7 +172,7 @@ where
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
-                    self.set_role(Role::Shutdown);
+                    self.set_role(Role::Shutdown, &self.observers).await;
                   }
                 }
               },
@@ -177,11 +185,23 @@ where
                   Ok(true) => self.stop_sidecar().await,
                   Ok(false) | Err(_) => {
                     self.stop_sidecar().await;
-                    self.set_role(Role::Shutdown);
+                    self.set_role(Role::Shutdown, &self.observers).await;
                   }
                 }
               },
-              Role::Leader => todo!(),
+              Role::Leader => {
+                self.spawn_sidecar(Role::Leader);
+                match self.run_leader(
+                  #[cfg(feature = "metrics")]
+                  &mut saturation_metric
+                ).await {
+                  Ok(true) => self.stop_sidecar().await,
+                  Ok(false) | Err(_) => {
+                    self.stop_sidecar().await;
+                    self.set_role(Role::Shutdown, &self.observers).await;
+                  }
+                }
+              },
               Role::Shutdown => {
                 self.spawn_sidecar(Role::Shutdown);
               },
@@ -194,12 +214,12 @@ where
 
   #[inline]
   fn set_last_contact(&self, instant: Instant) {
-    self.last_contact.store(Some(Arc::new(instant)));
+    self.last_contact.set(Some(instant));
   }
 
   #[inline]
   fn last_contact(&self) -> Option<Instant> {
-    self.last_contact.load().as_ref().map(|i| **i)
+    self.last_contact.get()
   }
 
   async fn handle_request(
@@ -262,7 +282,7 @@ where
           .load(Ordering::Acquire))
     {
       // Ensure transition to follower
-      self.set_role(Role::Follower);
+      self.set_role(Role::Follower, &self.observers).await;
       self.set_current_term(req.term);
       resp.term = req.term;
     }
@@ -270,7 +290,8 @@ where
     // Save the current leader
     self
       .leader
-      .set(Some(Node::new(req.header.id.clone(), req.header.addr)));
+      .set(Some(req.header.from().clone()), &self.observers)
+      .await;
 
     // Verify the last log entry
     if req.prev_log_entry > 0 {
@@ -279,7 +300,13 @@ where
         last.term
       } else {
         match self.storage.log_store().get_log(req.prev_log_entry).await {
-          Ok(prev_log) => prev_log.term,
+          Ok(Some(prev_log)) => prev_log.term,
+          Ok(None) => {
+            tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%Error::<F, S, T>::log_not_found(req.prev_log_entry), "previous log entry not found");
+            resp.no_retry_backoff = true;
+            respond!(tx.send(resp));
+            return;
+          }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
             resp.no_retry_backoff = true;
@@ -325,7 +352,7 @@ where
         }
 
         match ls.get_log(ent_idx).await {
-          Ok(stored_entry) => {
+          Ok(Some(stored_entry)) => {
             if entry.term != stored_entry.term {
               tracing::warn!(target = "ruraft.follower", from=%ent_idx, to=%last_log.index, "clearing log suffix");
               if let Err(e) = ls.remove_range(ent_idx..=last_log.index).await {
@@ -343,6 +370,11 @@ where
               pos = idx;
               break;
             }
+          }
+          Ok(None) => {
+            tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%Error::<F, S, T>::log_not_found(ent_idx), "failed to get log entry");
+            respond!(tx.send(resp));
+            return;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%e, "failed to get log entry");
@@ -431,7 +463,11 @@ where
   /// pass futures = `None`.
   /// Leaders call this when entries are committed. They pass the futures from any
   /// inflight logs.
-  async fn process_logs(&self, index: u64, futures: Option<HashMap<u64, ()>>) {
+  async fn process_logs(
+    &self,
+    index: u64,
+    futures: Option<HashMap<u64, Inflight<F, Error<F, S, T>>>>,
+  ) {
     todo!()
   }
 
@@ -457,4 +493,10 @@ where
       }
     }
   }
+}
+
+struct Inflight<F: FinateStateMachine, E> {
+  dispatch: Instant,
+  log: Log<F::Id, F::Address>,
+  tx: ApplySender<F, E>,
 }

@@ -1,7 +1,7 @@
 use std::{future::Future, net::SocketAddr};
 
 use agnostic::Runtime;
-use futures::AsyncRead;
+use futures::{AsyncRead, Stream};
 
 mod rpc;
 pub use rpc::*;
@@ -10,6 +10,8 @@ mod error;
 pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
+
+use crate::{options::ProtocolVersion, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -108,7 +110,7 @@ pub trait Wire: Send + Sync + 'static {
 
 /// Provides utilities to pipeline [`AppendEntriesRequest`]s, aiming to
 /// enhance replication throughput by minimizing latency and maximizing bandwidth utilization.
-pub trait AppendPipeline {
+pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Specifies potential errors that can occur within the pipeline.
   type Error: std::error::Error + Send + Sync + 'static;
 
@@ -122,30 +124,40 @@ pub trait AppendPipeline {
   type Address: Address;
 
   /// Represents the pipeline's output or response to an appended entry.
-  type Item: AppendFuture<Id = Self::Id, Address = Self::Address>;
+  type Response: AppendEntriesPipelineFuture<
+    Id = Self::Id,
+    Address = Self::Address,
+    Pipeline = Self,
+  >;
 
   /// Retrieves a stream for consuming response futures once they are ready.
-  // TODO(al8n): change the return type to `impl Stream<Item = Self::Item>
-  // when `RPITIT` is stable
-  fn consumer(&self) -> async_channel::Receiver<Self::Item>;
+  fn consumer(
+    &self,
+  ) -> impl Stream<Item = PipelineAppendEntriesResponse<Self::Id, Self::Address>> + Send + Unpin + 'static;
 
   /// Asynchronously appends entries to the target node and returns the associated response.
   fn append_entries(
     &self,
     req: AppendEntriesRequest<Self::Id, Self::Address>,
-  ) -> impl Future<Output = Result<AppendEntriesResponse<Self::Id, Self::Address>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
   /// Gracefully closes the pipeline and terminates any in-flight requests.
-  fn close(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Represents the anticipated response following an appended entry in the pipeline.
-pub trait AppendFuture:
-  std::future::Future<Output = std::io::Result<AppendEntriesResponse<Self::Id, Self::Address>>>
-  + Send
+pub trait AppendEntriesPipelineFuture:
+  std::future::Future<
+    Output = Result<
+      PipelineAppendEntriesResponse<Self::Id, Self::Address>,
+      <Self::Pipeline as AppendEntriesPipeline>::Error,
+    >,
+  > + Send
   + Sync
   + 'static
 {
+  type Pipeline: AppendEntriesPipeline<Id = Self::Id, Address = Self::Address, Response = Self>;
+
   /// Unique identifier associated with nodes.
   type Id: Id;
 
@@ -170,14 +182,14 @@ pub trait Transport: Send + Sync + 'static {
   /// Unique identifier for nodes.
   type Id: Id + Send + Sync + 'static;
 
-  // /// The pipeline used to increase the replication throughput by masking latency and better
-  // /// utilizing bandwidth.
-  // type Pipeline: AppendPipeline<
-  //   Error = Self::Error,
-  //   Runtime = Self::Runtime,
-  //   Id = Self::Id,
-  //   Address = <Self::Resolver as AddressResolver>::Address,
-  // >;
+  /// The pipeline used to increase the replication throughput by masking latency and better
+  /// utilizing bandwidth.
+  type Pipeline: AppendEntriesPipeline<
+    Error = Self::Error,
+    Runtime = Self::Runtime,
+    Id = Self::Id,
+    Address = <Self::Resolver as AddressResolver>::Address,
+  >;
 
   /// Resolves node addresses to concrete network addresses, like mapping a domain name to an IP.
   type Resolver: AddressResolver<Runtime = Self::Runtime>;
@@ -194,6 +206,18 @@ pub trait Transport: Send + Sync + 'static {
   /// Provides the local unique identifier, helping in distinguishing this node from its peers.
   fn local_id(&self) -> &Self::Id;
 
+  /// Provides the protocol version used by the transport.
+  fn version(&self) -> ProtocolVersion;
+
+  /// Provides the header used for all RPC requests.
+  fn header(&self) -> Header<Self::Id, <Self::Resolver as AddressResolver>::Address> {
+    Header::new(
+      self.version(),
+      self.local_id().clone(),
+      self.local_addr().clone(),
+    )
+  }
+
   /// Provides the concrete network address for peers in the Raft cluster to communicate with.
   fn advertise_addr(&self) -> SocketAddr;
 
@@ -208,17 +232,17 @@ pub trait Transport: Send + Sync + 'static {
   where
     Self: Sized;
 
-  // /// Returns a [`AppendPipeline`] that can be used to pipeline
-  // /// [`AppendEntriesRequest`]s.
-  // async fn append_entries_pipeline(
-  //   &self,
-  //   id: Self::Id,
-  //   target: <Self::Resolver as AddressResolver>::Address,
-  // ) -> Result<Self::Pipeline, Self::Error>;
+  /// Returns a [`AppendEntriesPipeline`] that can be used to pipeline
+  /// [`AppendEntriesRequest`]s.
+  fn append_entries_pipeline(
+    &self,
+    target: Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+  ) -> impl Future<Output = Result<Self::Pipeline, Self::Error>> + Send;
 
   /// Sends the append entries requrest to the target node.
   fn append_entries(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
@@ -230,6 +254,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Sends the vote request to the target node.
   fn vote(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
@@ -241,6 +266,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to push a snapshot down to a follower.
   fn install_snapshot(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     source: impl AsyncRead + Send,
   ) -> impl Future<
@@ -253,6 +279,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to start a leadership transfer to the target node.
   fn timeout_now(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
@@ -264,6 +291,7 @@ pub trait Transport: Send + Sync + 'static {
   /// Used to send a heartbeat to the target node.
   fn heartbeat(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<

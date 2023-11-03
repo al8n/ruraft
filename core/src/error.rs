@@ -6,6 +6,7 @@ use crate::{
   options::OptionsError,
   storage::{LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
   transport::Transport,
+  Node,
 };
 
 /// Raft errors.
@@ -54,6 +55,10 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: cannot take snapshot now, wait until the membership entry at {committed} has been applied (have applied {snapshot})")]
   CantTakeSnapshot { committed: u64, snapshot: u64 },
 
+  /// Returned when trying to create a snapshot, but the membership change has not been applied.
+  #[error("ruraft: cannot restore snapshot now, wait until the membership entry at {latest} has been applied (have applied {committed})")]
+  CantRestoreSnapshot { committed: u64, latest: u64 },
+
   /// Returned when an operation is attempted
   /// that's not supported by the current protocol version.
   #[error("ruraft: operation not supported with current protocol version")]
@@ -71,6 +76,22 @@ pub enum RaftError<T: Transport> {
   /// client requests because it is attempting to transfer leadership.
   #[error("ruraft: leadership transfer in progress")]
   LeadershipTransferInProgress,
+
+  /// Returned when the leader transfer times out.
+  #[error("ruraft: leadership transfer timeout")]
+  LeadershipTransferTimeout,
+
+  /// Returned when the leadership was lost caused by leadership transfer.
+  #[error("ruraft: lost leadership during transfer (expected)")]
+  LeadershipLostDuringTransfer,
+
+  /// Returned when we cannot find a target node to transfer leadership to.
+  #[error("ruraft: cannot find a target node to transfer leadership to")]
+  LeadershipTransferNoTarget,
+
+  /// Returned when we are transfering the leadership to a target, but the target exits.
+  #[error("ruraft: leadership transfer target exits")]
+  LeadershipTransferTargetExits,
 
   /// Returned when there are some snapshots in the storage,
   /// but none of them can be loaded.
@@ -106,6 +127,28 @@ pub enum RaftError<T: Transport> {
     "ruraft: refused to recover cluster with no initial state, this is probably an operator error"
   )]
   NoExistingState,
+
+  /// Indicates a given log entry is not available.
+  #[error("ruraft: log(index = {0}) not found")]
+  LogNotFound(u64),
+
+  /// Returned by the transport to
+  /// signal that pipeline replication is not supported in general, and that
+  /// no error message should be produced.
+  #[error("ruraft: pipeline replication not supported")]
+  PipelineReplicationNotSupported,
+
+  /// Returned when there are no snapshots in the storage.
+  #[error("ruraft: no snapshots found")]
+  NoSnapshots,
+
+  /// Returned when failing to replicate.
+  #[error("ruraft: replication failed")]
+  ReplicationFailed,
+
+  /// Returned when failing to find replication state.
+  #[error("ruraft: cannot find replication state for node {0}")]
+  NoReplicationState(Node<T::Id, <T::Resolver as AddressResolver>::Address>),
 
   /// Returned when trying to recover a raft cluster but cannot restore any of the available snapshots.
   #[error("ruraft: failed to restore any of the available snapshots")]
@@ -194,5 +237,67 @@ where
     err: MembershipError<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) -> Self {
     Self::Raft(RaftError::Membership(err))
+  }
+
+  #[inline]
+  pub(crate) const fn log_not_found(index: u64) -> Self {
+    Self::Raft(RaftError::LogNotFound(index))
+  }
+
+  #[inline]
+  pub(crate) const fn no_snapshots() -> Self {
+    Self::Raft(RaftError::NoSnapshots)
+  }
+
+  #[inline]
+  pub(crate) const fn replication_failed() -> Self {
+    Self::Raft(RaftError::ReplicationFailed)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_timeout() -> Self {
+    Self::Raft(RaftError::LeadershipTransferTimeout)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_in_progress() -> Self {
+    Self::Raft(RaftError::LeadershipTransferInProgress)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_lost_during_transfer() -> Self {
+    Self::Raft(RaftError::LeadershipLostDuringTransfer)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_no_target() -> Self {
+    Self::Raft(RaftError::LeadershipTransferNoTarget)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_transfer_target_exits() -> Self {
+    Self::Raft(RaftError::LeadershipTransferTargetExits)
+  }
+
+  #[inline]
+  pub(crate) const fn no_replication_state(
+    node: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Self {
+    Self::Raft(RaftError::NoReplicationState(node))
+  }
+
+  #[inline]
+  pub(crate) const fn cannot_restore_snapshot(committed: u64, latest: u64) -> Self {
+    Self::Raft(RaftError::CantRestoreSnapshot { committed, latest })
+  }
+
+  #[inline]
+  pub(crate) const fn aborted_by_restore() -> Self {
+    Self::Raft(RaftError::AbortedByRestore)
+  }
+
+  #[inline]
+  pub(crate) const fn shutdown() -> Self {
+    Self::Raft(RaftError::Shutdown)
   }
 }

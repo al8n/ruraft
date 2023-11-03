@@ -51,6 +51,7 @@ impl<I: Id, A: Address> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
 
 /// Metadata of a snapshot.
 #[viewit::viewit(
+  vis_all = "pub(crate)",
   getters(vis_all = "pub"),
   setters(vis_all = "pub", prefix = "with", style = "ref")
 )]

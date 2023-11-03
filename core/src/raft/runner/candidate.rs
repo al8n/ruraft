@@ -25,6 +25,7 @@ where
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   pub(super) async fn run_candidate(
@@ -75,7 +76,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "rpc consumer closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -88,7 +88,7 @@ where
             // Check if the term is greater than ours, bail
             if vote.resp.term > self.current_term() {
               tracing::debug!(target = "ruraft.candidate", term = %vote.resp.term, "newer term discovered, fallback to follower");
-              self.state.set_role(Role::Follower);
+              self.state.set_role(Role::Follower, &self.observers).await;
               self.set_current_term(vote.resp.term);
               return Ok(true);
             }
@@ -102,8 +102,8 @@ where
             // Check if we've become the leader
             if granted_votes >= votes_needed {
               tracing::info!(target = "ruraft.candidate", term = %term, tally = %granted_votes, "election won");
-              self.state.set_role(Role::Leader);
-              self.leader.set(Some(Node::new(local_id.clone(), local_addr.clone())));
+              self.state.set_role(Role::Leader, &self.observers).await;
+              self.leader.set(Some(Node::new(local_id.clone(), local_addr.clone())), &self.observers).await;
               return Ok(true);
             }
           }
@@ -121,7 +121,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "membership change sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -139,7 +138,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "membership sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -151,13 +149,12 @@ where
           // Reject any operations since we are not the leader
           match a {
             Ok(a) => {
-              if a.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if a.tx.send_err(Error::Raft(RaftError::NotLeader)).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive apply request, but fail to send error response, receiver closed");
               }
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "apply sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -175,7 +172,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "verify sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -193,7 +189,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "user restore sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -211,7 +206,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "leader transfer sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -230,7 +224,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "follower notify sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -319,14 +312,16 @@ where
         let wg = self.wg.clone();
         let txx = tx.clone();
         let trans = self.transport.clone();
+        let target = Node::new(id, addr);
         Either::Right(async move {
-          tracing::debug!(target = "ruraft", term = %term, from = %id, address = %addr, "asking for vote");
+          tracing::debug!(target = "ruraft", term = %term, from = %local_id, address = %local_addr, "asking for vote");
 
           super::super::spawn_local::<R, _>(wg.add(1), async move {
             #[cfg(feature = "metrics")]
             let start = Instant::now();
-            let res = match trans.vote(VoteRequest {
-              header: Header::new(protocol_version, id.clone(), addr.clone()),
+
+            let res = match trans.vote(&target, VoteRequest {
+              header: trans.header(),
               term,
               last_log_index: last.index,
               last_log_term: last.term,
@@ -334,23 +329,27 @@ where
             }).await {
               Ok(resp) => VoteResult {
                 resp,
-                voter_id: id.clone(),
+                voter_id: target.id().clone(),
               },
               Err(e) => {
-                tracing::error!(target = "ruraft", to = %id, address=%addr, err=%e, "failed to make vote rpc");
+                tracing::error!(target = "ruraft", to = %target, err=%e, "failed to make vote rpc");
                 VoteResult {
                   resp: VoteResponse {
-                    header: Header::new(protocol_version, id.clone(), addr.clone()),
+                    header: Header {
+                      protocol_version,
+                      from: target.clone(),
+                    },
                     term,
                     granted: false,
                   },
-                  voter_id: id.clone(),
+                  voter_id: target.id().clone(),
                 }
               }
             };
 
+
             if let Err(e) = txx.send(res).await {
-              tracing::error!(target = "ruraft", to = %id, address=%addr, err=%e, "failed to send back vote result, receiver closed");
+              tracing::error!(target = "ruraft", to = %target, err=%e, "failed to send back vote result, receiver closed");
             }
 
             #[cfg(feature = "metrics")]

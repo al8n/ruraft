@@ -57,13 +57,18 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + 'static {
+pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
+  /// The snapshot id for the parent snapshot.
   fn id(&self) -> SnapshotId;
 
+  /// Cancel the sink.
   fn cancel(&mut self) -> impl Future<Output = std::io::Result<()>> + Send;
+
+  /// Close the sink.
+  fn close(self) -> impl Future<Output = std::io::Result<()>> + Send;
 }
 
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state

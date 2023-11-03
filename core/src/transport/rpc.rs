@@ -1,7 +1,9 @@
 use std::{
   future::Future,
   pin::Pin,
+  sync::Arc,
   task::{Context, Poll},
+  time::Instant,
 };
 
 use futures::{channel::oneshot, Stream};
@@ -10,6 +12,7 @@ use crate::{
   membership::Membership,
   options::{ProtocolVersion, SnapshotVersion},
   storage::Log,
+  Node,
 };
 
 use super::{Address, Id};
@@ -41,31 +44,30 @@ pub struct Header<I, A> {
     getter(
       const,
       style = "ref",
-      attrs(doc = "Get the server id of the request or response"),
+      attrs(doc = "Get the node of the request or response"),
     ),
-    setter(attrs(doc = "Set the server id of the request or response"),)
+    setter(attrs(doc = "Set the node of the request or response"),)
   )]
-  id: I,
-  /// The addr of the node sending the RPC Request or Response
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Get the target address of the request or response"),
-    ),
-    setter(attrs(doc = "Set the target address of the request or response"),)
-  )]
-  addr: A,
+  from: Node<I, A>,
 }
 
 impl<I: Id, A: Address> Header<I, A> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
       protocol_version: version,
-      id,
-      addr,
+      from: Node::new(id, addr),
+    }
+  }
+}
+
+impl<I, A> From<(ProtocolVersion, Node<I, A>)> for Header<I, A> {
+  #[inline]
+  fn from((version, from): (ProtocolVersion, Node<I, A>)) -> Self {
+    Self {
+      protocol_version: version,
+      from,
     }
   }
 }
@@ -95,6 +97,24 @@ pub struct AppendEntriesRequest<I: Id, A: Address> {
   leader_commit: u64,
 }
 
+impl<I: Id, A: Address> AppendEntriesRequest<I, A> {
+  /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
+  /// are set to their default values.
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+    Self {
+      header: Header {
+        protocol_version: version,
+        from: Node::new(id, addr),
+      },
+      term: 0,
+      prev_log_entry: 0,
+      prev_log_term: 0,
+      entries: Vec::new(),
+      leader_commit: 0,
+    }
+  }
+}
+
 /// The response returned from an
 /// [`AppendEntriesRequest`].
 #[viewit::viewit(setters(prefix = "with"))]
@@ -121,7 +141,7 @@ pub struct AppendEntriesResponse<I, A> {
 }
 
 impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
       header: Header::new(version, id, addr),
       term: 0,
@@ -130,6 +150,37 @@ impl<I: Id, A: Address> AppendEntriesResponse<I, A> {
       no_retry_backoff: false,
     }
   }
+}
+
+/// The response returned by a pipeline.
+///
+/// The difference between this and [`AppendEntriesResponse`] is that this
+/// keeps some extra information:
+///
+/// 1. the time that the append request was started
+/// 2. the original request's `term`
+/// 3. the number of entries the original request has
+/// 4. highest log index of the original request's entries
+#[viewit::viewit(getters(vis_all = "pub"), setters(prefix = "with"))]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PipelineAppendEntriesResponse<I: Id, A: Address> {
+  /// The term of the request
+  term: u64,
+
+  /// The highest log index of the [`AppendEntriesRequest`]'s entries
+  highest_log_index: Option<u64>,
+
+  /// The number of entries in the [`AppendEntriesRequest`]'s
+  num_entries: usize,
+
+  /// The time that the original request was started
+  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant"))]
+  start: Instant,
+
+  /// The response of the [`AppendEntriesRequest`]
+  #[viewit(getter(const, style = "ref"))]
+  resp: AppendEntriesResponse<I, A>,
 }
 
 /// The command used by a candidate to ask a Raft peer
@@ -196,7 +247,7 @@ pub struct InstallSnapshotRequest<I: Id, A: Address> {
   last_log_term: u64,
 
   /// Cluster membership.
-  membership: Membership<I, A>,
+  membership: Arc<Membership<I, A>>,
 
   /// Log index where [`Membership`] entry was originally written.
   membership_index: u64,
@@ -265,12 +316,15 @@ pub struct HeartbeatResponse<I, A> {
   /// The header of the response
   #[viewit(getter(const))]
   header: Header<I, A>,
+
+  /// We may not succeed if we have a conflicting entry
+  success: bool,
 }
 
 impl<I: Id, A: Address> HeartbeatResponse<I, A> {
   /// Create a new HeartbeatResponse
-  pub const fn new(header: Header<I, A>) -> Self {
-    Self { header }
+  pub const fn new(header: Header<I, A>, success: bool) -> Self {
+    Self { header, success }
   }
 }
 

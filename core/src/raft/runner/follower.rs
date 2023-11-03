@@ -18,6 +18,7 @@ where
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
 {
   pub(super) async fn run_follower(
@@ -58,7 +59,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "rpc consumer closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -76,7 +76,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "membership change sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -88,13 +87,12 @@ where
           // Reject any operations since we are not the leader
           match a {
             Ok(a) => {
-              if a.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if a.tx.send_err(Error::Raft(RaftError::NotLeader)).is_err() {
                 tracing::error!(target = "ruraft.follower", "receive apply request, but fail to send error response, receiver closed");
               }
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "apply sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -112,7 +110,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "verify sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -130,7 +127,6 @@ where
             }
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "user restore sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -148,7 +144,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "leader transfer sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -166,7 +161,6 @@ where
             },
             Err(e) => {
               tracing::error!(target = "ruraft.follower", err=%e, "membership sender closed unexpectedly, shutting down...");
-              self.state.set_role(Role::Shutdown);
               return Err(());
             }
           }
@@ -194,7 +188,7 @@ where
 
             // Heartbeat failed! Transition to the candidate state
             let last_leader = self.leader.load().clone();
-            self.leader.set(None);
+            self.leader.set(None, &self.observers).await;
 
             let (latest_index, latest) = {
               let latest = self.memberships.latest();
@@ -222,7 +216,7 @@ where
                   } else {
                     tracing::warn!(target = "ruraft.follower", last_leader_id = "", last_leader_addr="", "heartbeat timeout reached, starting election");
                   }
-                  self.state.set_role(Role::Candidate);
+                  self.state.set_role(Role::Candidate, &self.observers).await;
                   return Ok(true);
                 } else if !did_warn {
                   tracing::warn!(target = "ruraft.follower", "heartbeat timeout reached, not part of a stable membership or a non-voter, not triggering a leader election");
@@ -235,7 +229,7 @@ where
         _ = self.shutdown_rx.recv().fuse() => {
           tracing::info!(target = "ruraft.follower", "follower received shutdown signal, shutdown...");
           // Clear the leader to prevent forwarding
-          self.leader.set(None);
+          self.leader.set(None, &self.observers).await;
           return Ok(false);
         }
       }

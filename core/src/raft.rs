@@ -1,9 +1,10 @@
 use std::{
   borrow::Cow,
+  collections::HashMap,
+  fmt::Display,
   future::Future,
-  net::SocketAddr,
   sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64},
     Arc,
   },
   time::{Duration, Instant},
@@ -13,8 +14,7 @@ use agnostic::Runtime;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
-use futures::{channel::oneshot, FutureExt};
-use metrics::atomics::AtomicU64;
+use futures::channel::oneshot;
 use wg::AsyncWaitGroup;
 
 use crate::{
@@ -39,52 +39,114 @@ mod api;
 pub use api::*;
 
 mod fsm;
-mod runner;
-mod snapshot;
-mod state;
 
+mod observer;
+pub use observer::*;
+
+mod runner;
+
+mod snapshot;
+use snapshot::{CountingReader, SnapshotRestoreMonitor};
+
+mod state;
 pub use state::*;
 
-use self::snapshot::{CountingReader, SnapshotRestoreMonitor};
+#[derive(Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Node<I, A>(Arc<(I, A)>);
 
-const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
-const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
-
-const KEY_CURRENT_TERM: &[u8] = b"__ruraft_current_term__";
-const KEY_LAST_VOTE_TERM: &[u8] = b"__ruraft_last_vote_term__";
-const KEY_LAST_VOTE_FOR: &[u8] = b"__ruraft_last_vote_cand__";
-
-pub struct Node<I: Id, A: Address> {
-  id: I,
-  addr: A,
-}
-
-impl<I, A> core::fmt::Display for Node<I, A>
-where
-  I: Id,
-  A: Address,
-{
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}({})", self.id, self.addr)
+impl<I, A> Clone for Node<I, A> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
   }
 }
 
-impl<I: Id, A: Address> Node<I, A> {
+impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}({})", self.0 .0, self.0 .1)
+  }
+}
+
+impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]
-  pub const fn id(&self) -> &I {
-    &self.id
+  pub fn id(&self) -> &I {
+    &self.0 .0
   }
 
   /// Returns the address of the leader.
   #[inline]
-  pub const fn addr(&self) -> &A {
-    &self.addr
+  pub fn addr(&self) -> &A {
+    &self.0 .1
   }
 
   #[inline]
-  pub const fn new(id: I, addr: A) -> Self {
-    Self { id, addr }
+  pub fn new(id: I, addr: A) -> Self {
+    Self(Arc::new((id, addr)))
+  }
+}
+
+#[derive(Clone)]
+#[repr(transparent)]
+struct Contact(Arc<ArcSwap<Instant>>);
+
+impl Default for Contact {
+  #[inline]
+  fn default() -> Self {
+    Self::now()
+  }
+}
+
+impl Contact {
+  #[inline]
+  fn now() -> Self {
+    Self(Arc::new(ArcSwap::from_pointee(Instant::now())))
+  }
+
+  #[inline]
+  fn update(&self) {
+    self.0.store(Arc::new(Instant::now()));
+  }
+
+  #[inline]
+  fn set(&self, val: Instant) {
+    self.0.store(Arc::new(val));
+  }
+
+  #[inline]
+  fn get(&self) -> Instant {
+    **self.0.load()
+  }
+}
+
+#[derive(Clone)]
+#[repr(transparent)]
+struct OptionalContact(Arc<ArcSwapOption<Instant>>);
+
+impl OptionalContact {
+  #[inline]
+  fn none() -> Self {
+    Self(Arc::new(ArcSwapOption::from_pointee(None)))
+  }
+
+  #[inline]
+  fn now() -> Self {
+    Self(Arc::new(ArcSwapOption::from_pointee(Some(Instant::now()))))
+  }
+
+  #[inline]
+  fn update(&self) {
+    self.0.store(Some(Arc::new(Instant::now())));
+  }
+
+  #[inline]
+  fn set(&self, val: Option<Instant>) {
+    self.0.store(val.map(Arc::new));
+  }
+
+  #[inline]
+  fn get(&self) -> Option<Instant> {
+    self.0.load().as_ref().map(|x| **x)
   }
 }
 
@@ -102,20 +164,24 @@ impl<I: Id, A: Address> Leader<I, A> {
     Self(Arc::new(ArcSwapOption::new(None)))
   }
 
-  fn set(&self, leader: Option<Node<I, A>>) {
+  async fn set(
+    &self,
+    leader: Option<Node<I, A>>,
+    observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
+  ) {
     let new = leader.map(Arc::new);
     let old = self.0.swap(new.clone());
     match (new, old) {
       (None, None) => {}
-      (None, Some(old)) => {
-        // TODO: self.observe(LeaderObservation::none())
+      (None, Some(_)) => {
+        observe(observers, Observed::Leader(None)).await;
       }
       (Some(new), None) => {
-        // TODO: self.observe(LeaderObservation::new(new))
+        observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
       }
       (Some(new), Some(old)) => {
-        if old.addr != new.addr || old.id != new.id {
-          // TODO: self.observe(LeaderObservation::new(new))
+        if old.addr() != new.addr() || old.id() != new.id() {
+          observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
         }
       }
     }
@@ -127,7 +193,7 @@ impl<I: Id, A: Address> Leader<I, A> {
   }
 }
 
-pub struct RaftCore<F, S, T, SC, R>
+struct Inner<F, S, T, SC, R>
 where
   F: FinateStateMachine<
     Id = T::Id,
@@ -144,7 +210,7 @@ where
   state: Arc<State>,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
-  last_contact: Arc<ArcSwapOption<Instant>>,
+  last_contact: OptionalContact,
   memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   shutdown_tx: async_channel::Sender<()>,
   /// Used to prevent concurrent shutdown
@@ -200,11 +266,53 @@ where
     Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
-  verify_tx: async_channel::Sender<oneshot::Sender<Result<bool, Error<F, S, T>>>>,
+  verify_tx: async_channel::Sender<oneshot::Sender<Result<(), Error<F, S, T>>>>,
 
   leader_rx: async_channel::Receiver<bool>,
+  leadership_change_rx: async_channel::Receiver<bool>,
   sidecar: Option<Arc<SC>>,
+  observers: Arc<
+    async_lock::RwLock<
+      HashMap<ObserverId, Observer<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    >,
+  >,
   wg: AsyncWaitGroup,
+}
+
+pub struct RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  inner: Arc<Inner<F, S, T, SC, R>>,
+}
+
+impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  T: Transport<Runtime = R>,
+  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  fn clone(&self) -> Self {
+    Self {
+      inner: self.inner.clone(),
+    }
+  }
 }
 
 impl<F, S, T, R> RaftCore<F, S, T, NoopSidecar<R>, R>
@@ -386,12 +494,15 @@ where
     };
 
     for index in (snapshot_index + 1)..=last_log_index {
-      let entry = logs.get_log(index).await.map_err(|e| {
+      let Some(entry) = logs.get_log(index).await.map_err(|e| {
         Error::storage(
           <S::Error as StorageError>::log(e)
             .with_message(Cow::Owned(format!("failed to get log at index at {index}"))),
         )
-      })?;
+      })?
+      else {
+        return Err(Error::log_not_found(index));
+      };
 
       if let LogKind::User { data, extension } = entry.kind {
         fsm
@@ -492,8 +603,6 @@ where
 
     let storage = Arc::new(storage);
 
-    // Make sure we have a valid server address and ID.
-    let advertise_addr = transport.advertise_addr();
     let local_addr = transport.local_addr().clone();
     let local_id = transport.local_id().clone();
 
@@ -548,10 +657,13 @@ where
     };
 
     // Get the last log entry.
-    let last_log = ls.get_log(last_log_index).await.map_err(|e| {
+    let Some(last_log) = ls.get_log(last_log_index).await.map_err(|e| {
       tracing::error!(target = "ruraft", err=%e, "failed to get last log at index {}", last_log_index);
       Error::log(e)
-    })?;
+    })? else {
+      tracing::error!(target = "ruraft", index = %last_log_index, "last log not found");
+      return Err(Error::log_not_found(last_log_index));
+    };
 
     // Restore snapshot
     let snp = storage.snapshot_store();
@@ -566,11 +678,15 @@ where
     // Scan through the log for any membership change entries.
     for index in (last_snapshot.index + 1)..=last_log_index {
       match ls.get_log(index).await {
-        Ok(entry) => {
+        Ok(Some(entry)) => {
           if let LogKind::Membership(m) = entry.kind {
             membership_index = entry.index;
             membership = m;
           }
+        }
+        Ok(None) => {
+          tracing::error!(target = "ruraft", index=%index, err=%Error::<F, S, T>::log_not_found(index), "log entry not found");
+          return Err(Error::log_not_found(index));
         }
         Err(e) => {
           tracing::error!(target = "ruraft", index=%index, err=%e, "failed to get log");
@@ -610,18 +726,18 @@ where
     let (user_restore_tx, user_restore_rx) = async_channel::unbounded();
     let (leader_transfer_tx, leader_transfer_rx) = async_channel::bounded(1);
     let (verify_tx, verify_rx) = async_channel::bounded(64);
-    let (leader_tx, leader_rx) = async_channel::unbounded();
+    let (leader_tx, leader_rx) = async_channel::bounded(1);
+    let (leadership_change_tx, leadership_change_rx) = async_channel::unbounded();
     let state = Arc::new(State {
       current_term: AtomicU64::new(current_term),
-      commit_index: AtomicU64::new(0),
+      commit_index: Arc::new(AtomicU64::new(0)),
       last_applied: AtomicU64::new(last_applied),
       last: last.clone(),
       role: Atomic::new(Role::Follower),
     });
     let leader = Leader::none();
     let sidecar = sidecar.map(Arc::new);
-    let last_contact = Arc::new(ArcSwapOption::from_pointee(None));
-    let local = Arc::new(Node::new(local_id, local_addr));
+    let last_contact = OptionalContact::none();
     let memberships = Arc::new(Memberships {
       committed: ArcSwap::from(membership.clone()),
       latest: ArcSwap::from(membership),
@@ -629,6 +745,7 @@ where
     let options = Arc::new(opts);
     let wg = AsyncWaitGroup::new();
     let transport = Arc::new(transport);
+    let observers = Arc::new(async_lock::RwLock::new(HashMap::new()));
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
@@ -650,8 +767,11 @@ where
       committed_membership_rx,
       leader_transfer_rx,
       leader_tx,
+      leader_rx: leader_rx.clone(),
+      leadership_change_tx,
       verify_rx,
       user_restore_rx,
+      observers: observers.clone(),
       wg: wg.clone(),
     }
     .spawn(
@@ -664,7 +784,6 @@ where
       storage: storage.clone(),
       mutate_rx: fsm_mutate_rx,
       snapshot_rx: fsm_snapshot_rx,
-      batching_apply: opts.batch_apply,
       wg: wg.clone(),
       shutdown_rx: shutdown_rx.clone(),
     }
@@ -682,7 +801,7 @@ where
     }
     .spawn();
 
-    let this = Self {
+    let this = Inner {
       memberships,
       options,
       reloadable_options,
@@ -704,10 +823,14 @@ where
       leader_transfer_tx,
       verify_tx,
       leader_rx,
+      leadership_change_rx,
+      observers,
       wg,
     };
 
-    Ok(this)
+    Ok(Self {
+      inner: Arc::new(this),
+    })
   }
 
   async fn fetch_initial_state(s: &S) -> Result<InitialState<T>, Error<F, S, T>> {
