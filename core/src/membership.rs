@@ -221,6 +221,215 @@ impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> 
   }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipBuilder<I: Id, A: Address> {
+  pub(crate) voters: usize,
+  pub(crate) servers: IndexMap<I, (A, ServerSuffrage)>,
+}
+
+impl<I: Id, A: Address> MembershipBuilder<I, A> {
+  /// Create a new membership.
+  pub fn new() -> Self {
+    Self {
+      voters: 0,
+      servers: IndexMap::new(),
+    }
+  }
+
+  /// Returns the quorum size based on the current membership.
+  pub const fn quorum_size(&self) -> usize {
+    (self.voters / 2) + 1
+  }
+
+  /// Inserts a new server into the membership.
+  ///
+  /// # Errors
+  /// - If the server address is already in the membership.
+  /// - If the server id is already in the membership.
+  pub fn insert(&mut self, server: Server<I, A>) -> Result<(), MembershipError<I, A>> {
+    if self.servers.contains_key(&server.id) {
+      return Err(MembershipError::DuplicateId(server.id));
+    }
+
+    if self.contains_addr(&server.addr) {
+      return Err(MembershipError::DuplicateAddress(server.addr));
+    }
+    if server.suffrage == ServerSuffrage::Voter {
+      self.voters += 1;
+    }
+
+    self
+      .servers
+      .insert(server.id, (server.addr, server.suffrage));
+    Ok(())
+  }
+
+  /// Inserts a collection of servers into the membership.
+  ///
+  /// # Errors
+  /// - If the one of the server address is already in the membership.
+  /// - If the one of the server id is already in the membership.
+  pub fn insert_many(
+    &mut self,
+    mut servers: impl Iterator<Item = Server<I, A>>,
+  ) -> Result<(), MembershipError<I, A>> {
+    servers.try_for_each(|server| self.insert(server))
+  }
+
+  /// Returns an iterator over the membership
+  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
+    self.servers.iter()
+  }
+
+  /// Returns an iterator that allows modifying each value.
+  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
+    self.servers.iter_mut()
+  }
+
+  /// Returns the number of server in the membership, also referred to as its 'length'.
+  pub fn len(&self) -> usize {
+    self.servers.len()
+  }
+
+  /// Returns `true` if the membership contains no elements
+  pub fn is_empty(&self) -> bool {
+    self.servers.is_empty()
+  }
+
+  /// Validates a cluster membership configuration for common
+  /// errors.
+  pub fn validate(&self) -> Result<(), MembershipError<I, A>> {
+    self
+      .servers
+      .values()
+      .find(|s| s.1 == ServerSuffrage::Voter)
+      .ok_or(MembershipError::EmptyVoter)
+      .map(|_| {})
+  }
+
+  /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
+  pub fn is_voter<Q>(&self, id: &Q) -> bool
+  where
+    I: Borrow<Q>,
+    Q: core::hash::Hash + Eq + ?Sized,
+  {
+    self
+      .servers
+      .get(id)
+      .map(|(_, s)| *s == ServerSuffrage::Voter)
+      .unwrap_or_default()
+  }
+
+  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
+  pub fn contains_voter(&self) -> bool {
+    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
+  }
+
+  /// Returns true if the server identified by 'id' is in in the
+  /// provided [`Membership`].
+  pub fn contains_id<Q>(&self, id: &Q) -> bool
+  where
+    I: Borrow<Q>,
+    Q: core::hash::Hash + Eq + ?Sized,
+  {
+    self.servers.contains_key(id)
+  }
+
+  /// Returns true if the server address is in in the
+  /// provided [`Membership`].
+  pub fn contains_addr<Q>(&self, addr: &Q) -> bool
+  where
+    A: std::borrow::Borrow<Q>,
+    Q: ?Sized + Eq,
+  {
+    self.servers.values().any(|s| s.0.borrow() == addr)
+  }
+
+  /// Remove a server from the membership and return its address and suffrage.
+  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
+  where
+    I: Borrow<Q>,
+    Q: core::hash::Hash + Eq + ?Sized,
+  {
+    self
+      .servers
+      .remove_entry(id)
+      .map(|(id, (addr, suffrage))| Server { id, addr, suffrage })
+  }
+
+  /// Generates a new [`Membership`] from the current one and a
+  /// [`MembershipChangeCommand`]. It's split from append_membership_entry so
+  /// that it can be unit tested easily.
+  pub(crate) fn next(
+    &self,
+    current_index: u64,
+    change: MembershipChangeCommand<I, A>,
+  ) -> Result<Self, MembershipError<I, A>> {
+    let check = |prev_index: u64| -> Result<(), MembershipError<I, A>> {
+      if prev_index > 0 && prev_index != current_index {
+        return Err(MembershipError::AlreadyChanged {
+          since: prev_index,
+          latest: current_index,
+        });
+      }
+
+      Ok(())
+    };
+
+    match change {
+      MembershipChangeCommand::AddVoter {
+        id,
+        addr,
+        prev_index,
+      } => check(prev_index).and_then(|_| {
+        let mut new = self.clone();
+        if let Some((address, suffrage)) = new.servers.get_mut(&id) {
+          if *suffrage != ServerSuffrage::Voter {
+            *suffrage = ServerSuffrage::Voter;
+          }
+
+          *address = addr;
+        } else {
+          new.servers.insert(id, (addr, ServerSuffrage::Voter));
+        }
+        new.validate().map(|_| new)
+      }),
+      MembershipChangeCommand::AddNonvoter {
+        id,
+        addr,
+        prev_index,
+      } => check(prev_index).and_then(|_| {
+        let mut new = self.clone();
+        if let Some((address, suffrage)) = new.servers.get_mut(&id) {
+          if *suffrage != ServerSuffrage::Nonvoter {
+            *suffrage = ServerSuffrage::Nonvoter;
+          }
+
+          *address = addr;
+        } else {
+          new.servers.insert(id, (addr, ServerSuffrage::Nonvoter));
+        }
+        new.validate().map(|_| new)
+      }),
+      MembershipChangeCommand::DemoteVoter { id, prev_index } => check(prev_index).and_then(|_| {
+        let mut new = self.clone();
+        if let Some((_, suffrage)) = new.servers.get_mut(&id) {
+          *suffrage = ServerSuffrage::Nonvoter;
+        }
+        new.validate().map(|_| new)
+      }),
+      MembershipChangeCommand::RemoveServer { id, prev_index } => {
+        check(prev_index).and_then(|_| {
+          let mut new = self.clone();
+          new.servers.remove(&id);
+          new.validate().map(|_| new)
+        })
+      }
+    }
+  }
+}
+
+
 /// Tracks which servers are in the cluster, and whether they have
 /// votes. This should include the local server, if it's a member of the cluster.
 /// The servers are listed no particular order, but each should only appear once.
@@ -228,7 +437,7 @@ impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Membership<I: Id, A: Address> {
   pub(crate) voters: usize,
-  pub(crate) servers: IndexMap<I, (A, ServerSuffrage)>,
+  pub(crate) servers: Arc<IndexMap<I, (A, ServerSuffrage)>>,
 }
 
 impl<I: Id, A: Address> Default for Membership<I, A> {
@@ -536,7 +745,7 @@ where
 
       servers.insert(id, (addr, suffrage));
     }
-    Ok((len, Self { voters, servers }))
+    Ok((len, Self { voters, servers: Arc::new(servers) }))
   }
 }
 
@@ -598,63 +807,16 @@ impl<I: Id, A: Address> FromIterator<Server<I, A>>
   }
 }
 
-impl<I: Id, A: Address> Membership<I, A> {
-  /// Create a new membership.
-  pub fn new() -> Self {
-    Self {
-      voters: 0,
-      servers: IndexMap::new(),
-    }
-  }
 
+impl<I: Id, A: Address> Membership<I, A> {
   /// Returns the quorum size based on the current membership.
   pub const fn quorum_size(&self) -> usize {
     (self.voters / 2) + 1
   }
 
-  /// Inserts a new server into the membership.
-  ///
-  /// # Errors
-  /// - If the server address is already in the membership.
-  /// - If the server id is already in the membership.
-  pub fn insert(&mut self, server: Server<I, A>) -> Result<(), MembershipError<I, A>> {
-    if self.servers.contains_key(&server.id) {
-      return Err(MembershipError::DuplicateId(server.id));
-    }
-
-    if self.contains_addr(&server.addr) {
-      return Err(MembershipError::DuplicateAddress(server.addr));
-    }
-    if server.suffrage == ServerSuffrage::Voter {
-      self.voters += 1;
-    }
-
-    self
-      .servers
-      .insert(server.id, (server.addr, server.suffrage));
-    Ok(())
-  }
-
-  /// Inserts a collection of servers into the membership.
-  ///
-  /// # Errors
-  /// - If the one of the server address is already in the membership.
-  /// - If the one of the server id is already in the membership.
-  pub fn insert_many(
-    &mut self,
-    mut servers: impl Iterator<Item = Server<I, A>>,
-  ) -> Result<(), MembershipError<I, A>> {
-    servers.try_for_each(|server| self.insert(server))
-  }
-
   /// Returns an iterator over the membership
   pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
     self.servers.iter()
-  }
-
-  /// Returns an iterator that allows modifying each value.
-  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
-    self.servers.iter_mut()
   }
 
   /// Returns the number of server in the membership, also referred to as its 'length'.
@@ -665,17 +827,6 @@ impl<I: Id, A: Address> Membership<I, A> {
   /// Returns `true` if the membership contains no elements
   pub fn is_empty(&self) -> bool {
     self.servers.is_empty()
-  }
-
-  /// Validates a cluster membership configuration for common
-  /// errors.
-  pub fn validate(&self) -> Result<(), MembershipError<I, A>> {
-    self
-      .servers
-      .values()
-      .find(|s| s.1 == ServerSuffrage::Voter)
-      .ok_or(MembershipError::EmptyVoter)
-      .map(|_| {})
   }
 
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
@@ -714,18 +865,6 @@ impl<I: Id, A: Address> Membership<I, A> {
     Q: ?Sized + Eq,
   {
     self.servers.values().any(|s| s.0.borrow() == addr)
-  }
-
-  /// Remove a server from the membership and return its address and suffrage.
-  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
-  where
-    I: Borrow<Q>,
-    Q: core::hash::Hash + Eq + ?Sized,
-  {
-    self
-      .servers
-      .remove_entry(id)
-      .map(|(id, (addr, suffrage))| Server { id, addr, suffrage })
   }
 
   /// Generates a new [`Membership`] from the current one and a
@@ -799,6 +938,7 @@ impl<I: Id, A: Address> Membership<I, A> {
     }
   }
 }
+
 
 /// State tracked on every server about its Memberships.
 /// Note that, per Diego's dissertation, there can be at most one uncommitted

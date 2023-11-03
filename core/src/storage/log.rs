@@ -75,7 +75,7 @@ impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
 #[viewit::viewit(
   vis_all = "pub(crate)",
   getters(vis_all = "pub"),
-  setters(vis_all = "pub")
+  setters(skip)
 )]
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -343,12 +343,12 @@ pub(super) mod tests {
 
   struct TestCase {
     name: &'static str,
-    logs: Vec<Log<String, SocketAddr, Bytes>>,
+    logs: Vec<Log<String, SocketAddr, Vec<u8>>>,
     want_idx: u64,
     want_err: bool,
   }
 
-  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr>>(store: S) {
+  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr, Data = Vec<u8>>>(store: S) {
     let cases = vec![
       TestCase {
         name: "empty logs",
