@@ -454,18 +454,15 @@ where
   ///
   /// Returns `true` if this call has shutdown the Raft and it was not shutdown already.
   pub async fn shutdown(&self) -> bool {
-    if self.inner.shutdown.load(Ordering::Acquire) {
+    if self.inner.shutdown.is_shutdown() {
       return false;
     }
 
     self
       .inner
-      .state
-      .set_role(Role::Shutdown, &self.inner.observers)
-      .await;
-    self.inner.shutdown_tx.close();
-    self.inner.shutdown.store(true, Ordering::Release);
-    true
+      .shutdown
+      .shutdown(&self.inner.state, &self.inner.observers)
+      .await
   }
 
   /// Used to manually force Raft to take a snapshot. Returns a future
@@ -946,7 +943,7 @@ where
   }
 
   fn is_shutdown<Future: Fut<F, S, T>>(&self) -> Result<(), Future> {
-    if self.inner.shutdown.load(Ordering::Acquire) {
+    if self.inner.shutdown.is_shutdown() {
       Err(Future::err(Error::Raft(RaftError::Shutdown)))
     } else {
       Ok(())
@@ -954,7 +951,7 @@ where
   }
 
   fn is_shutdown_error(&self) -> Result<(), Error<F, S, T>> {
-    if self.inner.shutdown.load(Ordering::Acquire) {
+    if self.inner.shutdown.is_shutdown() {
       Err(Error::Raft(RaftError::Shutdown))
     } else {
       Ok(())

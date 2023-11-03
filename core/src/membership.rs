@@ -158,7 +158,7 @@ impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
   /// Returns [`MembershipChangeCommand::AddVoter`].
   #[inline]
   pub const fn add_voter(id: I, addr: A, prev_index: u64) -> Self {
-    Self::AddNonvoter {
+    Self::AddVoter {
       id,
       addr,
       prev_index,

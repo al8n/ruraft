@@ -1,9 +1,8 @@
 #![allow(clippy::type_complexity)]
 
-use std::{
-  sync::Arc,
-  time::{Duration, Instant},
-};
+use std::sync::Arc;
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 use agnostic::Runtime;
 use async_channel::Receiver;
@@ -126,7 +125,8 @@ where
     } = self;
 
     #[cfg(feature = "metrics")]
-    let mut saturation = SaturationMetric::new("ruraft.fsm.runner", Duration::from_secs(1));
+    let mut saturation =
+      SaturationMetric::new("ruraft.fsm.runner", std::time::Duration::from_secs(1));
 
     super::spawn_local::<R, _>(wg.add(1), async move {
       let mut last_index = 0;
@@ -192,13 +192,24 @@ where
                     // Update the last index and term
                     last_index = index;
                     last_term = term;
-                    if tx.send(Ok(())).is_err() {
+                    let resp = if shutdown_rx.is_closed() {
+                      Err(Error::shutdown())
+                    } else {
+                      Ok(())
+                    };
+
+                    if tx.send(resp).is_err() {
                       tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine response, receiver closed");
                     }
                   },
                   Err(e) => {
                     tracing::error!(target="ruraft.fsm.runner", id = %id, err=%e, "failed to open snapshot");
-                    if tx.send(Err(Error::snapshot(e))).is_err() {
+                    let resp = if shutdown_rx.is_closed() {
+                      Err(Error::shutdown())
+                    } else {
+                      Err(Error::snapshot(e))
+                    };
+                    if tx.send(resp).is_err() {
                       tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine response, receiver closed");
                     }
                   }
@@ -224,6 +235,7 @@ where
                 }
 
                 // Start a snapshot
+                #[cfg(feature = "metrics")]
                 let start = Instant::now();
                 match fsm.snapshot().await {
                   Ok(snapshot) => {
@@ -270,6 +282,7 @@ where
     source: <S::Snapshot as SnapshotStorage>::Source,
     snapshot_size: u64,
   ) -> Result<(), F::Error> {
+    #[cfg(feature = "metrics")]
     let start = Instant::now();
 
     let cr = CountingReader::from(source);
@@ -331,6 +344,7 @@ where
 
     let len = logs.size_hint().0;
     if len > 0 {
+      #[cfg(feature = "metrics")]
       let start = Instant::now();
       match fsm.apply_batch(logs).await {
         Ok(resps) => {
@@ -389,6 +403,7 @@ where
     // Apply the log if a command or config change
     match log.kind {
       LogKind::User { data, extension } => {
+        #[cfg(feature = "metrics")]
         let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {
@@ -412,6 +427,7 @@ where
         }
       }
       LogKind::Membership(membership) => {
+        #[cfg(feature = "metrics")]
         let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {

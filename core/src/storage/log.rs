@@ -1,18 +1,12 @@
-use std::{
-  future::Future,
-  ops::RangeBounds,
-  sync::Arc,
-  time::{Duration, Instant},
-};
+use std::{future::Future, ops::RangeBounds, sync::Arc, time::Instant};
 
-use async_channel::Receiver;
 use bytes::Bytes;
+#[cfg(feature = "metrics")]
 use futures::FutureExt;
 
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  utils::serde_instant,
 };
 
 /// A log entry that contains a new membership.
@@ -146,7 +140,7 @@ pub struct Log<I: Id, A: Address> {
       )
     )
   )]
-  #[cfg_attr(feature = "serde", serde(with = "serde_instant::option"))]
+  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant::option"))]
   appended_at: Option<Instant>,
 }
 
@@ -256,13 +250,14 @@ pub trait LogStorage: Clone + Send + Sync + 'static {
   }
 }
 
-// #[cfg(feature = "metrics")]
+#[cfg(feature = "metrics")]
 pub(crate) enum LogStorageExtError<E: std::error::Error> {
   LogStorageError(E),
   NotFound,
   GiveMeADescriptiveName,
 }
 
+#[cfg(feature = "metrics")]
 pub(crate) trait LogStorageExt: LogStorage {
   fn oldest_log(
     &self,
@@ -309,11 +304,10 @@ pub(crate) trait LogStorageExt: LogStorage {
     }
   }
 
-  #[cfg(feature = "metrics")]
   fn emit_metrics(
     &self,
-    interval: Duration,
-    stop_rx: Receiver<()>,
+    interval: std::time::Duration,
+    stop_rx: async_channel::Receiver<()>,
   ) -> impl Future<Output = ()> + Send
   where
     <<Self::Runtime as agnostic::Runtime>::Sleep as std::future::Future>::Output: Send,
@@ -343,6 +337,7 @@ pub(crate) trait LogStorageExt: LogStorage {
   }
 }
 
+#[cfg(feature = "metrics")]
 impl<T: LogStorage> LogStorageExt for T {}
 
 #[cfg(all(feature = "test", feature = "metrics"))]
