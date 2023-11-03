@@ -2,15 +2,20 @@ syntax = "proto3";
 
 package proto;
 
+message Node {
+  // The id of the node
+  bytes id = 2;
+
+  // The address of the node
+  bytes addr = 3;
+}
+
 message Header {
   // ProtocolVerison is the version of the protocol the sender is speaking
   int32 protocol_version = 1;
 
-  // The node id of the node sending the RPC Request or Response
-  bytes id = 2;
-
-  // Addr is the ServerAddr of the node sending theRPC Request or Response
-  bytes addr = 3;
+  // The source node which sending the request or response
+  Node from = 2;
 }
 
 message Log {

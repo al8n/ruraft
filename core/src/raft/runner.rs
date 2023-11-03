@@ -456,6 +456,29 @@ where
     }
   }
 
+  /// Invoked when we get a request vote RPC call.
+  async fn handle_vote_request(&self) {
+    todo!()
+  }
+
+  /// Invoked when we get a InstallSnapshot RPC call.
+  /// We must be in the follower state for this, since it means we are
+  /// too far behind a leader for log replay. This must only be called
+  /// from the main thread.
+  async fn handle_install_snapshot_request(&self) {
+    todo!()
+  }
+
+  /// What happens when a server receives a [`TimeoutNowRequest`].
+  async fn handle_timeout_now_request(&self) {
+    todo!()
+  }
+
+  /// What happens when a server receives a [`HeartbeatRequest`].
+  async fn handle_heartbeat_request(&self) {
+    todo!()
+  }
+
   /// Used to apply all the committed entries that haven't been
   /// applied up to the given index limit.
   /// This can be called from both leaders and followers.

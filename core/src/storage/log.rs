@@ -12,7 +12,6 @@ use futures::FutureExt;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  utils::serde_instant,
 };
 
 /// A log entry that contains a new membership.
@@ -146,7 +145,7 @@ pub struct Log<I: Id, A: Address> {
       )
     )
   )]
-  #[cfg_attr(feature = "serde", serde(with = "serde_instant::option"))]
+  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant::option"))]
   appended_at: Option<Instant>,
 }
 
