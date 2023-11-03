@@ -17,6 +17,7 @@ pub use fsm::*;
 /// Membership for the Raft cluster.
 pub mod membership;
 mod raft;
+use nodecraft::Transformable;
 pub use raft::*;
 
 ///
@@ -30,6 +31,11 @@ pub mod utils;
 
 #[cfg(feature = "metrics")]
 mod metrics;
+
+/// A trait for the data type that can be used as the user data of the Raft.
+pub trait Data: Transformable + Send + Sync + 'static {}
+
+impl<T: Transformable + Send + Sync + 'static> Data for T {}
 
 /// All unit test fns are exported in the `tests` module.
 /// This module is used for users want to use other async runtime,
