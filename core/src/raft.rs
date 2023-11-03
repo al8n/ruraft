@@ -225,7 +225,12 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -309,7 +314,12 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -325,7 +335,12 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -343,10 +358,16 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
@@ -376,10 +397,16 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -527,12 +554,12 @@ where
         return Err(Error::log_not_found(index));
       };
 
-      if let LogKind::User { data, extension } = entry.kind {
+      if let LogKind::Data(data) = entry.kind {
         fsm
           .apply(FinateStateMachineLog::new(
             entry.term,
             entry.index,
-            FinateStateMachineLogKind::Log { data, extension },
+            FinateStateMachineLogKind::Log(data),
           ))
           .await
           .map_err(|e| {
@@ -609,10 +636,16 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,

@@ -41,10 +41,16 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -52,7 +58,7 @@ where
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
-  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address>,
+  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   pub(super) candidate_from_leadership_transfer: AtomicBool,
   /// last_contact is the last time we had contact from the
@@ -117,9 +123,15 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -138,9 +150,15 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
@@ -226,7 +244,7 @@ where
   async fn handle_request(
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
-    req: Request<T::Id, <T::Resolver as AddressResolver>::Address>,
+    req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   ) {
     // TODO: validate the request header
     match req {
@@ -241,7 +259,7 @@ where
   async fn handle_append_entries(
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
-    mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+    mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   ) {
     // TODO: defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
 
@@ -446,7 +464,7 @@ where
   /// called from the main thread, or from constructors before any threads have begun.
   fn process_membership_log(
     &self,
-    log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address>,
+    log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   ) {
     if let crate::storage::LogKind::Membership(m) = log.kind {
       self
@@ -522,6 +540,6 @@ where
 struct Inflight<F: FinateStateMachine, E> {
   #[cfg(feature = "metrics")]
   dispatch: Instant,
-  log: Log<F::Id, F::Address>,
+  log: Log<F::Id, F::Address, F::Data>,
   tx: ApplySender<F, E>,
 }

@@ -59,14 +59,14 @@ impl<R: FinateStateMachineResponse> FSMResponse<R> {
 const INLINE: usize = 4;
 
 pub(crate) struct FSMLogRequest<F: FinateStateMachine, S: Storage, T: Transport> {
-  log: Log<F::Id, F::Address>,
+  log: Log<F::Id, F::Address, F::Data>,
   tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
 }
 
 pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage, T: Transport> {
   AdHoc(SmallVec<[FSMLogRequest<F, S, T>; INLINE]>),
   Batch {
-    logs: SmallVec<[Log<F::Id, F::Address>; INLINE]>,
+    logs: SmallVec<[Log<F::Id, F::Address, F::Data>; INLINE]>,
     tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
   },
   Restore {
@@ -82,9 +82,15 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
@@ -103,9 +109,15 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
   T: Transport<Runtime = R>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
@@ -311,7 +323,7 @@ where
 
   async fn apply_batch(
     fsm: &F,
-    logs: SmallVec<[Log<F::Id, F::Address>; INLINE]>,
+    logs: SmallVec<[Log<F::Id, F::Address, F::Data>; INLINE]>,
     tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
   ) -> ApplyResult {
     let mut last_batch_index = 0;
@@ -322,12 +334,12 @@ where
       last_batch_index = l.index;
       last_batch_term = l.term;
       Some(match l.kind {
-        LogKind::User { data, extension } => {
+        LogKind::Data(data) => {
           should_send += 1;
           FinateStateMachineLog {
             index: l.index,
             term: l.term,
-            kind: FinateStateMachineLogKind::Log { data, extension },
+            kind: FinateStateMachineLogKind::Log(data),
           }
         }
         LogKind::Membership(m) => {
@@ -393,7 +405,7 @@ where
 
   async fn apply_single(
     fsm: &F,
-    log: Log<F::Id, F::Address>,
+    log: Log<F::Id, F::Address, F::Data>,
     tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
   ) -> ApplyResult {
     let rst = ApplyResult {
@@ -402,14 +414,14 @@ where
     };
     // Apply the log if a command or config change
     match log.kind {
-      LogKind::User { data, extension } => {
+      LogKind::Data(data) => {
         #[cfg(feature = "metrics")]
         let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {
             index: log.index,
             term: log.term,
-            kind: FinateStateMachineLogKind::Log { data, extension },
+            kind: FinateStateMachineLogKind::Log(data),
           })
           .await;
 
