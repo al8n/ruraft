@@ -4,10 +4,10 @@ use std::{
   fmt::Display,
   future::Future,
   sync::{
-    atomic::{AtomicBool, AtomicU64},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
   },
-  time::{Duration, Instant},
+  time::Instant,
 };
 
 use agnostic::Runtime;
@@ -193,6 +193,41 @@ impl<I: Id, A: Address> Leader<I, A> {
   }
 }
 
+struct Shutdown {
+  shutdown_tx: async_channel::Sender<()>,
+  /// Used to prevent concurrent shutdown
+  shutdown: AtomicBool,
+
+  lock: async_lock::RwLock<()>,
+}
+
+impl Shutdown {
+  #[inline]
+  fn new(shutdown_tx: async_channel::Sender<()>) -> Self {
+    Self {
+      shutdown_tx,
+      shutdown: AtomicBool::new(false),
+      lock: async_lock::RwLock::new(()),
+    }
+  }
+
+  #[inline]
+  fn is_shutdown(&self) -> bool {
+    self.shutdown.load(Ordering::Acquire)
+  }
+
+  async fn shutdown<I: Id, A: Address>(
+    &self,
+    state: &State,
+    observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
+  ) -> bool {
+    let _mu = self.lock.write().await;
+    state.set_role(Role::Shutdown, observers).await;
+    self.shutdown.store(true, Ordering::Release);
+    self.shutdown_tx.close()
+  }
+}
+
 struct Inner<F, S, T, SC, R>
 where
   F: FinateStateMachine<
@@ -212,9 +247,8 @@ where
   /// leader node. This can be used to gauge staleness.
   last_contact: OptionalContact,
   memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  shutdown_tx: async_channel::Sender<()>,
   /// Used to prevent concurrent shutdown
-  shutdown: AtomicBool,
+  shutdown: Arc<Shutdown>,
   transport: Arc<T>,
 
   /// Stores the initial options to use. This is the most recent one
@@ -746,6 +780,7 @@ where
     let wg = AsyncWaitGroup::new();
     let transport = Arc::new(transport);
     let observers = Arc::new(async_lock::RwLock::new(HashMap::new()));
+    let shutdown = Arc::new(Shutdown::new(shutdown_tx));
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
@@ -772,11 +807,12 @@ where
       verify_rx,
       user_restore_rx,
       observers: observers.clone(),
+      shutdown: shutdown.clone(),
       wg: wg.clone(),
     }
     .spawn(
       #[cfg(feature = "metrics")]
-      SaturationMetric::new("ruraft.runner", Duration::from_secs(1)),
+      SaturationMetric::new("ruraft.runner", std::time::Duration::from_secs(1)),
     );
 
     FSMRunner::<F, S, T, R> {
@@ -810,8 +846,7 @@ where
       last_contact,
       sidecar,
       state,
-      shutdown_tx,
-      shutdown: AtomicBool::new(false),
+      shutdown,
       transport,
       membership_change_tx,
       apply_tx,

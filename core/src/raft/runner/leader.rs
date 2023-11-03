@@ -28,6 +28,7 @@ mod replication;
 use replication::Replication;
 
 const MIN_CHECK_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(feature = "metrics")]
 const OLDEST_LOG_GAUGE_INTERVAL: Duration = Duration::from_secs(10);
 const NUM_INLINED: usize = 4;
 
@@ -152,18 +153,17 @@ where
     let latest = self.memberships.latest().1.clone();
     let last_index = self.state.last_index() + 1;
     let mut leader_state = LeaderState::<F, S, T>::new(last_index, &latest, step_down_rx);
-    let (stop_tx, stop_rx) = async_channel::bounded(1);
+    let (stop_tx, _stop_rx) = async_channel::bounded(1);
 
     #[cfg(feature = "metrics")]
     {
       use crate::storage::LogStorageExt;
       // Run a background go-routine to emit metrics on log age
       let s = self.storage.clone();
-      let stop_rx = stop_rx.clone();
 
       super::super::spawn_local::<R, _>(self.wg.add(1), async move {
         s.log_store()
-          .emit_metrics(OLDEST_LOG_GAUGE_INTERVAL, stop_rx)
+          .emit_metrics(OLDEST_LOG_GAUGE_INTERVAL, _stop_rx)
           .await
       });
     }
@@ -290,7 +290,7 @@ where
             }
             Ok((target, tx)) => {
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
-                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                let err = Error::<F, S, T>::leadership_transfer_in_progress();
                 tracing::debug!(target = "ruraft.leader", err=%err, "leader transfer request received, but leadership transfer in progress");
                 if tx.send(Err(err)).is_err() {
                   tracing::error!(target = "ruraft.leader", "leader transfer response receiver closed, shutting down...");
@@ -311,7 +311,7 @@ where
           if step_down {
             if self.options.shutdown_on_remove {
               tracing::info!(target = "ruraft.leader", "removed ourself, shutting down...");
-              // TODO: self.shutdown()
+              self.shutdown.shutdown(&self.state, &self.observers).await;
             } else {
               tracing::info!(target = "ruraft.leader", "removed ourself, transitioning to follower");
               self.state.set_role(Role::Follower, &self.observers).await;
@@ -344,7 +344,7 @@ where
           match ur {
             Ok((src, tx)) => {
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
-                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                let err = Error::<F, S, T>::leadership_transfer_in_progress();
                 tracing::debug!(target = "ruraft.leader", err=%err, "restore snapshot request received, but leadership transfer in progress");
                 if tx.send(Err(err)).is_err() {
                   tracing::error!(target = "ruraft.leader", "restore snapshot response receiver closed, shutting down...");
@@ -370,7 +370,7 @@ where
           match cm {
             Ok(cm) => {
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
-                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                let err = Error::<F, S, T>::leadership_transfer_in_progress();
                 tracing::debug!(target = "ruraft.leader", err=%err, "committed membership request received, but leadership transfer in progress");
                 if cm.send(Err(err)).is_err() {
                   tracing::error!(target = "ruraft.leader", "committed membership response receiver closed, shutting down...");
@@ -397,7 +397,7 @@ where
           match m {
             Some(m) => {
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
-                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                let err = Error::<F, S, T>::leadership_transfer_in_progress();
                 tracing::debug!(target = "ruraft.leader", err=%err, "membership change request received, but leadership transfer in progress");
                 if m.tx.send(Err(err)).is_err() {
                   tracing::error!(target = "ruraft.leader", "membership change response receiver closed, shutting down...");
@@ -426,7 +426,7 @@ where
           match new_log {
             Ok(new_log) => {
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
-                let err = Error::<F, S, T>::Raft(RaftError::LeadershipTransferInProgress);
+                let err = Error::<F, S, T>::leadership_transfer_in_progress();
                 tracing::debug!(target = "ruraft.leader", err=%err, "apply request received, but leadership transfer in progress");
                 if new_log.tx.send_err(err).is_err() {
                   tracing::error!(target = "ruraft.leader", "apply response receiver closed, shutting down...");
@@ -854,6 +854,7 @@ where
       }
     }
 
+    #[cfg(feature = "metrics")]
     let start = Instant::now();
 
     // Pull all inflight logs that are committed off the queue.

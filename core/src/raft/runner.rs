@@ -15,7 +15,7 @@ use wg::AsyncWaitGroup;
 
 use super::{
   api::ApplySender, fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer,
-  ObserverId, OptionalContact,
+  ObserverId, OptionalContact, Shutdown,
 };
 use crate::{
   error::Error,
@@ -76,6 +76,7 @@ where
   pub(super) leader_notify_rx: async_channel::Receiver<()>,
   /// Used to receive `reloadbale_options` has changed signal when the node is follower
   pub(super) follower_notify_rx: async_channel::Receiver<()>,
+  pub(super) shutdown: Arc<Shutdown>,
   pub(super) shutdown_rx: async_channel::Receiver<()>,
   pub(super) apply_rx: async_channel::Receiver<super::ApplyRequest<F, Error<F, S, T>>>,
   pub(super) membership_change_rx: async_channel::Receiver<MembershipChangeRequest<F, S, T>>,

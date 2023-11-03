@@ -1,4 +1,4 @@
-use std::{sync::atomic::Ordering, time::Instant};
+use std::sync::atomic::Ordering;
 
 use crate::{
   error::RaftError,
@@ -318,7 +318,7 @@ where
 
           super::super::spawn_local::<R, _>(wg.add(1), async move {
             #[cfg(feature = "metrics")]
-            let start = Instant::now();
+            let start = std::time::Instant::now();
 
             let res = match trans.vote(&target, VoteRequest {
               header: trans.header(),

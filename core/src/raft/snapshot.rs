@@ -2,8 +2,11 @@ use std::{
   borrow::Cow,
   future::Future,
   sync::{atomic::Ordering, Arc},
-  time::{Duration, Instant},
+  time::Duration,
 };
+#[cfg(feature = "metrics")]
+use std::time::Instant;
+
 
 use agnostic::Runtime;
 use atomic::Atomic;

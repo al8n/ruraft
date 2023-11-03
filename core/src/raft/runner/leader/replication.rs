@@ -547,6 +547,7 @@ where
         Err(_) => return false,
         Ok(req) => {
           // Make the RPC call
+          #[cfg(feature = "metrics")]
           let start = Instant::now();
           #[cfg(feature = "metrics")]
           let num_entries = req.entries.len();
@@ -647,6 +648,7 @@ where
     let remote = self.peer.load_full();
 
     // make the call
+    #[cfg(feature = "metrics")]
     let start = Instant::now();
     let meta_idx = meta.index();
     match self.transport.install_snapshot(&remote, req, snap).await {
