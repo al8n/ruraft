@@ -68,10 +68,6 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: {0}")]
   Closed(&'static str),
 
-  /// Returned when long running task exits unexpectedly.
-  #[error("ruraft: {0}")]
-  Exit(&'static str),
-
   /// Returned when the leader is rejecting
   /// client requests because it is attempting to transfer leadership.
   #[error("ruraft: leadership transfer in progress")]
@@ -93,22 +89,17 @@ pub enum RaftError<T: Transport> {
   #[error("ruraft: leadership transfer target exits")]
   LeadershipTransferTargetExits,
 
-  /// Returned when there are some snapshots in the storage,
-  /// but none of them can be loaded.
-  #[error("ruraft: failed to load any existing snapshots")]
-  FailedLoadSnapshot,
-
   /// Returned when failing to load current term.
   #[error("ruraft: failed to load current term")]
   FailedLoadCurrentTerm,
 
   /// Returned when failing to load log index.
-  #[error("ruraft: failed to load log index")]
-  FailedLoadLogIndex,
+  #[error("ruraft: failed to load first log index")]
+  FailedLoadFirstIndex,
 
   /// Returned when failing to load last log entry.
-  #[error("ruraft: failed to load last log")]
-  FailedLoadLastLog,
+  #[error("ruraft: failed to load last log index")]
+  FailedLoadLastIndex,
 
   /// Returned when there is invalid membership.
   #[error("ruraft: {0}")]
@@ -299,5 +290,73 @@ where
   #[inline]
   pub(crate) const fn shutdown() -> Self {
     Self::Raft(RaftError::Shutdown)
+  }
+
+  #[inline]
+  pub(crate) const fn enqueue_timeout() -> Self {
+    Self::Raft(RaftError::EnqueueTimeout)
+  }
+
+  #[inline]
+  pub(crate) const fn nothing_new_to_snapshot() -> Self {
+    Self::Raft(RaftError::NothingNewToSnapshot)
+  }
+
+  #[inline]
+  pub(crate) const fn cant_take_snapshot(committed: u64, snapshot: u64) -> Self {
+    Self::Raft(RaftError::CantTakeSnapshot {
+      committed,
+      snapshot,
+    })
+  }
+
+  #[inline]
+  pub(crate) const fn closed(what: &'static str) -> Self {
+    Self::Raft(RaftError::Closed(what))
+  }
+
+  #[inline]
+  pub(crate) const fn transfer_to_self() -> Self {
+    Self::Raft(RaftError::TransferToSelf)
+  }
+
+  #[inline]
+  pub(crate) const fn no_existing_state() -> Self {
+    Self::Raft(RaftError::NoExistingState)
+  }
+
+  #[inline]
+  pub(crate) const fn failed_load_current_term() -> Self {
+    Self::Raft(RaftError::FailedLoadCurrentTerm)
+  }
+
+  #[inline]
+  pub(crate) const fn failed_load_first_index() -> Self {
+    Self::Raft(RaftError::FailedLoadFirstIndex)
+  }
+
+  #[inline]
+  pub(crate) const fn failed_load_last_index() -> Self {
+    Self::Raft(RaftError::FailedLoadLastIndex)
+  }
+
+  #[inline]
+  pub(crate) const fn failed_restore_snapshots() -> Self {
+    Self::Raft(RaftError::FailedRestoreSnapshots)
+  }
+
+  #[inline]
+  pub(crate) const fn canceled() -> Self {
+    Self::Raft(RaftError::Canceled)
+  }
+
+  #[inline]
+  pub(crate) const fn not_leader() -> Self {
+    Self::Raft(RaftError::NotLeader)
+  }
+
+  #[inline]
+  pub(crate) const fn leadership_lost() -> Self {
+    Self::Raft(RaftError::LeadershipLost)
   }
 }

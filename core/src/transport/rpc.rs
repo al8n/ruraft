@@ -1,7 +1,6 @@
 use std::{
   future::Future,
   pin::Pin,
-  sync::Arc,
   task::{Context, Poll},
   time::Instant,
 };
@@ -247,7 +246,7 @@ pub struct InstallSnapshotRequest<I: Id, A: Address> {
   last_log_term: u64,
 
   /// Cluster membership.
-  membership: Arc<Membership<I, A>>,
+  membership: Membership<I, A>,
 
   /// Log index where [`Membership`] entry was originally written.
   membership_index: u64,

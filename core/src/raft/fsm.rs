@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
 use crate::{
-  error::{Error, RaftError},
+  error::Error,
   fsm::{
     FinateStateMachine, FinateStateMachineLog, FinateStateMachineLogKind,
     FinateStateMachineResponse, FinateStateMachineSnapshot,
@@ -56,7 +56,7 @@ impl<R: FinateStateMachineResponse> FSMResponse<R> {
   }
 }
 
-const INLINE: usize = 4;
+const INLINE: usize = 2;
 
 pub(crate) struct FSMLogRequest<F: FinateStateMachine, S: Storage, T: Transport> {
   log: Log<F::Id, F::Address, F::Data>,
@@ -240,7 +240,7 @@ where
               Ok(tx) => {
                 // Is there something to snapshot?
                 if last_index == 0 {
-                  if tx.send(Err(Error::Raft(RaftError::NothingNewToSnapshot))).is_err() {
+                  if tx.send(Err(Error::nothing_new_to_snapshot())).is_err() {
                     tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine snapshot response, receiver closed");
                   }
                   continue;

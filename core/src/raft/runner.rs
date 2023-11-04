@@ -91,7 +91,7 @@ where
       Result<
         Arc<(
           u64,
-          Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+          Membership<T::Id, <T::Resolver as AddressResolver>::Address>,
         )>,
         Error<F, S, T>,
       >,

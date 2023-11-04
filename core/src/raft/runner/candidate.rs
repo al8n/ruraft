@@ -1,7 +1,6 @@
 use std::sync::atomic::Ordering;
 
 use crate::{
-  error::RaftError,
   membership::ServerSuffrage,
   storage::StableStorage,
   transport::{Header, VoteRequest, VoteResponse},
@@ -121,7 +120,7 @@ where
           // Reject any operations since we are not the leader
           match mc {
             Ok(mc) => {
-              if mc.tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if mc.tx.send(Err(Error::not_leader())).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive membership change request, but fail to send error response, receiver closed");
               }
             }
@@ -155,7 +154,7 @@ where
           // Reject any operations since we are not the leader
           match a {
             Ok(a) => {
-              if a.tx.send_err(Error::Raft(RaftError::NotLeader)).is_err() {
+              if a.tx.send_err(Error::not_leader()).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive apply request, but fail to send error response, receiver closed");
               }
             }
@@ -172,7 +171,7 @@ where
           // Reject any operations since we are not the leader
           match v {
             Ok(v) => {
-              if v.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if v.send(Err(Error::not_leader())).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive verify leader request, but fail to send error response, receiver closed");
               }
             }
@@ -189,7 +188,7 @@ where
           // Reject any operations since we are not the leader
           match ur {
             Ok(ur) => {
-              if ur.1.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if ur.1.send(Err(Error::not_leader())).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive user restore request, but fail to send error response, receiver closed");
               }
             }
@@ -206,7 +205,7 @@ where
           // Reject any operations since we are not the leader
           match l {
             Ok(l) => {
-              if l.1.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+              if l.1.send(Err(Error::not_leader())).is_err() {
                 tracing::error!(target = "ruraft.candidate", "receive leader transfer request, but fail to send error response, receiver closed");
               }
             },

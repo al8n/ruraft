@@ -12,7 +12,7 @@ use crate::{
 /// A log entry that contains a new membership.
 #[derive(Clone)]
 pub struct MembershipLog<I: Id, A: Address> {
-  membership: Arc<Membership<I, A>>,
+  membership: Membership<I, A>,
   index: u64,
   term: u64,
 }
@@ -32,7 +32,7 @@ impl<I: Id, A: Address> MembershipLog<I, A> {
 
   /// Returns the membership of the log entry.
   #[inline]
-  pub const fn membership(&self) -> &Arc<Membership<I, A>> {
+  pub const fn membership(&self) -> &Membership<I, A> {
     &self.membership
   }
 }
@@ -54,7 +54,7 @@ pub enum LogKind<I: Id, A: Address, D: Data> {
   Barrier,
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Membership(Arc<Membership<I, A>>),
+  Membership(Membership<I, A>),
 }
 
 impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
@@ -72,11 +72,7 @@ impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
 /// and form the heart of the replicated state machine.
 ///
 /// The `clone` on `Log` is cheap and not require deep copy and allocation.
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  getters(vis_all = "pub"),
-  setters(skip)
-)]
+#[viewit::viewit(vis_all = "pub(crate)", getters(vis_all = "pub"), setters(skip))]
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Log<I: Id, A: Address, D: Data> {
@@ -348,7 +344,9 @@ pub(super) mod tests {
     want_err: bool,
   }
 
-  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr, Data = Vec<u8>>>(store: S) {
+  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr, Data = Vec<u8>>>(
+    store: S,
+  ) {
     let cases = vec![
       TestCase {
         name: "empty logs",
