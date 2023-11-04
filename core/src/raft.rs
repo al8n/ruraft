@@ -18,7 +18,7 @@ use futures::channel::oneshot;
 use wg::AsyncWaitGroup;
 
 use crate::{
-  error::{Error, RaftError},
+  error::Error,
   fsm::FinateStateMachine,
   membership::{Membership, Memberships, Server, ServerSuffrage},
   options::{Options, ReloadableOptions},
@@ -469,11 +469,6 @@ where
     // Validate the options
     opts.validate()?;
 
-    // Sanity check the Raft peer configuration.
-    membership
-      .validate()
-      .map_err(|e| Error::Raft(RaftError::Membership(e)))?;
-
     // Refuse to recover if there's no existing state. This would be safe to
     // do, but it is likely an indication of an operator error where they
     // expect data to be there and it's not. By refusing, we force them
@@ -481,7 +476,7 @@ where
     // bootstrap, rather than quietly fire up a fresh cluster here.
     let initial_state = Self::fetch_initial_state(&storage).await?;
     if initial_state.is_clean_state() {
-      return Err(Error::Raft(RaftError::NoExistingState));
+      return Err(Error::no_existing_state());
     }
 
     // Attempt to restore any snapshots we find, newest to oldest.
@@ -527,7 +522,7 @@ where
       }
     }
     if num_snapshots > 0 && (snapshot_index == 0 || snapshot_term == 0) {
-      return Err(Error::Raft(RaftError::FailedRestoreSnapshots));
+      return Err(Error::failed_restore_snapshots());
     }
 
     let logs = storage.log_store();
@@ -540,7 +535,7 @@ where
       )
     })?
     else {
-      return Err(Error::Raft(RaftError::FailedLoadLogIndex));
+      return Err(Error::failed_load_last_index());
     };
 
     for index in (snapshot_index + 1)..=last_log_index {
@@ -578,13 +573,7 @@ where
     })?;
 
     let sink = ss
-      .create(
-        Default::default(),
-        last_term,
-        last_index,
-        Arc::new(membership),
-        1,
-      )
+      .create(Default::default(), last_term, last_index, membership, 1)
       .await
       .map_err(|e| {
         Error::storage(
@@ -609,7 +598,7 @@ where
         ));
       }
       Ok(None) => {
-        return Err(Error::Raft(RaftError::FailedLoadLogIndex));
+        return Err(Error::failed_load_first_index());
       }
       Ok(Some(index)) => index,
     };
@@ -695,7 +684,6 @@ where
             ServerSuffrage::Voter,
           ))
           .collect::<Result<_, _>>()
-          .map(Arc::new)
           .map_err(Error::membership)?,
         ),
       ))
@@ -709,13 +697,13 @@ where
     // Try to restore the current term.
     let Some(current_term) = initial_state.current_term else {
       tracing::error!(target = "ruraft", err = "failed to load current term");
-      return Err(Error::Raft(RaftError::FailedLoadCurrentTerm));
+      return Err(Error::failed_load_current_term());
     };
 
     // Try to restore the last log index.
     let Some(last_log_index) = initial_state.last_log_index else {
       tracing::error!(target = "ruraft", err = "failed to load last log index");
-      return Err(Error::Raft(RaftError::FailedLoadLogIndex));
+      return Err(Error::failed_load_last_index());
     };
 
     // Get the last log entry.
@@ -944,15 +932,10 @@ where
 
     // If we had snapshots and failed to load them, its an error
     if has_snapshots {
-      return Err(Error::Raft(RaftError::FailedLoadSnapshot));
+      return Err(Error::failed_restore_snapshots());
     }
 
-    Ok(RestoredState {
-      last_applied: 0,
-      last_snapshot: Default::default(),
-      membership_index: 0,
-      membership: Default::default(),
-    })
+    Err(Error::no_existing_state())
   }
 
   async fn try_restore_single_snapshot(

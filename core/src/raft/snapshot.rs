@@ -60,7 +60,7 @@ where
       Result<
         Arc<(
           u64,
-          Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+          Membership<T::Id, <T::Resolver as AddressResolver>::Address>,
         )>,
         Error<F, S, T>,
       >,
@@ -174,7 +174,8 @@ where
               Ok(Ok(snap)) => snap,
               Ok(Err(e)) => {
                 return match e {
-                  Error::Raft(RaftError::NothingNewToSnapshot) => Err(Error::Raft(RaftError::NothingNewToSnapshot)),
+                  Error::Raft(RaftError::NothingNewToSnapshot) => Err(Error::nothing_new_to_snapshot()),
+
                   e => {
                     // TODO: with_message
                     // Err(e.with_message(Cow::Borrowed("failed to start snapshot")))
@@ -182,10 +183,10 @@ where
                   },
                 };
               }
-              Err(_) => return Err(Error::Raft(RaftError::Closed("finate state mechine snapshot request sender closed"))),
+              Err(_) => return Err(Error::closed("finate state mechine snapshot request sender closed")),
             }
           }
-          Err(_) => return Err(Error::Raft(RaftError::Closed("finate state mechine snapshot receiver closed"))),
+          Err(_) => return Err(Error::closed("finate state mechine snapshot receiver closed")),
         };
 
         // Make a request for the memberships and extract the committed info.
@@ -200,10 +201,10 @@ where
                 match rx.await {
                   Ok(Ok(membership)) => membership,
                   Ok(Err(e)) => return Err(e),
-                  Err(_) => return Err(Error::Raft(RaftError::Closed("memberships request channel closed"))),
+                  Err(_) => return Err(Error::closed("memberships request channel closed")),
                 }
               }
-              Err(_) => return Err(Error::Raft(RaftError::Closed("memberships channel closed"))),
+              Err(_) => return Err(Error::closed("memberships channel closed")),
             };
 
             // We don't support snapshots while there's a membership change outstanding
@@ -215,10 +216,10 @@ where
             // then it's not crucial that we snapshot, since there's not much going
             // on Raft-wise.
             if snap.index < committed_membership.0 {
-              return Err(Error::Raft(RaftError::CantTakeSnapshot {
-                committed: committed_membership.0,
-                snapshot: snap.index,
-              }));
+              return Err(Error::cant_take_snapshot(
+                committed_membership.0,
+                snap.index,
+              ));
             }
 
 
@@ -264,10 +265,10 @@ where
               })
               .map_err(Error::storage)
           }
-          _ = self.shutdown_rx.recv().fuse() => Err(Error::Raft(RaftError::Shutdown)),
+          _ = self.shutdown_rx.recv().fuse() => Err(Error::shutdown()),
         }
       }
-      _ = self.shutdown_rx.recv().fuse() => Err(Error::Raft(RaftError::Shutdown)),
+      _ = self.shutdown_rx.recv().fuse() => Err(Error::shutdown()),
     }
   }
 

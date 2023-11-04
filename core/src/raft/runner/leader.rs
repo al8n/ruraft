@@ -11,7 +11,6 @@ use smallvec::SmallVec;
 
 use super::*;
 use crate::{
-  error::RaftError,
   observe,
   raft::{ApplyRequest, ApplySender, LastSnapshot},
   storage::{
@@ -499,15 +498,12 @@ where
 
     // Respond to all inflight operations
     leader_state.inflight.into_iter().for_each(|inf| {
-      let _ = inf.tx.send_err(Error::Raft(RaftError::LeadershipLost));
+      let _ = inf.tx.send_err(Error::leadership_lost());
     });
 
     // Respond to any pending verify requests
     leader_state.notify.into_iter().for_each(|(id, tx)| {
-      if tx
-        .send(Err(Error::Raft(RaftError::LeadershipLost)))
-        .is_err()
-      {
+      if tx.send(Err(Error::leadership_lost())).is_err() {
         tracing::warn!(
           target = "ruraft.leader",
           id=%id,
@@ -1090,9 +1086,8 @@ where
         // in to an old remove peer message, which can handle all supported
         // cases for peer changes in the pre-ID world (adding and removing
         // voters)
-        let m = Arc::new(membership);
         let logs = smallvec::smallvec![ApplyRequest {
-          log: LogKind::Membership(m.clone()),
+          log: LogKind::Membership(membership.clone()),
           tx: ApplySender::Membership(req.tx),
         }];
 
@@ -1101,8 +1096,8 @@ where
           return;
         };
 
-        self.memberships.set_latest(m.clone(), index);
-        leader_state.commitment.set_membership(&m).await;
+        self.memberships.set_latest(membership.clone(), index);
+        leader_state.commitment.set_membership(&membership).await;
         self
           .start_stop_replication(local_id, leader_state, step_down_tx)
           .await;
@@ -1140,7 +1135,7 @@ where
     if step_down {
       // we're in the process of stepping down as leader, don't process anything new
       for req in reqs {
-        let _ = req.tx.send_err(Error::Raft(RaftError::LeadershipLost));
+        let _ = req.tx.send_err(Error::leadership_lost());
       }
     } else {
       self.dispatch_logs(local_id, leader_state, reqs).await;
@@ -1346,7 +1341,7 @@ where
       self.state.set_role(Role::Follower, &self.observers).await;
 
       if let Some(tx) = leader_state.notify.remove(&v.id) {
-        if tx.send(Err(Error::Raft(RaftError::NotLeader))).is_err() {
+        if tx.send(Err(Error::not_leader())).is_err() {
           tracing::error!(
             target = "ruraft.leader",
             "receive verify leader response, but fail to send response, receiver closed"

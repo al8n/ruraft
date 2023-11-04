@@ -269,7 +269,7 @@ where
     version: SnapshotVersion,
     index: u64,
     term: u64,
-    membership: Arc<Membership<Self::Id, Self::Address>>,
+    membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
   ) -> Result<Self::Sink, Self::Error> {
     // Create a new path

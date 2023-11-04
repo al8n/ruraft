@@ -194,7 +194,7 @@ pub(super) struct RestoredState<T: Transport> {
   pub(super) last_snapshot: LastSnapshot,
   pub(super) last_applied: u64,
   pub(super) membership_index: u64,
-  pub(super) membership: Arc<Membership<T::Id, <T::Resolver as AddressResolver>::Address>>,
+  pub(super) membership: Membership<T::Id, <T::Resolver as AddressResolver>::Address>,
 }
 
 pub(super) struct InitialState<T: Transport> {

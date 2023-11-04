@@ -11,7 +11,7 @@ use futures::{channel::oneshot, future::Either, Stream};
 use nodecraft::{resolver::AddressResolver, Address, Id};
 
 use crate::{
-  error::{Error, RaftError},
+  error::Error,
   membership::{Membership, MembershipChangeCommand},
   options::{Options, ProtocolVersion, ReloadableOptions, SnapshotVersion},
   sidecar::Sidecar,
@@ -220,7 +220,7 @@ where
     let (tx, rx) = oneshot::channel();
     match self.inner.verify_tx.send(tx).await {
       Ok(_) => VerifyResponse::ok(rx),
-      Err(_) => VerifyResponse::err(Error::Raft(RaftError::Shutdown)),
+      Err(_) => VerifyResponse::err(Error::shutdown()),
     }
   }
 
@@ -660,12 +660,12 @@ where
       Some(timeout) => {
         futures::select! {
           _ = R::sleep(timeout).fuse() => {
-            ApplyResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+            ApplyResponse::err(Error::enqueue_timeout())
           }
           rst = self.inner.apply_tx.send(req).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-              ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
+              ApplyResponse::err(Error::closed("apply channel closed"))
             } else {
               ApplyResponse::ok(rx)
             }
@@ -675,7 +675,7 @@ where
       None => {
         if let Err(e) = self.inner.apply_tx.send(req).await {
           tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-          ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
+          ApplyResponse::err(Error::closed("apply channel closed"))
         } else {
           ApplyResponse::ok(rx)
         }
@@ -700,12 +700,12 @@ where
     if let Some(timeout) = timeout {
       futures::select! {
         _ = R::sleep(timeout).fuse() => {
-          ApplyResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+          ApplyResponse::err(Error::enqueue_timeout())
         }
         rst = self.inner.apply_tx.send(req).fuse() => {
           if let Err(e) = rst {
             tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-            ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
+            ApplyResponse::err(Error::closed("apply channel closed"))
           } else {
             ApplyResponse::ok(rx)
           }
@@ -713,7 +713,7 @@ where
       }
     } else if let Err(e) = self.inner.apply_tx.send(req).await {
       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-      ApplyResponse::err(Error::Raft(RaftError::Closed("apply channel closed")))
+      ApplyResponse::err(Error::closed("apply channel closed"))
     } else {
       ApplyResponse::ok(rx)
     }
@@ -738,9 +738,7 @@ where
       Some(Duration::ZERO) | None => {
         if let Err(e) = self.inner.membership_change_tx.send(req).await {
           tracing::error!(target="ruraft", err=%e, "failed to send membership change request to the raft: membership change channel closed");
-          return MembershipChangeResponse::err(Error::Raft(RaftError::Closed(
-            "membership change channel closed",
-          )));
+          return MembershipChangeResponse::err(Error::closed("membership change channel closed"));
         }
         MembershipChangeResponse::ok(rx)
       }
@@ -749,13 +747,13 @@ where
           rst = self.inner.membership_change_tx.send(req).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send membership change request to the raft: membership change channel closed");
-              return MembershipChangeResponse::err(Error::Raft(RaftError::Closed("membership change channel closed")));
+              return MembershipChangeResponse::err(Error::closed("membership change channel closed"));
             }
 
             MembershipChangeResponse::ok(rx)
           }
           _ = R::sleep(timeout).fuse() => {
-            MembershipChangeResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+            MembershipChangeResponse::err(Error::enqueue_timeout())
           }
         }
       }
@@ -777,21 +775,19 @@ where
         Ok(_) => SnapshotResponse::ok(rx),
         Err(e) => {
           tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
-          SnapshotResponse::err(Error::Raft(RaftError::Closed(
-            "user snapshot channel closed",
-          )))
+          SnapshotResponse::err(Error::closed("user snapshot channel closed"))
         }
       },
       Some(timeout) => {
         futures::select! {
           _ = R::sleep(timeout).fuse() => {
             tracing::error!(target = "ruraft", "failed to send snapshot request: user snapshot channel closed");
-            SnapshotResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+            SnapshotResponse::err(Error::enqueue_timeout())
           }
           rst = self.inner.user_snapshot_tx.send(tx).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
-              return SnapshotResponse::err(Error::Raft(RaftError::Closed("user snapshot channel closed")));
+              return SnapshotResponse::err(Error::closed("user snapshot channel closed"));
             }
 
             SnapshotResponse::ok(rx)
@@ -818,14 +814,12 @@ where
       None => {
         if let Err(e) = self.inner.user_restore_tx.send((source, tx)).await {
           tracing::error!(target="ruraft", err=%e, "failed to send restore request to the raft: user restore channel closed");
-          return Err(Error::Raft(RaftError::Closed(
-            "user restore channel closed",
-          )));
+          return Err(Error::closed("user restore channel closed"));
         }
 
         match rx.await {
           Ok(Err(e)) => Err(e),
-          Err(_) => Err(Error::Raft(RaftError::Canceled)),
+          Err(_) => Err(Error::canceled()),
           Ok(Ok(_)) => {
             self.is_shutdown_error()?;
 
@@ -844,12 +838,12 @@ where
               .await
             {
               tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-              return Err(Error::Raft(RaftError::Closed("apply channel closed")));
+              return Err(Error::closed("apply channel closed"));
             }
 
             match rx.await {
               Ok(Err(e)) => Err(e),
-              Err(_) => Err(Error::Raft(RaftError::Canceled)),
+              Err(_) => Err(Error::canceled()),
               Ok(Ok(_)) => Ok(()),
             }
           }
@@ -862,17 +856,17 @@ where
         futures::select! {
           _ = timer.as_mut().fuse() => {
             tracing::error!(target="ruraft", "failed to send restore request to the raft: restore channel closed");
-            Err(Error::Raft(RaftError::EnqueueTimeout))
+            Err(Error::enqueue_timeout())
           }
           rst = self.inner.user_restore_tx.send((source, tx)).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send restore request to the raft: restore channel closed");
-              return Err(Error::Raft(RaftError::Closed("user restore channel closed")));
+              return Err(Error::closed("user restore channel closed"));
             }
 
             match rx.await {
               Ok(Err(e)) => Err(e),
-              Err(_) => Err(Error::Raft(RaftError::Canceled)),
+              Err(_) => Err(Error::canceled()),
               Ok(Ok(_)) => {
                 self.is_shutdown_error()?;
 
@@ -885,17 +879,17 @@ where
                 futures::select! {
                   _ = timer.as_mut().fuse() => {
                     tracing::error!(target="ruraft", "failed to send apply request to the raft: apply channel closed");
-                    Err(Error::Raft(RaftError::EnqueueTimeout))
+                    Err(Error::enqueue_timeout())
                   }
                   rst = self.inner.apply_tx.send(ApplyRequest { log: LogKind::Noop, tx: ApplySender::Noop(tx) }).fuse() => {
                     if let Err(e) = rst {
                       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-                      return Err(Error::Raft(RaftError::Closed("apply channel closed")));
+                      return Err(Error::closed("apply channel closed"));
                     }
 
                     match rx.await {
                       Ok(Err(e)) => Err(e),
-                      Err(_) => Err(Error::Raft(RaftError::Canceled)),
+                      Err(_) => Err(Error::canceled()),
                       Ok(Ok(_)) => Ok(()),
                     }
                   }
@@ -925,7 +919,7 @@ where
     if let Some(ref node) = target {
       if node.id().eq(self.inner.transport.local_id()) {
         tracing::error!(target = "ruraft", "cannot transfer leadership to itself");
-        return LeadershipTransferResponse::err(Error::Raft(RaftError::TransferToSelf));
+        return LeadershipTransferResponse::err(Error::transfer_to_self());
       }
     }
 
@@ -935,19 +929,19 @@ where
           Ok(_) => LeadershipTransferResponse::ok(rx),
           Err(e) => {
             tracing::error!(target="ruraft", err=%e, "failed to send leadership transfer request to the raft: leadership transfer channel closed");
-            LeadershipTransferResponse::err(Error::Raft(RaftError::Closed("leadership transfer channel closed")))
+            LeadershipTransferResponse::err(Error::closed("leadership transfer channel closed"))
           }
         }
       }
       default => {
-        LeadershipTransferResponse::err(Error::Raft(RaftError::EnqueueTimeout))
+        LeadershipTransferResponse::err(Error::enqueue_timeout())
       }
     }
   }
 
   fn is_shutdown<Future: Fut<F, S, T>>(&self) -> Result<(), Future> {
     if self.inner.shutdown.is_shutdown() {
-      Err(Future::err(Error::Raft(RaftError::Shutdown)))
+      Err(Future::err(Error::shutdown()))
     } else {
       Ok(())
     }
@@ -955,7 +949,7 @@ where
 
   fn is_shutdown_error(&self) -> Result<(), Error<F, S, T>> {
     if self.inner.shutdown.is_shutdown() {
-      Err(Error::Raft(RaftError::Shutdown))
+      Err(Error::shutdown())
     } else {
       Ok(())
     }
@@ -978,14 +972,8 @@ pub struct RaftStats<I: Id, A: Address> {
   protocol_version: ProtocolVersion,
   snapshot_version: SnapshotVersion,
   last_contact: Option<Instant>,
-  #[viewit(getter(
-    style = "ref",
-    result(
-      type = "&Membership<I, A>",
-      converter(style = "ref", fn = "AsRef::as_ref",),
-    )
-  ))]
-  latest_membership: Arc<Membership<I, A>>,
+  #[viewit(getter(style = "ref", const,))]
+  latest_membership: Membership<I, A>,
   latest_membership_index: u64,
   num_peers: u64,
 }
@@ -1037,7 +1025,7 @@ where
       snapshot_version: SnapshotVersion,
       #[serde(serialize_with = "serde_instant")]
       last_contact: InstantSerdeHelper,
-      latest_membership: Arc<Membership<I, A>>,
+      latest_membership: Membership<I, A>,
       latest_membership_index: u64,
       num_peers: u64,
     }
@@ -1077,7 +1065,7 @@ where
 #[derive(PartialEq, Eq)]
 pub struct LatestMembership<I: Id, A: Address> {
   index: u64,
-  membership: Arc<Membership<I, A>>,
+  membership: Membership<I, A>,
 }
 
 impl<I: Id, A: Address> Clone for LatestMembership<I, A> {
@@ -1203,7 +1191,7 @@ macro_rules! resp {
             Either::Left(fut) => fut.poll(cx).map(Err),
             Either::Right(fut) => match fut.poll(cx) {
               Poll::Ready(Ok(rst)) => Poll::Ready(rst),
-              Poll::Ready(Err(_)) => Poll::Ready(Err(Error::Raft(RaftError::Canceled))),
+              Poll::Ready(Err(_)) => Poll::Ready(Err(Error::canceled())),
               Poll::Pending => Poll::Pending,
             },
           }

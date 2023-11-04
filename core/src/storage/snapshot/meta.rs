@@ -1,4 +1,4 @@
-use std::{mem, sync::Arc};
+use core::mem;
 
 use nodecraft::Transformable;
 
@@ -51,7 +51,6 @@ impl<I: Id, A: Address> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
 
 /// Metadata of a snapshot.
 #[viewit::viewit(
-  vis_all = "pub(crate)",
   getters(vis_all = "pub"),
   setters(vis_all = "pub", prefix = "with", style = "ref")
 )]
@@ -74,21 +73,16 @@ pub struct SnapshotMeta<I: Id, A: Address> {
   membership_index: u64,
   /// Membership at the time of the snapshot.
   #[viewit(getter(style = "ref", const))]
-  membership: Arc<Membership<I, A>>,
-}
-
-impl<I: Id, A: Address> Default for SnapshotMeta<I, A> {
-  fn default() -> Self {
-    Self::new()
-  }
+  membership: Membership<I, A>,
 }
 
 const META_FIXED_FIELDS_SIZE: usize = mem::size_of::<SnapshotVersion>() + 5 * mem::size_of::<u64>();
 
 impl<I: Id, A: Address> SnapshotMeta<I, A> {
-  /// Create a snapshot meta.
+  /// Create a snapshot meta with a [`Membership`](crate::membership::Membership), and keep
+  /// other fields as default.
   #[inline]
-  pub fn new() -> Self {
+  pub fn new(membership: Membership<I, A>) -> Self {
     Self {
       timestamp: std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -99,7 +93,7 @@ impl<I: Id, A: Address> SnapshotMeta<I, A> {
       index: 0,
       size: 0,
       membership_index: 0,
-      membership: Default::default(),
+      membership,
     }
   }
 
@@ -252,7 +246,7 @@ where
         timestamp,
         size,
         membership_index,
-        membership: Arc::new(membership),
+        membership,
       },
     ))
   }
@@ -286,7 +280,7 @@ where
         timestamp,
         size,
         membership_index,
-        membership: Arc::new(membership),
+        membership,
       },
     ))
   }
@@ -324,7 +318,7 @@ where
         timestamp,
         size,
         membership_index,
-        membership: Arc::new(membership),
+        membership,
       },
     ))
   }
