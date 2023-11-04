@@ -656,7 +656,7 @@ where
       Ok(s) => s,
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to create snapshot to install");
-        let err = Error::storage(<S::Error as StorageError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")));
+        let err = Error::<F, S, T>::storage(<S::Error as StorageError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")));
         return;
       }
     };

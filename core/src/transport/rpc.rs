@@ -419,11 +419,6 @@ impl<I: Id, A: Address, D: Data> From<HeartbeatRequest<I, A>> for Request<I, A, 
   }
 }
 
-// #[derive(Debug)]
-// pub struct Request<I: Id, A: Address> {
-//   pub(crate) kind: Request<I, A>,
-// }
-
 impl<I: Id, A: Address, D: Data> Request<I, A, D> {
   pub const fn append_entries(req: AppendEntriesRequest<I, A, D>) -> Self {
     Self::AppendEntries(req)
@@ -461,36 +456,7 @@ impl<I: Id, A: Address, D: Data> Request<I, A, D> {
   pub const fn protocol_version(&self) -> ProtocolVersion {
     self.header().protocol_version
   }
-
-  // pub(super) fn encode(&self) -> io::Result<Vec<u8>> {
-  //   match self.protocol_version {
-  //     ProtocolVersion::V1 => {
-  //       const OFFSET: usize = ProtocolVersion::V1.header_offset();
-
-  //       match &self.kind {
-  //         Request::AppendEntries(req) => encode!(v1::req { CommandKind::AppendEntries as u8 }),
-  //         Request::Vote(req) => encode!(v1::req {CommandKind::Vote as u8 }),
-  //         Request::InstallSnapshot(req) => {
-  //           encode!(v1::req { CommandKind::InstallSnapshot as u8 })
-  //         }
-  //         Request::TimeoutNow(req) => encode!(v1::req { CommandKind::TimeoutNow as u8 }),
-  //         Request::Heartbeat(req) => encode!(v1::req { CommandKind::Heartbeat as u8 }),
-  //       }
-  //     }
-  //   }
-  // }
 }
-
-// pub(super) fn decode<T>(protocol_src: &[u8]) -> io::Result<T>
-// where
-//   T: serde::de::DeserializeOwned,
-// {
-//   match protocol_version {
-//     ProtocolVersion::V1 => {
-//       rmp_serde::decode::from_slice(src).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-//     }
-//   }
-// }
 
 /// Response from the Raft node
 #[derive(Debug, Clone)]
@@ -603,30 +569,6 @@ impl<I: Id, A: Address> Response<I, A> {
       Self::Error(res) => res.header(),
     }
   }
-
-  // pub fn encode(&self) -> io::Result<Vec<u8>> {
-  //   match self.protocol_version {
-  //     ProtocolVersion::V1 => {
-  //       const OFFSET: usize =
-  //         mem::size_of::<CommandKind>() + mem::size_of::<ProtocolVersion>() + mem::size_of::<u32>();
-
-  //       match &self.kind {
-  //         Response::AppendEntries(res) => {
-  //           encode!(v1::res { CommandResponse::AppendEntries as u8 })
-  //         }
-  //         Response::Vote(res) => encode!(v1::res { CommandResponse::Vote as u8 }),
-  //         Response::InstallSnapshot(res) => {
-  //           encode!(v1::res { CommandResponse::InstallSnapshot as u8 })
-  //         }
-  //         Response::TimeoutNow(res) => {
-  //           encode!(v1::res { CommandResponse::TimeoutNow as u8 })
-  //         }
-  //         Response::Heartbeat(res) => encode!(v1::res { CommandResponse::Heartbeat as u8 }),
-  //         Response::Error(res) => encode!(v1::res { CommandResponse::Err as u8 }),
-  //       }
-  //     }
-  //   }
-  // }
 }
 
 /// Errors returned by the [`RpcHandle`].
