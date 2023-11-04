@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, mem, sync::Arc};
+use std::{borrow::Borrow, hash::Hash, mem, sync::Arc, fmt::{Debug, Display}};
 
 use arc_swap::ArcSwapAny;
 use indexmap::IndexMap;
@@ -73,7 +73,7 @@ impl ServerSuffrage {
 #[viewit::viewit]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Server<I: Id, A: Address> {
+pub struct Server<I, A> {
   /// A unique string identifying this server for all time.
   id: I,
   /// The network address that a transport can contact.
@@ -82,7 +82,7 @@ pub struct Server<I: Id, A: Address> {
   suffrage: ServerSuffrage,
 }
 
-impl<I: Id, A: Address> PartialEq for Server<I, A> {
+impl<I: PartialEq, A: PartialEq> PartialEq for Server<I, A> {
   fn eq(&self, other: &Self) -> bool {
     if self.id == other.id {
       return true;
@@ -96,9 +96,9 @@ impl<I: Id, A: Address> PartialEq for Server<I, A> {
   }
 }
 
-impl<I: Id, A: Address> Eq for Server<I, A> {}
+impl<I: Eq, A: Eq> Eq for Server<I, A> {}
 
-impl<I: Id, A: Address> Server<I, A> {
+impl<I, A> Server<I, A> {
   /// Creates a new `Server`.
   #[inline]
   pub fn new(id: I, addr: A, suffrage: ServerSuffrage) -> Self {
@@ -189,53 +189,63 @@ impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
 }
 
 /// The error type returned when encoding [`Membership`] to bytes or decoding a [`Membership`] from bytes.
-#[derive(thiserror::Error)]
-pub enum MembershipTransformableError<I: Id, A: Address> {
+#[derive(Debug)]
+pub enum MembershipTransformableError<I: Transformable, A: Transformable> {
   /// Returned when the encode or decode id fails.
-  #[error("id error: {0}")]
   Id(I::Error),
   /// Returned when the encode or decode address fails.
-  #[error("address error: {0}")]
   Address(A::Error),
-  #[error("the encoded size of id({0}) is too large")]
   IdTooLarge(I),
-  #[error("the encoded size of address({0}) is too large")]
   AddressTooLarge(A),
   /// Returned when the number of nodes is too large.
-  #[error("membership too large, too many servers({0})")]
   TooLarge(usize),
   /// Returned when the encode buffer is too small.
-  #[error("encode buffer too small")]
   EncodeBufferTooSmall,
   /// Returned when decode buffer has less data than expected.
-  #[error("corrupted")]
   Corrupted,
   /// Returned when the suffrage is unknown.
-  #[error("{0}")]
-  UnknownServerSuffrage(#[from] UnknownServerSuffrage),
-  #[error("{0}")]
-  Membership(#[from] MembershipError<I, A>),
+  UnknownServerSuffrage(UnknownServerSuffrage),
+  /// Returned when the membership is invalid.
+  Membership(MembershipError<I, A>),
 }
 
-impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> {
+impl<I: Display, A: Display> Display for MembershipTransformableError<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    core::fmt::Display::fmt(&self, f)
+    match self {
+      MembershipTransformableError::Id(e) => write!(f, "id error: {}", e),
+      MembershipTransformableError::Address(e) => write!(f, "address error: {}", e),
+      MembershipTransformableError::IdTooLarge(id) => {
+        write!(f, "the encoded size of id({}) is too large", id)
+      }
+      MembershipTransformableError::AddressTooLarge(addr) => {
+        write!(f, "the encoded size of address({}) is too large", addr)
+      }
+      MembershipTransformableError::TooLarge(size) => {
+        write!(f, "membership too large, too many servers({})", size)
+      }
+      MembershipTransformableError::EncodeBufferTooSmall => write!(f, "encode buffer too small"),
+      MembershipTransformableError::Corrupted => write!(f, "corrupted"),
+      MembershipTransformableError::UnknownServerSuffrage(e) => write!(f, "{}", e),
+      MembershipTransformableError::Membership(e) => write!(f, "{}", e),
+    }
   }
 }
 
+impl<I: Display + Debug, A: Display + Debug> std::error::Error for MembershipTransformableError<I, A> {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MembershipBuilder<I: Id, A: Address> {
+pub struct MembershipBuilder<I, A> {
   pub(crate) voters: usize,
   pub(crate) servers: IndexMap<I, (A, ServerSuffrage)>,
 }
 
-impl<I: Id, A: Address> Default for MembershipBuilder<I, A> {
+impl<I, A> Default for MembershipBuilder<I, A> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I: Id, A: Address> MembershipBuilder<I, A> {
+impl<I, A> MembershipBuilder<I, A> {
   /// Create a new membership.
   pub fn new() -> Self {
     Self {
@@ -253,6 +263,38 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     }
   }
 
+  /// Returns the quorum size based on the current membership.
+  pub const fn quorum_size(&self) -> usize {
+    (self.voters / 2) + 1
+  }
+
+  /// Returns an iterator over the membership
+  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
+    self.servers.iter()
+  }
+
+  /// Returns an iterator that allows modifying each value.
+  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
+    self.servers.iter_mut()
+  }
+
+  /// Returns the number of server in the membership, also referred to as its 'length'.
+  pub fn len(&self) -> usize {
+    self.servers.len()
+  }
+
+  /// Returns `true` if the membership contains no elements
+  pub fn is_empty(&self) -> bool {
+    self.servers.is_empty()
+  }
+
+  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
+  pub fn contains_voter(&self) -> bool {
+    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
+  }
+}
+
+impl<I: Id, A: Address> MembershipBuilder<I, A> {
   /// Finish building the membership.
   pub fn build(self) -> Result<Membership<I, A>, MembershipError<I, A>> {
     self.validate().map(|_| Membership {
@@ -262,11 +304,19 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     })
   }
 
-  /// Returns the quorum size based on the current membership.
-  pub const fn quorum_size(&self) -> usize {
-    (self.voters / 2) + 1
+  /// Validates a cluster membership configuration for common
+  /// errors.
+  fn validate(&self) -> Result<(), MembershipError<I, A>> {
+    self
+      .servers
+      .values()
+      .find(|s| s.1 == ServerSuffrage::Voter)
+      .ok_or(MembershipError::EmptyVoter)
+      .map(|_| {})
   }
+}
 
+impl<I: Eq + Hash, A> MembershipBuilder<I, A> {
   /// Inserts a new server into the membership.
   ///
   /// # Errors
@@ -303,37 +353,6 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     servers.try_for_each(|server| self.insert(server))
   }
 
-  /// Returns an iterator over the membership
-  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
-    self.servers.iter()
-  }
-
-  /// Returns an iterator that allows modifying each value.
-  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
-    self.servers.iter_mut()
-  }
-
-  /// Returns the number of server in the membership, also referred to as its 'length'.
-  pub fn len(&self) -> usize {
-    self.servers.len()
-  }
-
-  /// Returns `true` if the membership contains no elements
-  pub fn is_empty(&self) -> bool {
-    self.servers.is_empty()
-  }
-
-  /// Validates a cluster membership configuration for common
-  /// errors.
-  pub fn validate(&self) -> Result<(), MembershipError<I, A>> {
-    self
-      .servers
-      .values()
-      .find(|s| s.1 == ServerSuffrage::Voter)
-      .ok_or(MembershipError::EmptyVoter)
-      .map(|_| {})
-  }
-
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
   where
@@ -347,11 +366,6 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
       .unwrap_or_default()
   }
 
-  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
-  pub fn contains_voter(&self) -> bool {
-    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
-  }
-
   /// Returns true if the server identified by 'id' is in in the
   /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
@@ -362,18 +376,8 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     self.servers.contains_key(id)
   }
 
-  /// Returns true if the server address is in in the
-  /// provided [`Membership`].
-  pub fn contains_addr<Q>(&self, addr: &Q) -> bool
-  where
-    A: std::borrow::Borrow<Q>,
-    Q: ?Sized + Eq,
-  {
-    self.servers.values().any(|s| s.0.borrow() == addr)
-  }
-
   /// Remove a server from the membership and return its address and suffrage.
-  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
+  pub fn remove<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
   where
     I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
@@ -385,18 +389,30 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
   }
 }
 
+impl<I, A: Eq> MembershipBuilder<I, A> {
+  /// Returns true if the server address is in in the
+  /// provided [`Membership`].
+  pub fn contains_addr<Q>(&self, addr: &Q) -> bool
+  where
+    A: std::borrow::Borrow<Q>,
+    Q: ?Sized + Eq,
+  {
+    self.servers.values().any(|s| s.0.borrow() == addr)
+  }
+}
+
 /// Tracks which servers are in the cluster, and whether they have
 /// votes. This should include the local server, if it's a member of the cluster.
 /// The servers are listed no particular order, but each should only appear once.
 /// These entries are appended to the log during membership changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Membership<I: Id, A: Address> {
+pub struct Membership<I, A> {
   pub(crate) quorum_size: usize,
   pub(crate) voters: usize,
   pub(crate) servers: Arc<IndexMap<I, (A, ServerSuffrage)>>,
 }
 
-impl<I: Id, A: Address> core::fmt::Display for Membership<I, A> {
+impl<I: Display, A: Display> Display for Membership<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let len = self.servers.len();
     write!(f, "[")?;
@@ -766,7 +782,7 @@ impl<I: Id, A: Address> FromIterator<Server<I, A>>
   }
 }
 
-impl<I: Id, A: Address> Membership<I, A> {
+impl<I, A> Membership<I, A> {
   /// Returns the quorum size based on the current membership.
   #[inline]
   pub const fn quorum_size(&self) -> usize {
@@ -790,6 +806,13 @@ impl<I: Id, A: Address> Membership<I, A> {
     self.servers.is_empty()
   }
 
+  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
+  pub fn contains_voter(&self) -> bool {
+    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
+  }
+}
+
+impl<I: Eq + Hash, A> Membership<I, A> {
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
   where
@@ -803,11 +826,6 @@ impl<I: Id, A: Address> Membership<I, A> {
       .unwrap_or_default()
   }
 
-  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
-  pub fn contains_voter(&self) -> bool {
-    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
-  }
-
   /// Returns true if the server identified by 'id' is in in the
   /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
@@ -817,7 +835,9 @@ impl<I: Id, A: Address> Membership<I, A> {
   {
     self.servers.contains_key(id)
   }
+}
 
+impl<I, A: Eq> Membership<I, A> {
   /// Returns true if the server address is in in the
   /// provided [`Membership`].
   pub fn contains_addr<Q>(&self, addr: &Q) -> bool
@@ -827,7 +847,9 @@ impl<I: Id, A: Address> Membership<I, A> {
   {
     self.servers.values().any(|s| s.0.borrow() == addr)
   }
+}
 
+impl<I: Id, A: Address> Membership<I, A> {
   /// Generates a new [`Membership`] from the current one and a
   /// [`MembershipChangeCommand`]. It's split from append_membership_entry so
   /// that it can be unit tested easily.
@@ -953,27 +975,36 @@ impl<I: Id, A: Address> Memberships<I, A> {
   }
 }
 
-#[derive(PartialEq, Eq, thiserror::Error)]
-pub enum MembershipError<I: Id, A: Address> {
-  #[error("found duplicate server address {0}")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum MembershipError<I, A> {
   DuplicateAddress(A),
-  #[error("found duplicate server id {0}")]
   DuplicateId(I),
-  #[error("server id cannot be empty")]
   EmptyServerId,
-  #[error("no voter in the membership")]
   EmptyVoter,
-  #[error("membership changed since {since} (latest is {latest})")]
   AlreadyChanged { since: u64, latest: u64 },
-  #[error("membership is empty")]
   Empty,
 }
 
-impl<I: Id, A: Address> core::fmt::Debug for MembershipError<I, A> {
+impl<I: Display, A: Display> core::fmt::Display for MembershipError<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    core::fmt::Display::fmt(&self, f)
+    match self {
+      MembershipError::DuplicateAddress(addr) => {
+        write!(f, "found duplicate server address {}", addr)
+      }
+      MembershipError::DuplicateId(id) => write!(f, "found duplicate server id {}", id),
+      MembershipError::EmptyServerId => write!(f, "server id cannot be empty"),
+      MembershipError::EmptyVoter => write!(f, "no voter in the membership"),
+      MembershipError::AlreadyChanged { since, latest } => write!(
+        f,
+        "membership changed since {} (latest is {})",
+        since, latest
+      ),
+      MembershipError::Empty => write!(f, "membership is empty"),
+    }
   }
 }
+
+impl<I: Display + Debug, A: Display + Debug> std::error::Error for MembershipError<I, A> {}
 
 #[cfg(test)]
 mod tests {

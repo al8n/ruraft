@@ -50,7 +50,7 @@ pub struct Header<I, A> {
   from: Node<I, A>,
 }
 
-impl<I: Id, A: Address> Header<I, A> {
+impl<I, A> Header<I, A> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
   pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
@@ -76,7 +76,7 @@ impl<I, A> From<(ProtocolVersion, Node<I, A>)> for Header<I, A> {
 #[viewit::viewit]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AppendEntriesRequest<I: Id, A: Address, D: Data> {
+pub struct AppendEntriesRequest<I, A, D: Data> {
   /// The header of the request
   #[viewit(getter(const))]
   header: Header<I, A>,
@@ -603,30 +603,6 @@ impl<I: Id, A: Address> Response<I, A> {
       Self::Error(res) => res.header(),
     }
   }
-
-  // pub fn encode(&self) -> io::Result<Vec<u8>> {
-  //   match self.protocol_version {
-  //     ProtocolVersion::V1 => {
-  //       const OFFSET: usize =
-  //         mem::size_of::<CommandKind>() + mem::size_of::<ProtocolVersion>() + mem::size_of::<u32>();
-
-  //       match &self.kind {
-  //         Response::AppendEntries(res) => {
-  //           encode!(v1::res { CommandResponse::AppendEntries as u8 })
-  //         }
-  //         Response::Vote(res) => encode!(v1::res { CommandResponse::Vote as u8 }),
-  //         Response::InstallSnapshot(res) => {
-  //           encode!(v1::res { CommandResponse::InstallSnapshot as u8 })
-  //         }
-  //         Response::TimeoutNow(res) => {
-  //           encode!(v1::res { CommandResponse::TimeoutNow as u8 })
-  //         }
-  //         Response::Heartbeat(res) => encode!(v1::res { CommandResponse::Heartbeat as u8 }),
-  //         Response::Error(res) => encode!(v1::res { CommandResponse::Err as u8 }),
-  //       }
-  //     }
-  //   }
-  // }
 }
 
 /// Errors returned by the [`RpcHandle`].
@@ -664,6 +640,14 @@ impl<I: Id, A: Address> Future for RpcHandle<I, A> {
       Err(e) => Err(From::from(e)),
     })
   }
+}
+
+pub enum RpcKind<I, A, D, R> {
+  AppendEntries(AppendEntriesRequest<I, A, D>),
+  Vote(VoteRequest<I, A>),
+  InstallSnapshot(InstallSnapshotRequest<I, A>),
+  TimeoutNow(TimeoutNowRequest<I, A>),
+  Heartbeat(HeartbeatRequest<I, A>),
 }
 
 /// The struct is used to interact with the Raft.

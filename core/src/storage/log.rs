@@ -41,7 +41,7 @@ impl<I: Id, A: Address> MembershipLog<I, A> {
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
-pub enum LogKind<I: Id, A: Address, D: Data> {
+pub enum LogKind<I, A, D> {
   /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   Data(Arc<D>),
   /// Used to assert leadership.
@@ -57,7 +57,7 @@ pub enum LogKind<I: Id, A: Address, D: Data> {
   Membership(Membership<I, A>),
 }
 
-impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
+impl<I, A, D> Clone for LogKind<I, A, D> {
   fn clone(&self) -> Self {
     match self {
       Self::Data(data) => Self::Data(data.clone()),
@@ -75,7 +75,7 @@ impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
 #[viewit::viewit(vis_all = "pub(crate)", getters(vis_all = "pub"), setters(skip))]
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Log<I: Id, A: Address, D: Data> {
+pub struct Log<I, A, D> {
   /// Holds the kind of the log entry.
   #[viewit(
     getter(
