@@ -46,7 +46,7 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
 
 pub enum FinateStateMachineLogKind<I: Id, A: Address, D: Data> {
   Log(Arc<D>),
-  Membership(Arc<Membership<I, A>>),
+  Membership(Membership<I, A>),
 }
 
 pub struct FinateStateMachineLog<I: Id, A: Address, D: Data> {
