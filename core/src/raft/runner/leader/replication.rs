@@ -831,9 +831,12 @@ where
 
 struct PipelineDecodeRunner<F: FinateStateMachine, S: Storage, T: Transport, C>
 where
-  C: Stream<Item = PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>>
-    + Send
-    + Unpin,
+  C: Stream<
+      Item = Result<
+        PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
+        T::Error,
+      >,
+    > + Send,
 {
   peer: Arc<ArcSwap<Node<T::Id, <T::Resolver as AddressResolver>::Address>>>,
   consumer: C,
@@ -853,14 +856,17 @@ where
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
   <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   <<T::Runtime as Runtime>::Sleep as Future>::Output: Send,
-  C: Stream<Item = PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>>
-    + Send
-    + Unpin,
+  C: Stream<
+      Item = Result<
+        PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
+        T::Error,
+      >,
+    > + Send,
 {
   async fn run(self) {
     let Self {
       peer,
-      mut consumer,
+      consumer,
       notify,
       next_index,
       commitment,
@@ -871,11 +877,13 @@ where
     } = self;
     scopeguard::defer!(let _ = finish_tx.close(););
 
+    futures::pin_mut!(consumer);
+
     loop {
       futures::select! {
         resp = consumer.next().fuse() => {
           match resp {
-            Some(resp) => {
+            Some(Ok(resp)) => {
               let remote = peer.load_full();
 
               #[cfg(feature = "metrics")]
@@ -902,6 +910,9 @@ where
               // Update our replication state
               ReplicationRunner::<F, S, T>::update_last_appended(remote.id(), &next_index, &commitment, &notify, resp.highest_log_index()).await;
 
+            },
+            Some(Err(e)) => {
+              todo!()
             }
             None => {
               tracing::error!(target = "ruraft.repl", err="pipeline closed", "failed to get next item from pipeline");

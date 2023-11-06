@@ -92,7 +92,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   R: Runtime,
 {
   pub(super) fsm: F,

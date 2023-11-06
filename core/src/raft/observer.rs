@@ -62,8 +62,14 @@ impl<I: CheapClone, A: CheapClone> CheapClone for Observed<I, A> {
   fn cheap_clone(&self) -> Self {
     match self {
       Self::Leader(l) => Self::Leader(l.cheap_clone()),
-      Self::Peer { id, removed } => Self::Peer { id: id.cheap_clone(), removed: *removed },
-      Self::HeartbeatFailed { id, last_contact } => Self::HeartbeatFailed { id: id.cheap_clone(), last_contact: *last_contact },
+      Self::Peer { id, removed } => Self::Peer {
+        id: id.cheap_clone(),
+        removed: *removed,
+      },
+      Self::HeartbeatFailed { id, last_contact } => Self::HeartbeatFailed {
+        id: id.cheap_clone(),
+        last_contact: *last_contact,
+      },
       Self::HeartbeatResumed(h) => Self::HeartbeatResumed(h.cheap_clone()),
       Self::Role(r) => Self::Role(*r),
       Self::RequestVote(req) => Self::RequestVote(req.cheap_clone()),

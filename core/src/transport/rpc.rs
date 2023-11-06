@@ -67,6 +67,16 @@ impl<I, A> Header<I, A> {
       from: Node::new(id, addr),
     }
   }
+
+  #[inline]
+  pub fn addr(&self) -> &A {
+    self.from.addr()
+  }
+
+  #[inline]
+  pub fn id(&self) -> &I {
+    self.from.id()
+  }
 }
 
 impl<I, A> From<(ProtocolVersion, Node<I, A>)> for Header<I, A> {
@@ -239,7 +249,6 @@ impl<I: CheapClone, A: CheapClone> CheapClone for VoteRequest<I, A> {
   }
 }
 
-
 /// The command used by a candidate to ask a Raft peer
 /// for a vote in an election.
 #[viewit::viewit]
@@ -309,7 +318,6 @@ pub struct InstallSnapshotRequest<I, A> {
   /// Size of the snapshot
   size: u64,
 }
-
 
 /// The response returned from an
 /// [`InstallSnapshotRequest`].

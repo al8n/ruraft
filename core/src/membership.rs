@@ -8,7 +8,7 @@ use std::{
 
 use arc_swap::ArcSwapAny;
 use indexmap::IndexMap;
-use nodecraft::{Transformable, CheapClone};
+use nodecraft::{CheapClone, Transformable};
 
 use crate::{
   transport::{Address, Id},

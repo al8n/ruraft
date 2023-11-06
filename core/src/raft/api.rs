@@ -982,7 +982,7 @@ pub struct RaftStats<I, A> {
 impl<I, A> serde::Serialize for RaftStats<I, A>
 where
   I: Eq + core::hash::Hash + serde::Serialize,
-  A: serde::Serialize
+  A: serde::Serialize,
 {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where

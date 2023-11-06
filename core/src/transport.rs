@@ -120,14 +120,11 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Specifies potential errors that can occur within the pipeline.
   type Error: std::error::Error + Send + Sync + 'static;
 
-  /// The runtime environment or context in which the transport operations occur.
-  type Runtime: Runtime;
-
   /// Unique identifier associated with nodes.
-  type Id: Id;
+  type Id: Id + Send + Sync + 'static;
 
   /// Network address representation of nodes.
-  type Address: Address;
+  type Address: Address + Send + Sync + 'static;
 
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;
@@ -142,7 +139,9 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Retrieves a stream for consuming response futures once they are ready.
   fn consumer(
     &self,
-  ) -> impl Stream<Item = PipelineAppendEntriesResponse<Self::Id, Self::Address>> + Send + Unpin + 'static;
+  ) -> impl Stream<Item = Result<PipelineAppendEntriesResponse<Self::Id, Self::Address>, Self::Error>>
+       + Send
+       + 'static;
 
   /// Asynchronously appends entries to the target node and returns the associated response.
   fn append_entries(
@@ -198,7 +197,6 @@ pub trait Transport: Send + Sync + 'static {
   /// utilizing bandwidth.
   type Pipeline: AppendEntriesPipeline<
     Error = Self::Error,
-    Runtime = Self::Runtime,
     Id = Self::Id,
     Address = <Self::Resolver as AddressResolver>::Address,
     Data = Self::Data,
@@ -208,7 +206,11 @@ pub trait Transport: Send + Sync + 'static {
   type Resolver: AddressResolver<Runtime = Self::Runtime>;
 
   /// Mechanism to encode and decode data for network transmission.
-  type Wire: Wire<Id = Self::Id, Address = <Self::Resolver as AddressResolver>::Address>;
+  type Wire: Wire<
+    Id = Self::Id,
+    Address = <Self::Resolver as AddressResolver>::Address,
+    Data = Self::Data,
+  >;
 
   /// Consumes and responds to incoming RPC requests.
   fn consumer(

@@ -1,50 +1,162 @@
-// // use agnostic::Runtime;
-// // use ruraft_core::transport::AppendEntriesPipeline;
+use std::{
+  pin::Pin,
+  task::{Context, Poll},
+};
 
-// // pub struct NetAppendEntriesPipeline<R: Runtime> {
-// //   _marker: std::marker::PhantomData<R>,
-// // }
+use futures::channel::oneshot;
 
-// // impl<R: Runtime> NetAppendEntriesPipeline<R> {
-// //   pub fn new() -> Self {
-// //     Self {
-// //       _marker: std::marker::PhantomData,
-// //     }
-// //   }
-// // }
+use super::*;
 
-// // impl<R: Runtime> AppendEntriesPipeline for NetAppendEntriesPipeline<R> {
+pub struct NetAppendEntriesPipeline<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  I::Error: Send + Sync + 'static,
+  A: AddressResolver + Send + Sync + 'static,
+  A::Address: Send + Sync + 'static,
+  A::Error: Send + Sync + 'static,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+{
+  conn: S::Stream,
+  max_inflight: usize,
+  target: Node<I, A::Address>,
+  inprogress_tx: async_channel::Sender<
+    oneshot::Sender<Result<PipelineAppendEntriesResponse<I, A::Address>, super::Error<I, A, W>>>,
+  >,
+  finish_rx: async_channel::Receiver<
+    Result<PipelineAppendEntriesResponse<I, A::Address>, super::Error<I, A, W>>,
+  >,
+  shutdown: AtomicBool,
+  shutdown_tx: async_channel::Sender<()>,
+}
 
-// // }
+impl<I, A, D, S, W> NetAppendEntriesPipeline<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  I::Error: Send + Sync + 'static,
+  A: AddressResolver + Send + Sync + 'static,
+  A::Address: Send + Sync + 'static,
+  A::Error: Send + Sync + 'static,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+{
+  pub(super) fn new(target: Node<I, A::Address>, conn: S::Stream, max_inflight: usize) -> Self {
+    if max_inflight < super::MIN_IN_FLIGHT_FOR_PIPELINING {
+      panic!("pipelining makes no sense if max_inflight < 2");
+    }
+    let (shutdown_tx, _shutdown_rx) = async_channel::bounded(1);
+    let (inprogress_tx, _inprogress_rx) = async_channel::bounded(max_inflight - 2);
+    let (_finish_tx, finish_rx) = async_channel::bounded(max_inflight - 2);
 
-// use std::{
-//   pin::Pin,
-//   task::{Context, Poll},
-// };
+    Self {
+      target,
+      conn,
+      max_inflight,
+      inprogress_tx,
+      finish_rx,
+      shutdown: AtomicBool::new(false),
+      shutdown_tx,
+    }
+  }
+}
 
-// use super::*;
+impl<I, A, D, S, W> AppendEntriesPipeline for NetAppendEntriesPipeline<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
+  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+{
+  type Error = super::Error<I, A, W>;
 
-// pub struct NetAppendEntriesPipeline<I: Id, A: Address> {}
+  type Id = I;
 
-// pub struct NetAppendFuture<I: Id, A: Address> {
-//   start: Instant,
-//   req: AppendEntriesRequest<I, A>,
-// }
+  type Address = A::Address;
 
-// impl<I: Id, A: Address> Future for NetAppendFuture<I, A> {
-//   type Output = std::io::Result<AppendEntriesResponse<I, A>>;
+  type Data = D;
 
-//   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-//     todo!()
-//   }
-// }
+  type Response = NetAppendEntriesPipelineFuture<Self::Id, A, Self::Data, S, W>;
 
-// impl<I: Id, A: Address> AppendFuture for NetAppendFuture<I, A> {
-//   type Id = I;
+  fn consumer(
+    &self,
+  ) -> impl futures::Stream<
+    Item = Result<PipelineAppendEntriesResponse<Self::Id, Self::Address>, Self::Error>,
+  > + Send
+       + 'static {
+    self.finish_rx.clone()
+  }
 
-//   type Address = A;
+  async fn append_entries(
+    &self,
+    _req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
+  ) -> Result<Self::Response, Self::Error> {
+    todo!()
+  }
 
-//   fn start(&self) -> std::time::Instant {
-//     self.start
-//   }
-// }
+  async fn close(self) -> Result<(), Self::Error> {
+    todo!()
+  }
+}
+
+#[pin_project::pin_project]
+pub struct NetAppendEntriesPipelineFuture<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  A: AddressResolver,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+{
+  start: Instant,
+  #[pin]
+  rx: oneshot::Receiver<Result<PipelineAppendEntriesResponse<I, A>, super::Error<I, A, W>>>,
+  _marker: std::marker::PhantomData<S>,
+}
+
+impl<I, A, D, S, W> Future for NetAppendEntriesPipelineFuture<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  A: AddressResolver,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+{
+  type Output = Result<PipelineAppendEntriesResponse<I, A::Address>, super::Error<I, A, W>>;
+
+  fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+    // self.project().rx.poll(cx).map_err(|e| {
+    //   Err(Error::AlreadyShutdown)
+    // })
+    todo!()
+  }
+}
+
+impl<I, A, D, S, W> AppendEntriesPipelineFuture for NetAppendEntriesPipelineFuture<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
+  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+{
+  type Id = I;
+
+  type Address = A::Address;
+
+  type Pipeline = NetAppendEntriesPipeline<I, A, D, S, W>;
+
+  fn start(&self) -> std::time::Instant {
+    self.start
+  }
+}

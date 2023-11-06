@@ -1,7 +1,7 @@
 use std::{borrow::Cow, future::Future, sync::Arc};
 
 use futures::AsyncRead;
-use nodecraft::{Address, Id, CheapClone};
+use nodecraft::{Address, CheapClone, Id};
 
 use crate::{membership::Membership, storage::SnapshotSink, Data};
 

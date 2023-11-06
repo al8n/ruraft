@@ -607,7 +607,9 @@ const CRC_SIZE: usize = mem::size_of::<u64>();
 impl<I, A> Transformable for FileSnapshotMeta<I, A>
 where
   I: Id + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
   A: Address + Send + Sync + 'static,
+  <A as Transformable>::Error: Send + Sync + 'static,
 {
   type Error = <SnapshotMeta<I, A> as Transformable>::Error;
 

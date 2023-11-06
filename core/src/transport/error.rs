@@ -34,6 +34,9 @@ pub trait TransportError: std::error::Error + From<std::io::Error> + Send + Sync
   /// Constructs an error resulting from IO operations within the transport.
   fn io(err: std::io::Error) -> Self;
 
+  /// Returns `true` if the transport's inability to replicate the logs in pipeline mode.
+  fn is_pipeline_replication_not_supported(&self) -> bool;
+
   /// With extra message to explain the error.
   fn with_message(self, msg: Cow<'static, str>) -> Self;
 

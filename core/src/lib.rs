@@ -32,6 +32,8 @@ pub mod utils;
 #[cfg(feature = "metrics")]
 mod metrics;
 
+pub use nodecraft::CheapClone;
+
 /// A trait for the data type that can be used as the user data of the Raft.
 pub trait Data: Transformable + Send + Sync + 'static {}
 

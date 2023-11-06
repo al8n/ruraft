@@ -33,7 +33,6 @@ use crate::{
   FinateStateMachineSnapshot,
 };
 
-
 #[cfg(feature = "metrics")]
 use crate::metrics::SaturationMetric;
 
@@ -1004,4 +1003,3 @@ pub(crate) fn spawn_local<R: Runtime, F: std::future::Future + Send + 'static>(
     wg.done();
   });
 }
-
