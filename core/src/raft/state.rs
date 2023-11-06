@@ -7,7 +7,7 @@ use std::{
 };
 
 use atomic::Atomic;
-use nodecraft::{resolver::AddressResolver, Address, Id};
+use nodecraft::{resolver::AddressResolver, CheapClone};
 use parking_lot::Mutex;
 
 use crate::{
@@ -110,7 +110,7 @@ impl State {
     self.role.load(Ordering::SeqCst)
   }
 
-  pub(crate) async fn set_role<I: Id, A: Address>(
+  pub(crate) async fn set_role<I: CheapClone, A: CheapClone>(
     &self,
     role: Role,
     observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,

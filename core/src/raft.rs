@@ -15,6 +15,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
 use futures::channel::oneshot;
+use nodecraft::CheapClone;
 use wg::AsyncWaitGroup;
 
 use crate::{
@@ -27,10 +28,11 @@ use crate::{
   storage::{
     Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
   },
-  transport::{Address, AddressResolver, Id, Transport},
+  transport::{AddressResolver, Transport},
   FinateStateMachineError, FinateStateMachineLog, FinateStateMachineLogKind,
   FinateStateMachineSnapshot,
 };
+
 
 #[cfg(feature = "metrics")]
 use crate::metrics::SaturationMetric;
@@ -53,17 +55,32 @@ pub use state::*;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Node<I, A>(Arc<(I, A)>);
+pub struct Node<I, A> {
+  id: I,
+  addr: A,
+}
 
-impl<I, A> Clone for Node<I, A> {
+impl<I: Clone, A: Clone> Clone for Node<I, A> {
   fn clone(&self) -> Self {
-    Self(self.0.clone())
+    Self {
+      id: self.id.clone(),
+      addr: self.addr.clone(),
+    }
+  }
+}
+
+impl<I: CheapClone, A: CheapClone> CheapClone for Node<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self {
+      id: self.id.cheap_clone(),
+      addr: self.addr.cheap_clone(),
+    }
   }
 }
 
 impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}({})", self.0 .0, self.0 .1)
+    write!(f, "{}({})", self.id, self.addr)
   }
 }
 
@@ -71,18 +88,18 @@ impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]
   pub fn id(&self) -> &I {
-    &self.0 .0
+    &self.id
   }
 
   /// Returns the address of the leader.
   #[inline]
   pub fn addr(&self) -> &A {
-    &self.0 .1
+    &self.addr
   }
 
   #[inline]
   pub fn new(id: I, addr: A) -> Self {
-    Self(Arc::new((id, addr)))
+    Self { id, addr }
   }
 }
 
@@ -135,20 +152,33 @@ impl OptionalContact {
   }
 }
 
-struct Leader<I: Id, A: Address>(Arc<ArcSwapOption<Node<I, A>>>);
+struct Leader<I, A>(Arc<ArcSwapOption<Node<I, A>>>);
 
-impl<I: Id, A: Address> Clone for Leader<I, A> {
+impl<I, A> Clone for Leader<I, A> {
   fn clone(&self) -> Self {
     Self(self.0.clone())
   }
 }
 
-impl<I: Id, A: Address> Leader<I, A> {
+impl<I, A> CheapClone for Leader<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self(self.0.cheap_clone())
+  }
+}
+
+impl<I, A> Leader<I, A> {
   #[inline]
   fn none() -> Self {
     Self(Arc::new(ArcSwapOption::new(None)))
   }
 
+  #[inline]
+  fn load(&self) -> arc_swap::Guard<Option<Arc<Node<I, A>>>> {
+    self.0.load()
+  }
+}
+
+impl<I: CheapClone + PartialEq, A: CheapClone + PartialEq> Leader<I, A> {
   async fn set(
     &self,
     leader: Option<Node<I, A>>,
@@ -170,11 +200,6 @@ impl<I: Id, A: Address> Leader<I, A> {
         }
       }
     }
-  }
-
-  #[inline]
-  fn load(&self) -> arc_swap::Guard<Option<Arc<Node<I, A>>>> {
-    self.0.load()
   }
 }
 
@@ -204,7 +229,7 @@ impl Shutdown {
     self.shutdown.load(Ordering::Acquire)
   }
 
-  async fn shutdown<I: Id, A: Address>(
+  async fn shutdown<I: CheapClone, A: CheapClone>(
     &self,
     state: &State,
     observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
@@ -979,3 +1004,4 @@ pub(crate) fn spawn_local<R: Runtime, F: std::future::Future + Send + 'static>(
     wg.done();
   });
 }
+

@@ -1,4 +1,5 @@
 mod snapshot;
+use nodecraft::CheapClone;
 pub use snapshot::*;
 mod log;
 pub use log::*;
@@ -88,9 +89,9 @@ pub trait Storage: Send + Sync + 'static {
   type Error: StorageError<Stable = Self::Stable, Snapshot = Self::Snapshot, Log = Self::Log>;
 
   /// The id type used to identify nodes.
-  type Id: Id;
+  type Id: Id + CheapClone + Send + Sync + 'static;
   /// The address type of node.
-  type Address: Address;
+  type Address: Address + CheapClone + Send + Sync + 'static;
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;
 

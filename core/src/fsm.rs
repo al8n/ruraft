@@ -1,7 +1,7 @@
 use std::{borrow::Cow, future::Future, sync::Arc};
 
 use futures::AsyncRead;
-use nodecraft::{Address, Id};
+use nodecraft::{Address, Id, CheapClone};
 
 use crate::{membership::Membership, storage::SnapshotSink, Data};
 
@@ -44,18 +44,18 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
   fn index(&self) -> u64;
 }
 
-pub enum FinateStateMachineLogKind<I: Id, A: Address, D: Data> {
+pub enum FinateStateMachineLogKind<I, A, D> {
   Log(Arc<D>),
   Membership(Membership<I, A>),
 }
 
-pub struct FinateStateMachineLog<I: Id, A: Address, D: Data> {
+pub struct FinateStateMachineLog<I, A, D> {
   pub index: u64,
   pub term: u64,
   pub kind: FinateStateMachineLogKind<I, A, D>,
 }
 
-impl<I: Id, A: Address, D: Data> FinateStateMachineLog<I, A, D> {
+impl<I, A, D> FinateStateMachineLog<I, A, D> {
   pub fn new(term: u64, index: u64, kind: FinateStateMachineLogKind<I, A, D>) -> Self {
     Self { index, term, kind }
   }
@@ -76,10 +76,10 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   type Response: FinateStateMachineResponse;
 
   /// The id type used to identify nodes.
-  type Id: Id + Send + Sync + 'static;
+  type Id: Id + CheapClone + Send + Sync + 'static;
 
   /// The address type of node.
-  type Address: Address + Send + Sync + 'static;
+  type Address: Address + CheapClone + Send + Sync + 'static;
 
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
   type Data: Data;

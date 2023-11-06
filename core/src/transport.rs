@@ -4,6 +4,7 @@ use agnostic::Runtime;
 use futures::{AsyncRead, Stream};
 
 mod rpc;
+use nodecraft::CheapClone;
 pub use rpc::*;
 
 mod error;
@@ -188,7 +189,7 @@ pub trait Transport: Send + Sync + 'static {
   type Options: Send + Sync + 'static;
 
   /// Unique identifier for nodes.
-  type Id: Id + Send + Sync + 'static;
+  type Id: Id + CheapClone + Send + Sync + 'static;
 
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;

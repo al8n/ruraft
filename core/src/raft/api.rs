@@ -8,7 +8,7 @@ use std::{
 
 use agnostic::Runtime;
 use futures::{channel::oneshot, future::Either, Stream};
-use nodecraft::{resolver::AddressResolver, Address, Id};
+use nodecraft::resolver::AddressResolver;
 
 use crate::{
   error::Error,
@@ -959,7 +959,7 @@ where
 /// The information about the current stats of the Raft node.
 #[viewit::viewit(vis_all = "", getters(vis_all = "pub"), setters(skip))]
 #[derive(Clone)]
-pub struct RaftStats<I: Id, A: Address> {
+pub struct RaftStats<I, A> {
   role: Role,
   term: u64,
   last_log_index: u64,
@@ -979,10 +979,10 @@ pub struct RaftStats<I: Id, A: Address> {
 }
 
 #[cfg(feature = "serde")]
-impl<I: Id, A: Address> serde::Serialize for RaftStats<I, A>
+impl<I, A> serde::Serialize for RaftStats<I, A>
 where
-  I: serde::Serialize,
-  A: serde::Serialize,
+  I: Eq + core::hash::Hash + serde::Serialize,
+  A: serde::Serialize
 {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
@@ -1011,7 +1011,7 @@ where
     }
 
     #[derive(serde::Serialize)]
-    struct RaftStatsHelper<I: Id, A: Address> {
+    struct RaftStatsHelper<I, A> {
       role: Role,
       term: u64,
       last_log_index: u64,
@@ -1025,12 +1025,13 @@ where
       snapshot_version: SnapshotVersion,
       #[serde(serialize_with = "serde_instant")]
       last_contact: InstantSerdeHelper,
+      #[serde(bound = "I: Eq + ::core::hash::Hash + serde::Serialize, A: serde::Serialize")]
       latest_membership: Membership<I, A>,
       latest_membership_index: u64,
       num_peers: u64,
     }
 
-    impl<I: Id, A: Address> From<&RaftStats<I, A>> for RaftStatsHelper<I, A> {
+    impl<I, A> From<&RaftStats<I, A>> for RaftStatsHelper<I, A> {
       fn from(value: &RaftStats<I, A>) -> Self {
         let instant = InstantSerdeHelper {
           role: value.role,
@@ -1062,22 +1063,13 @@ where
 }
 
 /// The latest membership in use by Raft, the membership may not yet be committed.
-#[derive(PartialEq, Eq)]
-pub struct LatestMembership<I: Id, A: Address> {
+#[derive(Clone)]
+pub struct LatestMembership<I, A> {
   index: u64,
   membership: Membership<I, A>,
 }
 
-impl<I: Id, A: Address> Clone for LatestMembership<I, A> {
-  fn clone(&self) -> Self {
-    Self {
-      index: self.index,
-      membership: self.membership.clone(),
-    }
-  }
-}
-
-impl<I: Id, A: Address> LatestMembership<I, A> {
+impl<I, A> LatestMembership<I, A> {
   /// Returns the index of the latest membership in use by Raft.
   pub fn index(&self) -> u64 {
     self.index

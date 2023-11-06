@@ -43,7 +43,7 @@ impl SnapshotId {
   }
 }
 
-impl<I: Id, A: Address> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
+impl<I, A> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
   fn eq(&self, other: &SnapshotId) -> bool {
     self.index == other.index && self.term == other.term && self.timestamp == other.timestamp
   }
@@ -56,7 +56,7 @@ impl<I: Id, A: Address> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
 )]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SnapshotMeta<I: Id, A: Address> {
+pub struct SnapshotMeta<I, A> {
   /// The version number of the snapshot metadata. This does not cover
   /// the application's data in the snapshot, that should be versioned
   /// separately.
@@ -73,12 +73,18 @@ pub struct SnapshotMeta<I: Id, A: Address> {
   membership_index: u64,
   /// Membership at the time of the snapshot.
   #[viewit(getter(style = "ref", const))]
+  #[cfg_attr(
+    feature = "serde",
+    serde(
+      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
+    )
+  )]
   membership: Membership<I, A>,
 }
 
 const META_FIXED_FIELDS_SIZE: usize = mem::size_of::<SnapshotVersion>() + 5 * mem::size_of::<u64>();
 
-impl<I: Id, A: Address> SnapshotMeta<I, A> {
+impl<I, A> SnapshotMeta<I, A> {
   /// Create a snapshot meta with a [`Membership`](crate::membership::Membership), and keep
   /// other fields as default.
   #[inline]
@@ -108,8 +114,8 @@ impl<I: Id, A: Address> SnapshotMeta<I, A> {
   }
 }
 
-#[derive(thiserror::Error)]
-pub enum SnapshotMetaTransformableError<I: Id, A: Address> {
+#[derive(Debug, thiserror::Error)]
+pub enum SnapshotMetaTransformableError<I: Transformable, A: Transformable> {
   #[error(
     "encode buffer too small, use `Transformable::encoded_len()` to pre-allocate the required size"
   )]
@@ -124,18 +130,14 @@ pub enum SnapshotMetaTransformableError<I: Id, A: Address> {
   Custom(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
-impl<I: Id, A: Address> core::fmt::Debug for SnapshotMetaTransformableError<I, A> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    core::fmt::Display::fmt(&self, f)
-  }
-}
-
 const U64_SIZE: usize = mem::size_of::<u64>();
 
 impl<I, A> Transformable for SnapshotMeta<I, A>
 where
   I: Id + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
   A: Address + Send + Sync + 'static,
+  <A as Transformable>::Error: Send + Sync + 'static,
 {
   type Error = SnapshotMetaTransformableError<I, A>;
 
@@ -185,7 +187,10 @@ where
   async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
     &self,
     writer: &mut W,
-  ) -> std::io::Result<()> {
+  ) -> std::io::Result<()>
+  where
+    Self::Error: Send + Sync + 'static,
+  {
     use futures::AsyncWriteExt;
 
     let mut buf = [0; META_FIXED_FIELDS_SIZE];
@@ -290,6 +295,7 @@ where
   ) -> std::io::Result<(usize, Self)>
   where
     Self: Sized,
+    Self::Error: Send + Sync + 'static,
   {
     use futures::AsyncReadExt;
 

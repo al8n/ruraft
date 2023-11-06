@@ -9,7 +9,7 @@ use std::{
 
 use agnostic::Runtime;
 use futures::{future::join_all, FutureExt, Stream};
-use nodecraft::{resolver::AddressResolver, Address, Id};
+use nodecraft::{resolver::AddressResolver, CheapClone};
 
 use crate::{
   sidecar::Sidecar,
@@ -43,7 +43,7 @@ impl core::fmt::Debug for ObserverId {
 
 /// Observation-specific data
 #[derive(Clone)]
-pub enum Observed<I: Id, A: Address> {
+pub enum Observed<I, A> {
   /// Used for the data when leadership changes.
   Leader(Option<Node<I, A>>),
   /// Sent to observers when peers change.
@@ -58,7 +58,20 @@ pub enum Observed<I: Id, A: Address> {
   RequestVote(VoteRequest<I, A>),
 }
 
-struct Inner<I: Id, A: Address> {
+impl<I: CheapClone, A: CheapClone> CheapClone for Observed<I, A> {
+  fn cheap_clone(&self) -> Self {
+    match self {
+      Self::Leader(l) => Self::Leader(l.cheap_clone()),
+      Self::Peer { id, removed } => Self::Peer { id: id.cheap_clone(), removed: *removed },
+      Self::HeartbeatFailed { id, last_contact } => Self::HeartbeatFailed { id: id.cheap_clone(), last_contact: *last_contact },
+      Self::HeartbeatResumed(h) => Self::HeartbeatResumed(h.cheap_clone()),
+      Self::Role(r) => Self::Role(*r),
+      Self::RequestVote(req) => Self::RequestVote(req.cheap_clone()),
+    }
+  }
+}
+
+struct Inner<I, A> {
   // numObserved and numDropped are performance counters for this observer.
   num_observed: AtomicU64,
   num_dropped: AtomicU64,
@@ -75,7 +88,7 @@ struct Inner<I: Id, A: Address> {
 
 /// Observer describes what to do with a given observation.
 #[derive(Clone)]
-pub struct Observer<I: Id, A: Address> {
+pub struct Observer<I, A> {
   inner: Arc<Inner<I, A>>,
 
   /// blocking, if true, will cause Raft to block when sending an observation
@@ -86,7 +99,7 @@ pub struct Observer<I: Id, A: Address> {
   id: ObserverId,
 }
 
-impl<I: Id, A: Address> Observer<I, A> {
+impl<I, A> Observer<I, A> {
   /// Returns the id of the [`Observer`].
   #[inline]
   pub const fn id(&self) -> ObserverId {
@@ -118,13 +131,13 @@ impl<I: Id, A: Address> Observer<I, A> {
 /// Observable is kind of a mpmc receiver, used to receive [`Observation`]s from an [`Observer`].
 #[pin_project::pin_project]
 #[derive(Clone)]
-pub struct Observable<I: Id, A: Address> {
+pub struct Observable<I, A> {
   #[pin]
   rx: async_channel::Receiver<Observed<I, A>>,
   id: ObserverId,
 }
 
-impl<I: Id, A: Address> Observable<I, A> {
+impl<I, A> Observable<I, A> {
   /// Returns the id of the parent [`Observer`].
   ///
   /// This id can be used to deregister the observer from the [`RaftCore`].
@@ -144,7 +157,7 @@ impl<I: Id, A: Address> Observable<I, A> {
   }
 }
 
-impl<I: Id, A: Address> Stream for Observable<I, A> {
+impl<I, A> Stream for Observable<I, A> {
   type Item = <async_channel::Receiver<Observed<I, A>> as Stream>::Item;
 
   fn poll_next(
@@ -231,7 +244,7 @@ where
   }
 }
 
-pub(crate) async fn observe<I: Id, A: Address>(
+pub(crate) async fn observe<I: CheapClone, A: CheapClone>(
   observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
   o: Observed<I, A>,
 ) {
@@ -245,7 +258,7 @@ pub(crate) async fn observe<I: Id, A: Address>(
       .filter_map(|(_, or)| match or.inner.filter.as_ref() {
         Some(f) if !f(&o) => None,
         _ => {
-          let o = o.clone();
+          let o = o.cheap_clone();
           Some(async move {
             if or.blocking {
               match or.inner.tx.send(o).await {
