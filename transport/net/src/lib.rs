@@ -95,7 +95,7 @@ pub enum Error<I: Id, A: AddressResolver, W: Wire> {
 
   /// Error signifying that the append pipeline has been closed.
   #[error("append pipeline closed")]
-  PipelingShutdown,
+  PipelingClosed,
 
   /// Error indicating a failure to forward the request to the raft system.
   #[error("failed to forward request to raft")]
@@ -272,12 +272,9 @@ where
 /// is not known if there is an error.
 pub struct NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
   A: AddressResolver,
   A::Address: Send + Sync + 'static,
-  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <A as AddressResolver>::Address>,
 {
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
@@ -683,12 +680,9 @@ where
 
 impl<I, A, D, S, W> Drop for NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
   A: AddressResolver,
   A::Address: Send + Sync + 'static,
-  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <A as AddressResolver>::Address>,
 {
   fn drop(&mut self) {
     if self.shutdown.load(Ordering::Acquire) {

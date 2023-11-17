@@ -116,7 +116,8 @@ where
 {
   start: Instant,
   #[pin]
-  rx: oneshot::Receiver<Result<PipelineAppendEntriesResponse<I, A>, super::Error<I, A, W>>>,
+  rx:
+    oneshot::Receiver<Result<PipelineAppendEntriesResponse<I, A::Address>, super::Error<I, A, W>>>,
   _marker: std::marker::PhantomData<S>,
 }
 
@@ -130,11 +131,12 @@ where
 {
   type Output = Result<PipelineAppendEntriesResponse<I, A::Address>, super::Error<I, A, W>>;
 
-  fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-    // self.project().rx.poll(cx).map_err(|e| {
-    //   Err(Error::AlreadyShutdown)
-    // })
-    todo!()
+  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    match self.project().rx.poll(cx) {
+      Poll::Ready(Ok(resp)) => Poll::Ready(resp),
+      Poll::Ready(Err(_)) => Poll::Ready(Err(super::Error::PipelingClosed)),
+      Poll::Pending => Poll::Pending,
+    }
   }
 }
 
