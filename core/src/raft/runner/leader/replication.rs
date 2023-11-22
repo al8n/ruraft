@@ -369,7 +369,7 @@ where
     let remote = self.peer.load_full();
 
     // Create a new pipeline
-    let pipeline = self
+    let mut pipeline = self
       .transport
       .append_entries_pipeline((*remote).clone())
       .await
@@ -423,14 +423,14 @@ where
             match max_index {
               // Make a best effort to replicate up to this index
               Ok(max_index) if max_index > 0 => {
-                self.pipeline_send(&remote, &pipeline, &self.next_index, max_index).await;
+                self.pipeline_send(&remote, &mut pipeline, &self.next_index, max_index).await;
               }
               _ => break 'outer,
             }
           }
           tx = self.trigger_defer_error_rx.recv().fuse() => {
             let last_log_idx = self.state.last_log().index;
-            should_stop = self.pipeline_send(&remote, &pipeline, &self.next_index, last_log_idx).await;
+            should_stop = self.pipeline_send(&remote, &mut pipeline, &self.next_index, last_log_idx).await;
             if let Ok(tx) = tx {
               if !should_stop {
                 let _ = tx.send(Ok(()));
@@ -441,14 +441,14 @@ where
           }
           _ = self.trigger_rx.recv().fuse() => {
             let last_log_idx = self.state.last_log().index;
-            should_stop = self.pipeline_send(&remote, &pipeline, &self.next_index, last_log_idx).await;
+            should_stop = self.pipeline_send(&remote, &mut pipeline, &self.next_index, last_log_idx).await;
           }
           _ = {
             let timeout = random_timeout(self.commit_timeout).unwrap();
             <T::Runtime as Runtime>::sleep(timeout)
           }.fuse() => {
             let last_log_idx = self.state.last_log().index;
-            should_stop = self.pipeline_send(&remote, &pipeline, &self.next_index, last_log_idx).await;
+            should_stop = self.pipeline_send(&remote, &mut pipeline, &self.next_index, last_log_idx).await;
           }
         }
       }
@@ -461,6 +461,10 @@ where
       _ = finish_rx.recv().fuse() => {}
       _ = self.shutdown_rx.recv().fuse() => {}
     }
+    // Close the pipeline
+    if let Err(e) = pipeline.close().await {
+      tracing::error!(target = "ruraft.repl", remote=%remote, err=%e, "failed to close pipeline");
+    }
     Ok(())
   }
 
@@ -469,7 +473,7 @@ where
   async fn pipeline_send(
     &self,
     remote: &Node<T::Id, <T::Resolver as AddressResolver>::Address>,
-    p: &T::Pipeline,
+    p: &mut T::Pipeline,
     next_idx: &AtomicU64,
     last_idx: u64,
   ) -> bool {
@@ -911,8 +915,10 @@ where
               ReplicationRunner::<F, S, T>::update_last_appended(remote.id(), &next_index, &commitment, &notify, resp.highest_log_index()).await;
 
             },
+            // Abort pipeline if not successful
             Some(Err(e)) => {
-              todo!()
+              tracing::error!(target = "ruraft.repl", err=%e, "pipeline failed");
+              return;
             }
             None => {
               tracing::error!(target = "ruraft.repl", err="pipeline closed", "failed to get next item from pipeline");

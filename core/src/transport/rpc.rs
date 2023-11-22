@@ -181,6 +181,8 @@ impl<I, A> AppendEntriesResponse<I, A> {
   }
 }
 
+impl<I: CheapClone, A: CheapClone> CheapClone for AppendEntriesResponse<I, A> {}
+
 /// The response returned by a pipeline.
 ///
 /// The difference between this and [`AppendEntriesResponse`] is that this
@@ -211,6 +213,8 @@ pub struct PipelineAppendEntriesResponse<I, A> {
   #[viewit(getter(const, style = "ref"))]
   resp: AppendEntriesResponse<I, A>,
 }
+
+impl<I: CheapClone, A: CheapClone> CheapClone for PipelineAppendEntriesResponse<I, A> {}
 
 /// The command used by a candidate to ask a Raft peer
 /// for a vote in an election.

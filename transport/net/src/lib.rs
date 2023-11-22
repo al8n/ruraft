@@ -442,9 +442,9 @@ where
       .map_err(<Self::Error as TransportError>::io)?;
 
     Ok(NetAppendEntriesPipeline::new(
-      target,
       conn,
       self.max_inflight_requests,
+      self.timeout,
     ))
   }
 

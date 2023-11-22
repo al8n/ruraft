@@ -129,13 +129,6 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;
 
-  /// Represents the pipeline's output or response to an appended entry.
-  type Response: AppendEntriesPipelineFuture<
-    Id = Self::Id,
-    Address = Self::Address,
-    Pipeline = Self,
-  >;
-
   /// Retrieves a stream for consuming response futures once they are ready.
   fn consumer(
     &self,
@@ -145,35 +138,12 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
 
   /// Asynchronously appends entries to the target node and returns the associated response.
   fn append_entries(
-    &self,
+    &mut self,
     req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
-  ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Gracefully closes the pipeline and terminates any in-flight requests.
   fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
-}
-
-/// Represents the anticipated response following an appended entry in the pipeline.
-pub trait AppendEntriesPipelineFuture:
-  std::future::Future<
-    Output = Result<
-      PipelineAppendEntriesResponse<Self::Id, Self::Address>,
-      <Self::Pipeline as AppendEntriesPipeline>::Error,
-    >,
-  > + Send
-  + Sync
-  + 'static
-{
-  type Pipeline: AppendEntriesPipeline<Id = Self::Id, Address = Self::Address, Response = Self>;
-
-  /// Unique identifier associated with nodes.
-  type Id: Id;
-
-  /// Network address representation of nodes.
-  type Address: Address;
-
-  /// Retrieves the timestamp indicating when the append request was initiated.
-  fn start(&self) -> std::time::Instant;
 }
 
 /// Defines the capabilities and requirements for communication with other nodes across a network.

@@ -33,4 +33,5 @@ tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
+ruraft-core = { path = "../../core" }
 tokio = { version = "1.32", features = ["full"] }

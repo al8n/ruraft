@@ -864,6 +864,17 @@ impl<I, A> Membership<I, A> {
   pub fn contains_voter(&self) -> bool {
     self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
   }
+
+  /// Only used for testing purposes
+  #[doc(hidden)]
+  #[cfg(any(test, feature = "test"))]
+  pub fn __empty() -> Self {
+    Self {
+      quorum_size: 0,
+      voters: 0,
+      servers: Default::default(),
+    }
+  }
 }
 
 impl<I: Eq + Hash, A> Membership<I, A> {
