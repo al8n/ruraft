@@ -9,7 +9,6 @@ use crate::{
 
 use super::*;
 use futures::{future::Either, StreamExt};
-use nodecraft::{Address, Id};
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
@@ -378,7 +377,7 @@ where
   }
 }
 
-struct VoteResult<I: Id, A: Address> {
+struct VoteResult<I, A> {
   resp: VoteResponse<I, A>,
   voter_id: I,
 }

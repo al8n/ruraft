@@ -1,15 +1,13 @@
-use std::sync::Arc;
+use std::{hash::Hash, sync::Arc};
 
 use async_channel::Sender;
 use async_lock::Mutex;
+use nodecraft::CheapClone;
 use std::collections::HashMap;
 
-use crate::{
-  membership::Membership,
-  transport::{Address, Id},
-};
+use crate::membership::Membership;
 
-struct Inner<I: Id, A: Address> {
+struct Inner<I, A> {
   /// notified when commit_index increases
   commit_tx: Sender<()>,
   /// voter ID to log index: the server stores up through this log entry
@@ -20,21 +18,7 @@ struct Inner<I: Id, A: Address> {
   _marker: std::marker::PhantomData<A>,
 }
 
-impl<I: Id, A: Address> Inner<I, A> {
-  /// Called once a server completes writing entries to disk: either the
-  /// leader has written the new entry or a follower has replied to an
-  /// `append_entries` RPC. The given server's disk agrees with this server's log up
-  /// through the given index.
-  async fn match_index(&mut self, id: &I, match_index: u64, start_index: u64) {
-    match self.match_indexes.get_mut(id) {
-      Some(prev) if match_index > *prev => {
-        *prev = match_index;
-        self.recalculate(start_index).await;
-      }
-      _ => {}
-    }
-  }
-
+impl<I: Eq + Hash + CheapClone, A> Inner<I, A> {
   /// Called when a new cluster membership is created: it will be
   /// used to determine commitment from now on. 'membership' is the servers in
   /// the cluster.
@@ -48,11 +32,27 @@ impl<I: Id, A: Address> Inner<I, A> {
         if let Some((id, index)) = old_match_indexes.remove_entry(id) {
           self.match_indexes.insert(id, index);
         } else {
-          self.match_indexes.insert(id.clone(), 0);
+          self.match_indexes.insert(id.cheap_clone(), 0);
         }
       }
     }
     self.recalculate(start_index).await;
+  }
+}
+
+impl<I: Eq + Hash, A> Inner<I, A> {
+  /// Called once a server completes writing entries to disk: either the
+  /// leader has written the new entry or a follower has replied to an
+  /// `append_entries` RPC. The given server's disk agrees with this server's log up
+  /// through the given index.
+  async fn match_index(&mut self, id: &I, match_index: u64, start_index: u64) {
+    match self.match_indexes.get_mut(id) {
+      Some(prev) if match_index > *prev => {
+        *prev = match_index;
+        self.recalculate(start_index).await;
+      }
+      _ => {}
+    }
   }
 
   /// Internal helper to calculate new commitIndex from matchIndexes.
@@ -80,7 +80,7 @@ impl<I: Id, A: Address> Inner<I, A> {
 /// Used to advance the leader's commit index. The leader and
 /// replication task reports in newly written entries with match(), and
 /// this notifies on commit channel when the commit index has advanced.
-pub(crate) struct Commitment<I: Id, A: Address> {
+pub(crate) struct Commitment<I, A> {
   inner: Arc<Mutex<Inner<I, A>>>,
   /// the first index of this leader's term: this needs to be replicated to a
   /// majority of the cluster before this leader may mark anything committed
@@ -88,7 +88,27 @@ pub(crate) struct Commitment<I: Id, A: Address> {
   start_index: u64,
 }
 
-impl<I: Id, A: Address> Commitment<I, A> {
+impl<I: Eq + Hash, A> Commitment<I, A> {
+  /// Called by leader after `commit_rx` is notified
+  pub(crate) async fn get_commit_index(&self) -> u64 {
+    self.inner.lock().await.commit_index
+  }
+
+  pub(crate) async fn match_index(&self, server: &I, index: u64) {
+    self
+      .inner
+      .lock()
+      .await
+      .match_index(server, index, self.start_index)
+      .await;
+  }
+
+  pub(super) fn start_index(&self) -> u64 {
+    self.start_index
+  }
+}
+
+impl<I: Eq + Hash + CheapClone, A> Commitment<I, A> {
   /// Returns a [`Commitment`] that notifies the provided
   /// channel when log entries have been committed. A new [`Commitment`] is
   /// created each time this server becomes leader for a particular term.
@@ -126,27 +146,9 @@ impl<I: Id, A: Address> Commitment<I, A> {
       .set_membership(self.start_index, membership)
       .await;
   }
-
-  /// Called by leader after `commit_rx` is notified
-  pub(crate) async fn get_commit_index(&self) -> u64 {
-    self.inner.lock().await.commit_index
-  }
-
-  pub(crate) async fn match_index(&self, server: &I, index: u64) {
-    self
-      .inner
-      .lock()
-      .await
-      .match_index(server, index, self.start_index)
-      .await;
-  }
-
-  pub(super) fn start_index(&self) -> u64 {
-    self.start_index
-  }
 }
 
-impl<I: Id, A: Address> Clone for Commitment<I, A> {
+impl<I, A> Clone for Commitment<I, A> {
   fn clone(&self) -> Self {
     Self {
       inner: self.inner.clone(),
@@ -154,3 +156,5 @@ impl<I: Id, A: Address> Clone for Commitment<I, A> {
     }
   }
 }
+
+impl<I, A> CheapClone for Commitment<I, A> {}
