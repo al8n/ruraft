@@ -2,7 +2,6 @@
 #![deny(unsafe_code, missing_docs)]
 
 use std::{
-  future::Future,
   io,
   net::SocketAddr,
   pin::Pin,
@@ -20,7 +19,7 @@ use ruraft_net::stream::{Connection, Listener, StreamLayer};
 pub use ruraft_net::{Error, NetTransport, NetTransportOptions};
 
 /// Tcp transport
-pub type TcpTransport<I, R, W> = NetTransport<I, R, Tcp<<R as AddressResolver>::Runtime>, W>;
+pub type TcpTransport<I, A, D, W> = NetTransport<I, A, D, Tcp<<A as AddressResolver>::Runtime>, W>;
 
 /// Tcp stream layer
 #[repr(transparent)]
@@ -56,25 +55,21 @@ pub struct TcpListener<R: Runtime>(<R::Net as Net>::TcpListener);
 impl<R: Runtime> Listener for TcpListener<R> {
   type Stream = TcpStream<R>;
 
-  fn bind(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
+  async fn bind(addr: SocketAddr) -> io::Result<Self>
   where
     Self: Sized,
   {
-    async move {
-      <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
-        .await
-        .map(Self)
-    }
+    <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
+      .await
+      .map(Self)
   }
 
-  fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, SocketAddr)>> + Send {
-    async move {
-      self
-        .0
-        .accept()
-        .await
-        .map(|(conn, addr)| (TcpStream(conn), addr))
-    }
+  async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
+    self
+      .0
+      .accept()
+      .await
+      .map(|(conn, addr)| (TcpStream(conn), addr))
   }
 
   fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -111,15 +106,17 @@ impl<R: Runtime> AsyncWrite for TcpStream<R> {
 }
 
 impl<R: Runtime> Connection for TcpStream<R> {
-  fn connect(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
+  type OwnedReadHalf = <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::OwnedReadHalf;
+
+  type OwnedWriteHalf = <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::OwnedWriteHalf;
+
+  async fn connect(addr: SocketAddr) -> io::Result<Self>
   where
     Self: Sized,
   {
-    async move {
-      <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
-        .await
-        .map(Self)
-    }
+    <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
+      .await
+      .map(Self)
   }
 
   fn set_write_timeout(&self, timeout: Option<Duration>) {
@@ -136,5 +133,9 @@ impl<R: Runtime> Connection for TcpStream<R> {
 
   fn read_timeout(&self) -> Option<Duration> {
     self.0.read_timeout()
+  }
+
+  fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
+    self.0.into_split()
   }
 }

@@ -1,5 +1,4 @@
 use std::{
-  future::Future,
   io,
   pin::Pin,
   sync::{
@@ -26,7 +25,7 @@ use ruraft_core::{
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug)]
 pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
-  latest: Arc<RwLock<MemorySnapshot<I, A>>>,
+  latest: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   has_snapshot: AtomicBool,
   _runtime: std::marker::PhantomData<R>,
 }
@@ -75,7 +74,7 @@ where
     let id = SnapshotId::new(index, term);
 
     self.has_snapshot.store(true, Ordering::Release);
-    *lock = MemorySnapshot {
+    *lock = Some(MemorySnapshot {
       meta: SnapshotMeta {
         version,
         timestamp: id.timestamp(),
@@ -86,10 +85,10 @@ where
         term,
       },
       contents: Default::default(),
-    };
+    });
 
     Ok(MemorySnapshotSink {
-      id: lock.meta.id(),
+      id: lock.as_ref().unwrap().meta.id(),
       snap: self.latest.clone(),
       _runtime: std::marker::PhantomData,
     })
@@ -101,28 +100,44 @@ where
       return Ok(vec![]);
     }
 
-    Ok(vec![lock.meta.clone()])
+    Ok(
+      lock
+        .as_ref()
+        .map(|m| vec![m.meta.clone()])
+        .unwrap_or_default(),
+    )
   }
 
   async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
     let lock = self.latest.read().await;
-    if lock.meta.id().ne(id) {
-      return Err(io::Error::new(
+    if let Some(m) = lock.as_ref() {
+      if m.meta.id().ne(id) {
+        return Err(io::Error::new(
+          io::ErrorKind::NotFound,
+          format!(
+            "failed to open snapshot id (term: {}, index: {})",
+            m.meta.term, m.meta.index
+          ),
+        ));
+      }
+
+      // Make a copy of the contents, since a bytes.Buffer can only be read
+      // once.
+      Ok(MemorySnapshotSource {
+        meta: m.meta.clone(),
+        contents: m.contents.clone(),
+        _runtime: std::marker::PhantomData,
+      })
+    } else {
+      Err(io::Error::new(
         io::ErrorKind::NotFound,
         format!(
           "failed to open snapshot id (term: {}, index: {})",
-          lock.meta.term, lock.meta.index
+          id.term(),
+          id.index()
         ),
-      ));
+      ))
     }
-
-    // Make a copy of the contents, since a bytes.Buffer can only be read
-    // once.
-    Ok(MemorySnapshotSource {
-      meta: lock.meta.clone(),
-      contents: lock.contents.clone(),
-      _runtime: std::marker::PhantomData,
-    })
   }
 }
 
@@ -132,21 +147,12 @@ struct MemorySnapshot<I: Id, A: Address> {
   contents: Vec<u8>,
 }
 
-impl<I: Id, A: Address> Default for MemorySnapshot<I, A> {
-  fn default() -> Self {
-    Self {
-      meta: Default::default(),
-      contents: Default::default(),
-    }
-  }
-}
-
 /// Implements [`SnapshotSink`] in memory
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
 pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
-  snap: Arc<RwLock<MemorySnapshot<I, A>>>,
+  snap: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   id: SnapshotId,
   _runtime: std::marker::PhantomData<R>,
 }
@@ -161,9 +167,17 @@ where
     let write_lock = self.snap.write();
     futures::pin_mut!(write_lock);
     let mut snap = futures::ready!(write_lock.poll_unpin(cx));
-    snap.contents.extend_from_slice(buf);
-    snap.meta.size += buf.len() as u64;
-    Poll::Ready(Ok(buf.len()))
+    match snap.as_mut() {
+      Some(snap) => {
+        snap.contents.extend_from_slice(buf);
+        snap.meta.size += buf.len() as u64;
+        Poll::Ready(Ok(buf.len()))
+      }
+      None => Poll::Ready(Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "snapshot not found",
+      ))),
+    }
   }
 
   fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -188,6 +202,10 @@ where
   }
 
   async fn cancel(&mut self) -> std::io::Result<()> {
+    Ok(())
+  }
+
+  async fn close(self) -> std::io::Result<()> {
     Ok(())
   }
 }
@@ -240,11 +258,12 @@ pub(super) mod tests {
   use std::net::SocketAddr;
 
   use futures::{AsyncReadExt, AsyncWriteExt};
+  use smol_str::SmolStr;
 
   use super::*;
 
   pub async fn test_memory_snapshot_storage_create<R: Runtime>() {
-    let snap = MemorySnapshotStorage::<String, SocketAddr, R>::new(())
+    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new(())
       .await
       .unwrap();
 
@@ -254,7 +273,7 @@ pub(super) mod tests {
 
     // create a new sink
     let mut sink = snap
-      .create(SnapshotVersion::V1, 10, 3, Default::default(), 2)
+      .create(SnapshotVersion::V1, 10, 3, Membership::__empty(), 2)
       .await
       .unwrap();
 
@@ -290,19 +309,19 @@ pub(super) mod tests {
   }
 
   pub async fn test_memory_snapshot_storage_open_snapshot_twice<R: Runtime>() {
-    let snap = MemorySnapshotStorage::<String, SocketAddr, R>::new(())
+    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new(())
       .await
       .unwrap();
 
     // create a new sink
     let mut sink = snap
-      .create(SnapshotVersion::V1, 10, 3, Default::default(), 2)
+      .create(SnapshotVersion::V1, 10, 3, Membership::__empty(), 2)
       .await
       .unwrap();
 
     // Write to the sink
     sink.write_all(b"data\n").await.unwrap();
-    sink.close().await.unwrap();
+    sink.cancel().await.unwrap();
 
     // Read the snapshot a first time
     let mut source = snap.open(&sink.id()).await.unwrap();

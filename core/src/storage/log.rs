@@ -11,13 +11,13 @@ use crate::{
 
 /// A log entry that contains a new membership.
 #[derive(Clone)]
-pub struct MembershipLog<I: Id, A: Address> {
+pub struct MembershipLog<I, A> {
   membership: Membership<I, A>,
   index: u64,
   term: u64,
 }
 
-impl<I: Id, A: Address> MembershipLog<I, A> {
+impl<I, A> MembershipLog<I, A> {
   /// Returns the index of the log entry.
   #[inline]
   pub const fn index(&self) -> u64 {
@@ -38,26 +38,37 @@ impl<I: Id, A: Address> MembershipLog<I, A> {
 }
 
 /// Describes various types of log entries.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
-pub enum LogKind<I: Id, A: Address, D: Data> {
+pub enum LogKind<I, A, D> {
   /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   Data(Arc<D>),
+
   /// Used to assert leadership.
   Noop,
+
   /// Used to ensure all preceding operations have been
   /// applied to the [`FinateStateMachine`]. It is similar to LogNoop, but instead of returning
   /// once committed, it only returns once the [`FinateStateMachine`] manager acks it. Otherwise,
   /// it is possible there are operations committed but not yet applied to
   /// the [`FinateStateMachine`].
   Barrier,
+
   /// Establishes a membership change. It is
   /// created when a server is added, removed, promoted, etc.
-  Membership(Membership<I, A>),
+  Membership(
+    #[cfg_attr(
+      feature = "serde",
+      serde(
+        bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
+      )
+    )]
+    Membership<I, A>,
+  ),
 }
 
-impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
+impl<I: Clone, A: Clone, D> Clone for LogKind<I, A, D> {
   fn clone(&self) -> Self {
     match self {
       Self::Data(data) => Self::Data(data.clone()),
@@ -73,9 +84,9 @@ impl<I: Id, A: Address, D: Data> Clone for LogKind<I, A, D> {
 ///
 /// The `clone` on `Log` is cheap and not require deep copy and allocation.
 #[viewit::viewit(vis_all = "pub(crate)", getters(vis_all = "pub"), setters(skip))]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Log<I: Id, A: Address, D: Data> {
+pub struct Log<I, A, D> {
   /// Holds the kind of the log entry.
   #[viewit(
     getter(
@@ -85,6 +96,12 @@ pub struct Log<I: Id, A: Address, D: Data> {
       attrs(doc = "Returns the log entry's kind.")
     ),
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
+  )]
+  #[cfg_attr(
+    feature = "serde",
+    serde(
+      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, D: ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
+    )
   )]
   kind: LogKind<I, A, D>,
 
@@ -134,7 +151,7 @@ pub struct Log<I: Id, A: Address, D: Data> {
   appended_at: Option<Instant>,
 }
 
-impl<I: Id, A: Address, D: Data> Clone for Log<I, A, D> {
+impl<I: Clone, A: Clone, D> Clone for Log<I, A, D> {
   fn clone(&self) -> Self {
     Self {
       index: self.index,
@@ -145,7 +162,7 @@ impl<I: Id, A: Address, D: Data> Clone for Log<I, A, D> {
   }
 }
 
-impl<I: Id, A: Address, D: Data> Log<I, A, D> {
+impl<I, A, D> Log<I, A, D> {
   /// Create a [`Log`]
   #[inline]
   pub fn new(data: D) -> Self {
@@ -334,17 +351,21 @@ impl<T: LogStorage> LogStorageExt for T {}
 
 #[cfg(all(feature = "test", feature = "metrics"))]
 pub(super) mod tests {
+  use smol_str::SmolStr;
+
   use super::*;
   use std::net::SocketAddr;
 
   struct TestCase {
     name: &'static str,
-    logs: Vec<Log<String, SocketAddr, Vec<u8>>>,
+    logs: Vec<Log<SmolStr, SocketAddr, Vec<u8>>>,
     want_idx: u64,
     want_err: bool,
   }
 
-  pub async fn test_oldest_log<S: LogStorage<Id = String, Address = SocketAddr, Data = Vec<u8>>>(
+  pub async fn test_oldest_log<
+    S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>,
+  >(
     store: S,
   ) {
     let cases = vec![

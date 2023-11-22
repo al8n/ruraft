@@ -1,9 +1,11 @@
 //!
 #![forbid(unsafe_code)]
+#![allow(clippy::type_complexity)]
 // #![deny(missing_docs)]
 
 /// Stream layer abstraction.
 pub mod stream;
+use nodecraft::CheapClone;
 use stream::{Connection, Listener, StreamLayer};
 
 use std::{
@@ -23,7 +25,7 @@ use futures::{
   io::{BufReader, BufWriter},
   AsyncRead, AsyncWriteExt, FutureExt,
 };
-use ruraft_core::{options::ProtocolVersion, transport::*};
+use ruraft_core::{options::ProtocolVersion, transport::*, Data, Node};
 use wg::AsyncWaitGroup;
 
 /// Network [`Wire`](ruraft_core::transport::Wire) implementors.
@@ -57,7 +59,8 @@ const CONN_SEND_BUFFER_SIZE: usize = 256 * 1024; // 256KB
 /// chan right after first send. This is a constant just to provide context
 /// rather than a magic number in a few places we have to check invariants to
 /// avoid panics etc.
-const MIN_IN_FLIGHT_FOR_PIPELINING: usize = 2;
+// TODO(al8n): change it back to 2 when async_channel::bounded supports zero cap.
+const MIN_IN_FLIGHT_FOR_PIPELINING: usize = 3;
 
 /// Represents errors specific to the [`NetTransport`].
 ///
@@ -65,18 +68,18 @@ const MIN_IN_FLIGHT_FOR_PIPELINING: usize = 2;
 /// It categorizes these errors based on their origin, whether from the `Id`, `AddressResolver`,
 /// `Wire` operations or more general transport-level concerns.
 #[derive(thiserror::Error)]
-pub enum Error<I: Id, R: AddressResolver, W: Wire> {
+pub enum Error<I: Id, A: AddressResolver, W: Wire> {
   /// Errors arising from the node identifier (`Id`) operations.
   #[error("{0}")]
   Id(I::Error),
 
   /// Errors originating from the transformation of node addresses.
   #[error("{0}")]
-  Address(<R::Address as Transformable>::Error),
+  Address(<A::Address as Transformable>::Error),
 
   /// Errors from the address resolver operations.
   #[error("{0}")]
-  Resolver(R::Error),
+  Resolver(A::Error),
 
   /// Errors related to encoding and decoding using the `Wire` trait.
   #[error("{0}")]
@@ -86,9 +89,13 @@ pub enum Error<I: Id, R: AddressResolver, W: Wire> {
   #[error("transport already shutdown")]
   AlreadyShutdown,
 
+  /// Error thrown when trying to replicate logs in pipeline mode, but got rejected.
+  #[error("pipeline replication not supported, reach max in-flight bound")]
+  PipelineReplicationNotSupported(usize),
+
   /// Error signifying that the append pipeline has been closed.
   #[error("append pipeline closed")]
-  PipelingShutdown,
+  PipelingClosed,
 
   /// Error indicating a failure to forward the request to the raft system.
   #[error("failed to forward request to raft")]
@@ -120,10 +127,14 @@ impl<I: Id, R: AddressResolver, W: Wire> core::fmt::Debug for Error<I, R, W> {
   }
 }
 
-impl<I: Id, R: AddressResolver, W: Wire> TransportError for Error<I, R, W> {
+impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W>
+where
+  <I as Transformable>::Error: Send + Sync + 'static,
+  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+{
   type Id = I;
 
-  type Resolver = R;
+  type Resolver = A;
 
   type Wire = W;
 
@@ -134,14 +145,14 @@ impl<I: Id, R: AddressResolver, W: Wire> TransportError for Error<I, R, W> {
     Self::Id(err)
   }
 
-  fn address(err: <<R as AddressResolver>::Address as Transformable>::Error) -> Self
+  fn address(err: <<A as AddressResolver>::Address as Transformable>::Error) -> Self
   where
     Self: Sized,
   {
     Self::Address(err)
   }
 
-  fn resolver(err: <R as AddressResolver>::Error) -> Self
+  fn resolver(err: <A as AddressResolver>::Error) -> Self
   where
     Self: Sized,
   {
@@ -157,6 +168,14 @@ impl<I: Id, R: AddressResolver, W: Wire> TransportError for Error<I, R, W> {
     Self: Sized,
   {
     Self::IO(err)
+  }
+
+  fn with_message(self, msg: std::borrow::Cow<'static, str>) -> Self {
+    Self::Custom(msg.into_owned())
+  }
+
+  fn is_pipeline_replication_not_supported(&self) -> bool {
+    matches!(self, Self::PipelineReplicationNotSupported(_))
   }
 
   fn custom<T>(msg: T) -> Self
@@ -251,23 +270,20 @@ where
 /// InstallSnapshot is special, in that after the request we stream
 /// the entire state. That socket is not re-used as the connection state
 /// is not known if there is an error.
-pub struct NetTransport<I, R, S, W>
+pub struct NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  R: AddressResolver,
-  R::Address: Send + Sync + 'static,
-  <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
 {
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
-  local_header: Header<I, <R as AddressResolver>::Address>,
+  local_header: Header<I, <A as AddressResolver>::Address>,
   advertise_addr: SocketAddr,
-  consumer: RpcConsumer<I, <R as AddressResolver>::Address>,
-  resolver: R,
+  consumer: RpcConsumer<I, <A as AddressResolver>::Address, D>,
+  resolver: A,
   wg: AsyncWaitGroup,
-  conn_pool: Mutex<HashMap<<R as AddressResolver>::Address, S::Stream>>,
+  conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, S::Stream>>,
   conn_size: AtomicUsize,
   protocol_version: ProtocolVersion,
   max_pool: usize,
@@ -276,15 +292,17 @@ where
   _w: std::marker::PhantomData<W>,
 }
 
-impl<I, R, S, W> Transport for NetTransport<I, R, S, W>
+impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
 where
   I: Id + Send + Sync + 'static,
-  R: AddressResolver,
-  R::Address: Send + Sync + 'static,
-
-  <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  <I as Transformable>::Error: Send + Sync + 'static,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
+  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  D: Data,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
   type Error = Error<Self::Id, Self::Resolver, Self::Wire>;
   type Runtime = <Self::Resolver as AddressResolver>::Runtime;
@@ -292,22 +310,30 @@ where
 
   type Id = I;
 
-  // type Pipeline: AppendEntriesPipeline<Runtime = Self::Runtime>;
+  type Pipeline = NetAppendEntriesPipeline<Self::Id, Self::Resolver, Self::Data, S, Self::Wire>;
 
-  type Resolver = R;
+  type Resolver = A;
 
   type Wire = W;
 
-  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
+  type Data = D;
+
+  fn consumer(
+    &self,
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
     self.consumer.clone()
   }
 
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address {
-    self.local_header.addr()
+    self.local_header.from().addr()
   }
 
   fn local_id(&self) -> &Self::Id {
-    self.local_header.id()
+    self.local_header.from().id()
+  }
+
+  fn version(&self) -> ProtocolVersion {
+    self.protocol_version
   }
 
   fn advertise_addr(&self) -> SocketAddr {
@@ -325,7 +351,7 @@ where
     } else {
       tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
       resolver
-        .resolve(opts.header.addr())
+        .resolve(opts.header.from().addr())
         .await
         .map_err(<Self::Error as TransportError>::resolver)?
     };
@@ -348,7 +374,8 @@ where
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let wg = AsyncWaitGroup::from(1);
-    let (producer, consumer) = rpc::<Self::Id, <Self::Resolver as AddressResolver>::Address>();
+    let (producer, consumer) =
+      rpc::<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>();
     let request_handler = RequestHandler {
       ln,
       local_header: opts.header.clone(),
@@ -360,6 +387,7 @@ where
     <Self::Runtime as Runtime>::spawn_detach(RequestHandler::<
       I,
       <Self::Resolver as AddressResolver>::Address,
+      D,
       S,
     >::run::<Self::Resolver, Self::Wire>(
       request_handler
@@ -387,17 +415,51 @@ where
     })
   }
 
+  async fn append_entries_pipeline(
+    &self,
+    target: Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+  ) -> Result<Self::Pipeline, Self::Error> {
+    if self.max_inflight_requests < MIN_IN_FLIGHT_FOR_PIPELINING {
+      // Pipelining is disabled since no more than one request can be outstanding
+      // at once. Skip the whole code path and use synchronous requests
+      return Err(
+        Error::<Self::Id, Self::Resolver, Self::Wire>::PipelineReplicationNotSupported(
+          self.max_inflight_requests,
+        ),
+      );
+    }
+
+    // Get a connection
+    let target_addr = target.addr().cheap_clone();
+    let addr = self
+      .resolver
+      .resolve(&target_addr)
+      .await
+      .map_err(<Self::Error as TransportError>::resolver)?;
+
+    let conn = <S::Stream as Connection>::connect(addr)
+      .await
+      .map_err(<Self::Error as TransportError>::io)?;
+
+    Ok(NetAppendEntriesPipeline::new(
+      conn,
+      self.max_inflight_requests,
+      self.timeout,
+    ))
+  }
+
   async fn append_entries(
     &self,
-    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>,
   ) -> Result<
     AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
   > {
-    let header_addr = req.header().addr().clone();
+    let target_addr: <A as AddressResolver>::Address = target.addr().cheap_clone();
     let addr = self
       .resolver
-      .resolve(&header_addr)
+      .resolve(&target_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::append_entries(req);
@@ -408,7 +470,7 @@ where
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::AppendEntries(resp) => {
-        self.return_conn(conn.into_inner(), header_addr).await;
+        self.return_conn(conn.into_inner(), target_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -420,12 +482,13 @@ where
 
   async fn vote(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: VoteRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<VoteResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error> {
-    let header_addr = req.header().addr().clone();
+    let target_addr: <A as AddressResolver>::Address = target.addr().cheap_clone();
     let addr = self
       .resolver
-      .resolve(&header_addr)
+      .resolve(&target_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::vote(req);
@@ -436,7 +499,7 @@ where
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::Vote(resp) => {
-        self.return_conn(conn.into_inner(), header_addr).await;
+        self.return_conn(conn.into_inner(), target_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -448,16 +511,17 @@ where
 
   async fn install_snapshot(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     source: impl AsyncRead + Send,
   ) -> Result<
     InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
   > {
-    let header_addr = req.header().addr().clone();
+    let target_addr: <A as AddressResolver>::Address = target.addr().cheap_clone();
     let addr = self
       .resolver
-      .resolve(&header_addr)
+      .resolve(&target_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::install_snapshot(req);
@@ -471,7 +535,7 @@ where
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::InstallSnapshot(resp) => {
-        self.return_conn(conn.into_inner(), header_addr).await;
+        self.return_conn(conn.into_inner(), target_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -483,13 +547,14 @@ where
 
   async fn timeout_now(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: TimeoutNowRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<TimeoutNowResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>
   {
-    let header_addr = req.header().addr().clone();
+    let target_addr: <A as AddressResolver>::Address = target.addr().cheap_clone();
     let addr = self
       .resolver
-      .resolve(&header_addr)
+      .resolve(&target_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::timeout_now(req);
@@ -500,7 +565,7 @@ where
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::TimeoutNow(resp) => {
-        self.return_conn(conn.into_inner(), header_addr).await;
+        self.return_conn(conn.into_inner(), target_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -512,13 +577,14 @@ where
 
   async fn heartbeat(
     &self,
+    target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: HeartbeatRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<HeartbeatResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>, Self::Error>
   {
-    let header_addr = req.header().addr().clone();
+    let target_addr: <A as AddressResolver>::Address = target.addr().cheap_clone();
     let addr = self
       .resolver
-      .resolve(&header_addr)
+      .resolve(&target_addr)
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::heartbeat(req);
@@ -529,7 +595,7 @@ where
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::Heartbeat(resp) => {
-        self.return_conn(conn.into_inner(), header_addr).await;
+        self.return_conn(conn.into_inner(), target_addr).await;
         Ok(resp)
       }
       kind => Err(Error::UnexpectedResponse {
@@ -550,16 +616,19 @@ where
   }
 }
 
-impl<I, R, S, W> NetTransport<I, R, S, W>
+impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
   I: Id + Send + Sync + 'static,
-  R: AddressResolver,
-  R::Address: Send + Sync + 'static,
-  <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  <I as Transformable>::Error: Send + Sync + 'static,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
+  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  D: Data,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
-  async fn return_conn(&self, conn: S::Stream, addr: <R as AddressResolver>::Address) {
+  async fn return_conn(&self, conn: S::Stream, addr: <A as AddressResolver>::Address) {
     if self.shutdown.load(Ordering::Acquire)
       && self.conn_size.load(Ordering::Acquire) > self.max_pool
     {
@@ -580,7 +649,7 @@ where
   async fn send(
     &self,
     target: SocketAddr,
-    req: Request<I, <R as AddressResolver>::Address>,
+    req: Request<I, <A as AddressResolver>::Address, D>,
   ) -> Result<S::Stream, <Self as Transport>::Error> {
     // Get a connection
     let mut conn = {
@@ -609,38 +678,40 @@ where
   }
 }
 
-impl<I, R, S, W> Drop for NetTransport<I, R, S, W>
+impl<I, A, D, S, W> Drop for NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  R: AddressResolver,
-  R::Address: Send + Sync + 'static,
-  <<<R as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <R as AddressResolver>::Address>,
 {
   fn drop(&mut self) {
-    use pollster::FutureExt as _;
-    let _ = self.shutdown().block_on();
+    if self.shutdown.load(Ordering::Acquire) {
+      return;
+    }
+    self.shutdown.store(true, Ordering::Release);
+    self.shutdown_tx.close();
+    self.wg.block_wait();
   }
 }
 
 /// Used to handle connection from remote peers.
-struct RequestHandler<I: Id, A: Address, S: StreamLayer> {
+struct RequestHandler<I, A, D, S: StreamLayer> {
   ln: S::Listener,
   local_header: Header<I, A>,
-  producer: RpcProducer<I, A>,
+  producer: RpcProducer<I, A, D>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   wg: AsyncWaitGroup,
 }
 
-impl<I, A, S> RequestHandler<I, A, S>
+impl<I, A, D, S> RequestHandler<I, A, D, S>
 where
   I: Id + Send + Sync + 'static,
   A: Address + Send + Sync + 'static,
+  D: Data,
   S: StreamLayer,
 {
-  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(self)
+  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(self)
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
@@ -711,9 +782,9 @@ where
     }
   }
 
-  async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(
+  async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
     conn: S::Stream,
-    producer: RpcProducer<I, A>,
+    producer: RpcProducer<I, A, D>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<(), Error<I, Resolver, W>>
@@ -749,9 +820,9 @@ where
     let respond_label = req.respond_label();
 
     let resp = if let Request::Heartbeat(_) = &req {
-      Response::heartbeat(HeartbeatResponse::new(local_header))
+      Response::heartbeat(HeartbeatResponse::new(local_header, true))
     } else {
-      let (tx, handle) = Rpc::<I, A>::new(req);
+      let (tx, handle) = Rpc::<I, A, D>::new(req);
       futures::select! {
         res = producer.send(tx).fuse() => {
           #[cfg(feature = "metrics")]
@@ -809,7 +880,7 @@ trait RequestMetricsExt {
 }
 
 #[cfg(feature = "metrics")]
-impl<I: Id, A: Address> RequestMetricsExt for Request<I, A> {
+impl<I, A, D> RequestMetricsExt for Request<I, A, D> {
   fn enqueue_label(&self) -> &'static str {
     match self {
       Self::AppendEntries(_) => "ruraft.net.rpc.enqueue.append_entries",

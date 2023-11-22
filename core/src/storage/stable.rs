@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use bytes::Bytes;
-use nodecraft::{Address, Id};
+use nodecraft::{Address, CheapClone, Id};
 
 use crate::Node;
 
@@ -14,9 +14,9 @@ pub trait StableStorage: Send + Sync + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
   /// The id type used to identify node.
-  type Id: Id;
+  type Id: Id + CheapClone + Send + Sync + 'static;
   /// The address type of node.
-  type Address: Address;
+  type Address: Address + CheapClone + Send + Sync + 'static;
 
   /// Insert a key-value pair into the storage.
   fn insert(&self, key: Bytes, val: Bytes) -> impl Future<Output = Result<(), Self::Error>> + Send;

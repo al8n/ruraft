@@ -15,6 +15,9 @@ pub trait Listener: Send + Sync + 'static {
 }
 
 pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static {
+  type OwnedReadHalf: AsyncRead + Unpin + Send + Sync + 'static;
+  type OwnedWriteHalf: AsyncWrite + Unpin + Send + Sync + 'static;
+
   fn connect(addr: SocketAddr) -> impl Future<Output = io::Result<Self>> + Send
   where
     Self: Sized;
@@ -35,6 +38,8 @@ pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static {
   fn set_read_timeout(&self, timeout: Option<Duration>);
 
   fn read_timeout(&self) -> Option<Duration>;
+
+  fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf);
 }
 
 /// Used with the [`NetTransport`](super::NetTransport) to provide

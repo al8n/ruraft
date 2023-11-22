@@ -1,8 +1,14 @@
-use std::{borrow::Borrow, mem, sync::Arc};
+use std::{
+  borrow::Borrow,
+  fmt::{Debug, Display},
+  hash::Hash,
+  mem,
+  sync::Arc,
+};
 
 use arc_swap::ArcSwapAny;
 use indexmap::IndexMap;
-use nodecraft::Transformable;
+use nodecraft::{CheapClone, Transformable};
 
 use crate::{
   transport::{Address, Id},
@@ -73,7 +79,7 @@ impl ServerSuffrage {
 #[viewit::viewit]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Server<I: Id, A: Address> {
+pub struct Server<I, A> {
   /// A unique string identifying this server for all time.
   id: I,
   /// The network address that a transport can contact.
@@ -82,7 +88,7 @@ pub struct Server<I: Id, A: Address> {
   suffrage: ServerSuffrage,
 }
 
-impl<I: Id, A: Address> PartialEq for Server<I, A> {
+impl<I: PartialEq, A: PartialEq> PartialEq for Server<I, A> {
   fn eq(&self, other: &Self) -> bool {
     if self.id == other.id {
       return true;
@@ -96,9 +102,9 @@ impl<I: Id, A: Address> PartialEq for Server<I, A> {
   }
 }
 
-impl<I: Id, A: Address> Eq for Server<I, A> {}
+impl<I: Eq, A: Eq> Eq for Server<I, A> {}
 
-impl<I: Id, A: Address> Server<I, A> {
+impl<I, A> Server<I, A> {
   /// Creates a new `Server`.
   #[inline]
   pub fn new(id: I, addr: A, suffrage: ServerSuffrage) -> Self {
@@ -111,7 +117,7 @@ impl<I: Id, A: Address> Server<I, A> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
-pub(crate) enum MembershipChangeCommand<I: Id, A: Address> {
+pub(crate) enum MembershipChangeCommand<I, A> {
   /// Adds a server with [`ServerSuffrage`] of Voter.
   AddVoter {
     /// The server to execute the command on.
@@ -154,7 +160,7 @@ pub(crate) enum MembershipChangeCommand<I: Id, A: Address> {
   },
 }
 
-impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
+impl<I, A> MembershipChangeCommand<I, A> {
   /// Returns [`MembershipChangeCommand::AddVoter`].
   #[inline]
   pub const fn add_voter(id: I, addr: A, prev_index: u64) -> Self {
@@ -189,53 +195,84 @@ impl<I: Id, A: Address> MembershipChangeCommand<I, A> {
 }
 
 /// The error type returned when encoding [`Membership`] to bytes or decoding a [`Membership`] from bytes.
-#[derive(thiserror::Error)]
-pub enum MembershipTransformableError<I: Id, A: Address> {
+#[derive(Debug)]
+pub enum MembershipTransformableError<I: Transformable, A: Transformable> {
   /// Returned when the encode or decode id fails.
-  #[error("id error: {0}")]
   Id(I::Error),
   /// Returned when the encode or decode address fails.
-  #[error("address error: {0}")]
   Address(A::Error),
-  #[error("the encoded size of id({0}) is too large")]
   IdTooLarge(I),
-  #[error("the encoded size of address({0}) is too large")]
   AddressTooLarge(A),
   /// Returned when the number of nodes is too large.
-  #[error("membership too large, too many servers({0})")]
   TooLarge(usize),
   /// Returned when the encode buffer is too small.
-  #[error("encode buffer too small")]
   EncodeBufferTooSmall,
   /// Returned when decode buffer has less data than expected.
-  #[error("corrupted")]
   Corrupted,
   /// Returned when the suffrage is unknown.
-  #[error("{0}")]
-  UnknownServerSuffrage(#[from] UnknownServerSuffrage),
-  #[error("{0}")]
-  Membership(#[from] MembershipError<I, A>),
+  UnknownServerSuffrage(UnknownServerSuffrage),
+  /// Returned when the membership is invalid.
+  Membership(MembershipError<I, A>),
 }
 
-impl<I: Id, A: Address> core::fmt::Debug for MembershipTransformableError<I, A> {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    core::fmt::Display::fmt(&self, f)
+impl<I: Transformable, A: Transformable> From<MembershipError<I, A>>
+  for MembershipTransformableError<I, A>
+{
+  fn from(e: MembershipError<I, A>) -> Self {
+    Self::Membership(e)
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MembershipBuilder<I: Id, A: Address> {
+impl<I: Transformable, A: Transformable> From<UnknownServerSuffrage>
+  for MembershipTransformableError<I, A>
+{
+  fn from(e: UnknownServerSuffrage) -> Self {
+    Self::UnknownServerSuffrage(e)
+  }
+}
+
+impl<I: Display + Transformable, A: Display + Transformable> Display
+  for MembershipTransformableError<I, A>
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      MembershipTransformableError::Id(e) => write!(f, "id error: {}", e),
+      MembershipTransformableError::Address(e) => write!(f, "address error: {}", e),
+      MembershipTransformableError::IdTooLarge(id) => {
+        write!(f, "the encoded size of id({}) is too large", id)
+      }
+      MembershipTransformableError::AddressTooLarge(addr) => {
+        write!(f, "the encoded size of address({}) is too large", addr)
+      }
+      MembershipTransformableError::TooLarge(size) => {
+        write!(f, "membership too large, too many servers({})", size)
+      }
+      MembershipTransformableError::EncodeBufferTooSmall => write!(f, "encode buffer too small"),
+      MembershipTransformableError::Corrupted => write!(f, "corrupted"),
+      MembershipTransformableError::UnknownServerSuffrage(e) => write!(f, "{}", e),
+      MembershipTransformableError::Membership(e) => write!(f, "{}", e),
+    }
+  }
+}
+
+impl<I: Display + Debug + Transformable, A: Display + Debug + Transformable> std::error::Error
+  for MembershipTransformableError<I, A>
+{
+}
+
+#[derive(Debug, Clone)]
+pub struct MembershipBuilder<I, A> {
   pub(crate) voters: usize,
   pub(crate) servers: IndexMap<I, (A, ServerSuffrage)>,
 }
 
-impl<I: Id, A: Address> Default for MembershipBuilder<I, A> {
+impl<I, A> Default for MembershipBuilder<I, A> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I: Id, A: Address> MembershipBuilder<I, A> {
+impl<I, A> MembershipBuilder<I, A> {
   /// Create a new membership.
   pub fn new() -> Self {
     Self {
@@ -253,6 +290,38 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     }
   }
 
+  /// Returns the quorum size based on the current membership.
+  pub const fn quorum_size(&self) -> usize {
+    (self.voters / 2) + 1
+  }
+
+  /// Returns an iterator over the membership
+  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
+    self.servers.iter()
+  }
+
+  /// Returns an iterator that allows modifying each value.
+  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
+    self.servers.iter_mut()
+  }
+
+  /// Returns the number of server in the membership, also referred to as its 'length'.
+  pub fn len(&self) -> usize {
+    self.servers.len()
+  }
+
+  /// Returns `true` if the membership contains no elements
+  pub fn is_empty(&self) -> bool {
+    self.servers.is_empty()
+  }
+
+  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
+  pub fn contains_voter(&self) -> bool {
+    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
+  }
+}
+
+impl<I: Eq + Hash, A> MembershipBuilder<I, A> {
   /// Finish building the membership.
   pub fn build(self) -> Result<Membership<I, A>, MembershipError<I, A>> {
     self.validate().map(|_| Membership {
@@ -262,11 +331,19 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     })
   }
 
-  /// Returns the quorum size based on the current membership.
-  pub const fn quorum_size(&self) -> usize {
-    (self.voters / 2) + 1
+  /// Validates a cluster membership configuration for common
+  /// errors.
+  fn validate(&self) -> Result<(), MembershipError<I, A>> {
+    self
+      .servers
+      .values()
+      .find(|s| s.1 == ServerSuffrage::Voter)
+      .ok_or(MembershipError::EmptyVoter)
+      .map(|_| {})
   }
+}
 
+impl<I: Eq + Hash, A: Eq> MembershipBuilder<I, A> {
   /// Inserts a new server into the membership.
   ///
   /// # Errors
@@ -303,37 +380,6 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     servers.try_for_each(|server| self.insert(server))
   }
 
-  /// Returns an iterator over the membership
-  pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
-    self.servers.iter()
-  }
-
-  /// Returns an iterator that allows modifying each value.
-  pub fn iter_mut(&mut self) -> impl Iterator<Item = (&I, &mut (A, ServerSuffrage))> {
-    self.servers.iter_mut()
-  }
-
-  /// Returns the number of server in the membership, also referred to as its 'length'.
-  pub fn len(&self) -> usize {
-    self.servers.len()
-  }
-
-  /// Returns `true` if the membership contains no elements
-  pub fn is_empty(&self) -> bool {
-    self.servers.is_empty()
-  }
-
-  /// Validates a cluster membership configuration for common
-  /// errors.
-  pub fn validate(&self) -> Result<(), MembershipError<I, A>> {
-    self
-      .servers
-      .values()
-      .find(|s| s.1 == ServerSuffrage::Voter)
-      .ok_or(MembershipError::EmptyVoter)
-      .map(|_| {})
-  }
-
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
   where
@@ -347,11 +393,6 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
       .unwrap_or_default()
   }
 
-  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
-  pub fn contains_voter(&self) -> bool {
-    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
-  }
-
   /// Returns true if the server identified by 'id' is in in the
   /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
@@ -362,18 +403,8 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
     self.servers.contains_key(id)
   }
 
-  /// Returns true if the server address is in in the
-  /// provided [`Membership`].
-  pub fn contains_addr<Q>(&self, addr: &Q) -> bool
-  where
-    A: std::borrow::Borrow<Q>,
-    Q: ?Sized + Eq,
-  {
-    self.servers.values().any(|s| s.0.borrow() == addr)
-  }
-
   /// Remove a server from the membership and return its address and suffrage.
-  pub fn remove_by_id<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
+  pub fn remove<Q>(&mut self, id: &Q) -> Option<Server<I, A>>
   where
     I: Borrow<Q>,
     Q: core::hash::Hash + Eq + ?Sized,
@@ -385,18 +416,50 @@ impl<I: Id, A: Address> MembershipBuilder<I, A> {
   }
 }
 
+impl<I, A: Eq> MembershipBuilder<I, A> {
+  /// Returns true if the server address is in in the
+  /// provided [`Membership`].
+  pub fn contains_addr<Q>(&self, addr: &Q) -> bool
+  where
+    A: std::borrow::Borrow<Q>,
+    Q: ?Sized + Eq,
+  {
+    self.servers.values().any(|s| s.0.borrow() == addr)
+  }
+}
+
 /// Tracks which servers are in the cluster, and whether they have
 /// votes. This should include the local server, if it's a member of the cluster.
 /// The servers are listed no particular order, but each should only appear once.
 /// These entries are appended to the log during membership changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Membership<I: Id, A: Address> {
+#[derive(Debug)]
+pub struct Membership<I, A> {
   pub(crate) quorum_size: usize,
   pub(crate) voters: usize,
   pub(crate) servers: Arc<IndexMap<I, (A, ServerSuffrage)>>,
 }
 
-impl<I: Id, A: Address> core::fmt::Display for Membership<I, A> {
+impl<I, A> Clone for Membership<I, A> {
+  fn clone(&self) -> Self {
+    Self {
+      quorum_size: self.quorum_size,
+      voters: self.voters,
+      servers: self.servers.clone(),
+    }
+  }
+}
+
+impl<I, A> CheapClone for Membership<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self {
+      quorum_size: self.quorum_size,
+      voters: self.voters,
+      servers: self.servers.cheap_clone(),
+    }
+  }
+}
+
+impl<I: Display, A: Display> Display for Membership<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let len = self.servers.len();
     write!(f, "[")?;
@@ -422,7 +485,9 @@ const U32_SIZE: usize = mem::size_of::<u32>();
 impl<I, A> Transformable for Membership<I, A>
 where
   I: Id + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
   A: Address + Send + Sync + 'static,
+  <A as Transformable>::Error: Send + Sync + 'static,
 {
   type Error = MembershipTransformableError<I, A>;
 
@@ -526,7 +591,10 @@ where
   async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
     &self,
     writer: &mut W,
-  ) -> std::io::Result<()> {
+  ) -> std::io::Result<()>
+  where
+    Self::Error: Send + Sync + 'static,
+  {
     use futures::io::AsyncWriteExt;
     let encoded_len = self.encoded_len();
     if encoded_len > u32::MAX as usize {
@@ -669,6 +737,7 @@ where
   ) -> std::io::Result<(usize, Self)>
   where
     Self: Sized,
+    Self::Error: Send + Sync + 'static,
   {
     use futures::AsyncReadExt;
     let mut inlined = [0; U32_SIZE * 2];
@@ -709,9 +778,7 @@ where
 }
 
 #[cfg(feature = "serde")]
-impl<I: Id + serde::Serialize, A: Address + serde::Serialize> serde::Serialize
-  for Membership<I, A>
-{
+impl<I: Eq + Hash + serde::Serialize, A: serde::Serialize> serde::Serialize for Membership<I, A> {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: serde::Serializer,
@@ -739,8 +806,11 @@ impl<I: Id + serde::Serialize, A: Address + serde::Serialize> serde::Serialize
 }
 
 #[cfg(feature = "serde")]
-impl<'de, I: Id + serde::Deserialize<'de>, A: Address + serde::Deserialize<'de>>
-  serde::Deserialize<'de> for Membership<I, A>
+impl<
+    'de,
+    I: Display + Eq + Hash + serde::Deserialize<'de>,
+    A: Display + Eq + serde::Deserialize<'de>,
+  > serde::Deserialize<'de> for Membership<I, A>
 {
   fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
   where
@@ -766,7 +836,7 @@ impl<I: Id, A: Address> FromIterator<Server<I, A>>
   }
 }
 
-impl<I: Id, A: Address> Membership<I, A> {
+impl<I, A> Membership<I, A> {
   /// Returns the quorum size based on the current membership.
   #[inline]
   pub const fn quorum_size(&self) -> usize {
@@ -790,6 +860,24 @@ impl<I: Id, A: Address> Membership<I, A> {
     self.servers.is_empty()
   }
 
+  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
+  pub fn contains_voter(&self) -> bool {
+    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
+  }
+
+  /// Only used for testing purposes
+  #[doc(hidden)]
+  #[cfg(any(test, feature = "test"))]
+  pub fn __empty() -> Self {
+    Self {
+      quorum_size: 0,
+      voters: 0,
+      servers: Default::default(),
+    }
+  }
+}
+
+impl<I: Eq + Hash, A> Membership<I, A> {
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
   where
@@ -803,11 +891,6 @@ impl<I: Id, A: Address> Membership<I, A> {
       .unwrap_or_default()
   }
 
-  /// Returns `true` if the membership contains a [`ServerSuffrage::Voter`].
-  pub fn contains_voter(&self) -> bool {
-    self.servers.values().any(|s| s.1 == ServerSuffrage::Voter)
-  }
-
   /// Returns true if the server identified by 'id' is in in the
   /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
@@ -817,7 +900,9 @@ impl<I: Id, A: Address> Membership<I, A> {
   {
     self.servers.contains_key(id)
   }
+}
 
+impl<I, A: Eq> Membership<I, A> {
   /// Returns true if the server address is in in the
   /// provided [`Membership`].
   pub fn contains_addr<Q>(&self, addr: &Q) -> bool
@@ -827,7 +912,9 @@ impl<I: Id, A: Address> Membership<I, A> {
   {
     self.servers.values().any(|s| s.0.borrow() == addr)
   }
+}
 
+impl<I: Id, A: Address> Membership<I, A> {
   /// Generates a new [`Membership`] from the current one and a
   /// [`MembershipChangeCommand`]. It's split from append_membership_entry so
   /// that it can be unit tested easily.
@@ -926,7 +1013,7 @@ impl<I: Id, A: Address> Membership<I, A> {
 /// log.
 // TODO(al8n): Implement a WAL for membership changes.
 #[viewit::viewit(setters(skip), getters(skip))]
-pub(crate) struct Memberships<I: Id, A: Address> {
+pub(crate) struct Memberships<I, A> {
   /// committed is the latest membership in the log/snapshot that has been
   /// committed (the one with the largest index).
   committed: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
@@ -935,7 +1022,7 @@ pub(crate) struct Memberships<I: Id, A: Address> {
   latest: ArcSwapAny<Arc<(u64, Membership<I, A>)>>,
 }
 
-impl<I: Id, A: Address> Memberships<I, A> {
+impl<I, A> Memberships<I, A> {
   pub(crate) fn set_latest(&self, membership: Membership<I, A>, index: u64) {
     self.latest.store(Arc::new((index, membership)))
   }
@@ -953,38 +1040,48 @@ impl<I: Id, A: Address> Memberships<I, A> {
   }
 }
 
-#[derive(PartialEq, Eq, thiserror::Error)]
-pub enum MembershipError<I: Id, A: Address> {
-  #[error("found duplicate server address {0}")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum MembershipError<I, A> {
   DuplicateAddress(A),
-  #[error("found duplicate server id {0}")]
   DuplicateId(I),
-  #[error("server id cannot be empty")]
   EmptyServerId,
-  #[error("no voter in the membership")]
   EmptyVoter,
-  #[error("membership changed since {since} (latest is {latest})")]
   AlreadyChanged { since: u64, latest: u64 },
-  #[error("membership is empty")]
   Empty,
 }
 
-impl<I: Id, A: Address> core::fmt::Debug for MembershipError<I, A> {
+impl<I: Display, A: Display> core::fmt::Display for MembershipError<I, A> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    core::fmt::Display::fmt(&self, f)
+    match self {
+      MembershipError::DuplicateAddress(addr) => {
+        write!(f, "found duplicate server address {}", addr)
+      }
+      MembershipError::DuplicateId(id) => write!(f, "found duplicate server id {}", id),
+      MembershipError::EmptyServerId => write!(f, "server id cannot be empty"),
+      MembershipError::EmptyVoter => write!(f, "no voter in the membership"),
+      MembershipError::AlreadyChanged { since, latest } => write!(
+        f,
+        "membership changed since {} (latest is {})",
+        since, latest
+      ),
+      MembershipError::Empty => write!(f, "membership is empty"),
+    }
   }
 }
+
+impl<I: Display + Debug, A: Display + Debug> std::error::Error for MembershipError<I, A> {}
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use smol_str::SmolStr;
   use std::net::SocketAddr;
 
-  fn sample_membership() -> Membership<String, SocketAddr> {
+  fn sample_membership() -> Membership<SmolStr, SocketAddr> {
     let mut membership = MembershipBuilder::new();
     membership
       .insert(Server {
-        id: "id0".to_string(),
+        id: "id0".into(),
         addr: "127.0.0.1:8080".parse().unwrap(),
         suffrage: ServerSuffrage::Nonvoter,
       })
@@ -992,7 +1089,7 @@ mod tests {
 
     membership
       .insert(Server {
-        id: "id1".to_string(),
+        id: "id1".into(),
         addr: "127.0.0.1:8081".parse().unwrap(),
         suffrage: ServerSuffrage::Voter,
       })
@@ -1000,7 +1097,7 @@ mod tests {
 
     membership
       .insert(Server {
-        id: "id2".to_string(),
+        id: "id2".into(),
         addr: "127.0.0.1:8082".parse().unwrap(),
         suffrage: ServerSuffrage::Nonvoter,
       })
@@ -1009,11 +1106,11 @@ mod tests {
     membership.build().unwrap()
   }
 
-  fn single_server() -> Membership<String, SocketAddr> {
+  fn single_server() -> Membership<SmolStr, SocketAddr> {
     let mut membership = MembershipBuilder::new();
     membership
       .insert(Server {
-        id: "id1".to_string(),
+        id: "id1".into(),
         addr: "127.0.0.1:8081".parse().unwrap(),
         suffrage: ServerSuffrage::Voter,
       })
@@ -1032,7 +1129,7 @@ mod tests {
   #[test]
   fn test_membership_validate() {
     let Err(MembershipError::EmptyVoter) =
-      MembershipBuilder::<String, SocketAddr>::new().validate()
+      MembershipBuilder::<SmolStr, SocketAddr>::new().validate()
     else {
       panic!("should have failed for non voter")
     };
@@ -1040,7 +1137,7 @@ mod tests {
     let mut members = MembershipBuilder::new();
 
     members.servers.insert(
-      "id0".to_string(),
+      "id0".into(),
       ("127.0.0.1:8080".parse().unwrap(), ServerSuffrage::Nonvoter),
     );
     let Err(MembershipError::EmptyVoter) = members.validate() else {
@@ -1048,12 +1145,12 @@ mod tests {
     };
 
     members.servers.insert(
-      "id1".to_string(),
+      "id1".into(),
       ("127.0.0.1:8081".parse().unwrap(), ServerSuffrage::Voter),
     );
     members.validate().expect("should be ok");
 
-    let id = "id0".to_string();
+    let id: SmolStr = "id0".into();
     let Err(MembershipError::DuplicateId(did)) = members.insert(Server::new(
       id.clone(),
       "127.0.0.1:8083".parse().unwrap(),
@@ -1065,7 +1162,7 @@ mod tests {
 
     let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let Err(MembershipError::DuplicateAddress(daddr)) =
-      members.insert(Server::new("id3".to_string(), addr, ServerSuffrage::Voter))
+      members.insert(Server::new("id3".into(), addr, ServerSuffrage::Voter))
     else {
       panic!("should have failed for duplicate addr")
     };
@@ -1075,7 +1172,7 @@ mod tests {
     let command = MembershipChangeCommand::remove_server(id, 0);
     members.next(1, command).unwrap();
 
-    let command = MembershipChangeCommand::demote_voter("id1".to_string(), 1);
+    let command = MembershipChangeCommand::demote_voter("id1".into(), 1);
     let Err(MembershipError::EmptyVoter) = members.next(1, command) else {
       panic!("should have failed for non voter")
     };
@@ -1084,7 +1181,7 @@ mod tests {
   #[test]
   fn test_membership_next_prev_index() {
     let command =
-      MembershipChangeCommand::add_voter("id2".to_string(), "127.0.0.1:8082".parse().unwrap(), 1);
+      MembershipChangeCommand::add_voter("id2".into(), "127.0.0.1:8082".parse().unwrap(), 1);
 
     let err = single_server().next(2, command).unwrap_err();
     assert_eq!(
@@ -1097,14 +1194,14 @@ mod tests {
 
     // current prev_index
     let command =
-      MembershipChangeCommand::add_voter("id3".to_string(), "127.0.0.1:8083".parse().unwrap(), 2);
+      MembershipChangeCommand::add_voter("id3".into(), "127.0.0.1:8083".parse().unwrap(), 2);
     single_server()
       .next(2, command)
       .expect("should have succeeded");
 
     // zero prev_index
     let command =
-      MembershipChangeCommand::add_voter("id4".to_string(), "127.0.0.1:8084".parse().unwrap(), 2);
+      MembershipChangeCommand::add_voter("id4".into(), "127.0.0.1:8084".parse().unwrap(), 2);
     single_server()
       .next(2, command)
       .expect("should have succeeded");
@@ -1112,12 +1209,9 @@ mod tests {
 
   #[test]
   fn test_membership_next_and_validate() {
-    let membership = MembershipBuilder::<String, SocketAddr>::default();
-    let command = MembershipChangeCommand::add_nonvoter(
-      "id1".to_string(),
-      "127.0.0.1:8080".parse().unwrap(),
-      0,
-    );
+    let membership = MembershipBuilder::<SmolStr, SocketAddr>::default();
+    let command =
+      MembershipChangeCommand::add_nonvoter("id1".into(), "127.0.0.1:8080".parse().unwrap(), 0);
     let err = membership.build().unwrap().next(1, command).unwrap_err();
     assert_eq!(err, MembershipError::EmptyVoter);
   }

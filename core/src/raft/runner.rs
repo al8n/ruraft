@@ -21,14 +21,17 @@ use super::{
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
+  observe,
   options::{Options, ReloadableOptions},
-  sidecar::Sidecar,
-  storage::{Log, LogStorage, SnapshotStorage, Storage, StableStorage, StorageError},
-  transport::{
-    AppendEntriesRequest, AppendEntriesResponse, Request, Response, RpcConsumer, Transport, VoteRequest, InstallSnapshotRequest, TimeoutNowRequest, HeartbeatRequest, TimeoutNowResponse, VoteResponse, InstallSnapshotResponse
-  },
   options::{ProtocolVersion, SnapshotVersion},
-  FinateStateMachine, Node, Role, State, observe, Observed,
+  sidecar::Sidecar,
+  storage::{Log, LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
+  transport::{
+    AppendEntriesRequest, AppendEntriesResponse, HeartbeatRequest, InstallSnapshotRequest,
+    InstallSnapshotResponse, Request, Response, RpcConsumer, TimeoutNowRequest, TimeoutNowResponse,
+    Transport, VoteRequest, VoteResponse,
+  },
+  FinateStateMachine, Node, Observed, Role, State,
 };
 
 #[cfg(feature = "metrics")]
@@ -486,7 +489,11 @@ where
     macro_rules! respond {
       ($this:ident.$tx:ident($resp:ident)) => {{
         if $tx.send(Response::vote($resp)).is_err() {
-          tracing::error!(target = "ruraft.rpc.vote_request", err = "channel closed", "failed to respond to vote request");
+          tracing::error!(
+            target = "ruraft.rpc.vote_request",
+            err = "channel closed",
+            "failed to respond to vote request"
+          );
         }
         return;
       }};
@@ -495,7 +502,10 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::gauge!("ruraft.rpc.vote_request", start.elapsed().as_millis() as f64));
+    scopeguard::defer!(metrics::gauge!(
+      "ruraft.rpc.vote_request",
+      start.elapsed().as_millis() as f64
+    ));
 
     observe(&self.observers, Observed::RequestVote(req.clone())).await;
 
@@ -508,7 +518,7 @@ where
 
     let candidate = req.header.from().clone();
     // if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
-		// Grant the vote
+    // Grant the vote
     let latest = self.memberships.latest().1.clone();
     if !latest.is_empty() && latest.contains_id(candidate.id()) {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not in membership");
@@ -564,7 +574,11 @@ where
     // Check if we've voted in this election before
     if last_vote_term == req.term {
       if let Some(last_vote_cand) = last_vote_cand {
-        tracing::info!(target = "ruraft.rpc.vote_request", term = req.term, "duplicate vote request for same term");
+        tracing::info!(
+          target = "ruraft.rpc.vote_request",
+          term = req.term,
+          "duplicate vote request for same term"
+        );
         if last_vote_cand == candidate {
           tracing::warn!(target = "ruraft.rpc.vote_request", candidate=%candidate, "duplicate vote request for candidate");
           resp.granted = true;
@@ -608,18 +622,16 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::gauge!("ruraft.rpc.install_snapshot", start.elapsed().as_millis() as f64));
+    scopeguard::defer!(metrics::gauge!(
+      "ruraft.rpc.install_snapshot",
+      start.elapsed().as_millis() as f64
+    ));
 
-    async fn respond<
-      R: futures::AsyncRead + Unpin,
-      I: nodecraft::Id,
-      A: nodecraft::Address
-    >(
+    async fn respond<R: futures::AsyncRead + Unpin, I: nodecraft::Id, A: nodecraft::Address>(
       reader: R,
       resp: InstallSnapshotResponse<I, A>,
       tx: oneshot::Sender<Response<I, A>>,
     ) {
-      
     }
 
     let mut resp = InstallSnapshotResponse {
@@ -630,7 +642,12 @@ where
 
     // Ignore an older term
     if req.term < self.current_term() {
-      tracing::info!(target = "ruraft.rpc.install_snapshot", request_term = req.term, current_term = self.current_term(), "ignoring installSnapshot request with older term than current term");
+      tracing::info!(
+        target = "ruraft.rpc.install_snapshot",
+        request_term = req.term,
+        current_term = self.current_term(),
+        "ignoring installSnapshot request with older term than current term"
+      );
     }
 
     // Increase the term if we see a newer one
@@ -642,21 +659,30 @@ where
     }
 
     // Save the current leader
-    self.leader.set(Some(req.header.from().clone()), &self.observers).await;
+    self
+      .leader
+      .set(Some(req.header.from().clone()), &self.observers)
+      .await;
 
     let snaps = self.storage.snapshot_store();
     // Create a new snapshot
-    let mut sink = match snaps.create(
-      snapshot_version(self.transport.version()),
-      req.last_log_term,
-      req.last_log_index,
-      req.membership,
-      req.membership_index,
-    ).await {
+    let mut sink = match snaps
+      .create(
+        snapshot_version(self.transport.version()),
+        req.last_log_term,
+        req.last_log_index,
+        req.membership,
+        req.membership_index,
+      )
+      .await
+    {
       Ok(s) => s,
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to create snapshot to install");
-        let err = Error::<F, S, T>::storage(<S::Error as StorageError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")));
+        let err = Error::<F, S, T>::storage(
+          <S::Error as StorageError>::snapshot(e)
+            .with_message(Cow::Borrowed("failed to create snapshot")),
+        );
         return;
       }
     };
@@ -671,11 +697,20 @@ where
   ) {
     self.leader.set(None, &self.observers).await;
     self.set_role(Role::Candidate, &self.observers).await;
-    self.candidate_from_leadership_transfer.store(true, Ordering::Release);
-    if tx.send(Response::TimeoutNow(TimeoutNowResponse {
-      header: self.transport.header(),
-    })).is_err() {
-      tracing::error!(target = "ruraft.rpc.timeout", err = "receiver channel closed", "failed to respond to timeout now request");
+    self
+      .candidate_from_leadership_transfer
+      .store(true, Ordering::Release);
+    if tx
+      .send(Response::TimeoutNow(TimeoutNowResponse {
+        header: self.transport.header(),
+      }))
+      .is_err()
+    {
+      tracing::error!(
+        target = "ruraft.rpc.timeout",
+        err = "receiver channel closed",
+        "failed to respond to timeout now request"
+      );
     }
   }
 
@@ -703,7 +738,11 @@ where
     todo!()
   }
 
-  async fn persist_vote(s: &S::Stable, term: u64, candidate: Node<T::Id, <T::Resolver as AddressResolver>::Address>) -> Result<(), <S::Stable as StableStorage>::Error> {
+  async fn persist_vote(
+    s: &S::Stable,
+    term: u64,
+    candidate: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Result<(), <S::Stable as StableStorage>::Error> {
     s.store_last_vote_term(term).await?;
     s.store_last_vote_candidate(candidate).await
   }
@@ -738,7 +777,6 @@ struct Inflight<F: FinateStateMachine, E> {
   log: Log<F::Id, F::Address, F::Data>,
   tx: ApplySender<F, E>,
 }
-
 
 fn snapshot_version(proto: ProtocolVersion) -> SnapshotVersion {
   match proto {

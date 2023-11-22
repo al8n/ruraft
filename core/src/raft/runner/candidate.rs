@@ -9,7 +9,6 @@ use crate::{
 
 use super::*;
 use futures::{future::Either, StreamExt};
-use nodecraft::{Address, Id};
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where
@@ -366,10 +365,10 @@ where
     let quorum = vote_futs.size_hint().0 / 2 + 1;
     futures::future::join_all(vote_futs).await;
     (quorum, rx)
-  } 
+  }
 }
 
-struct VoteResult<I: Id, A: Address> {
+struct VoteResult<I, A> {
   resp: VoteResponse<I, A>,
   voter_id: I,
 }
