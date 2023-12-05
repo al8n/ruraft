@@ -1,5 +1,5 @@
 [package]
-name = "ruraft-quic"
+name = "ruraft-quinn"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -10,4 +10,5 @@ rust-version.workspace = true
 description = "QUIC transport layer implementation for ruraft"
 
 [dependencies]
+futures = { workspace = true }
 quinn = "0.10"

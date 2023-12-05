@@ -1,4 +1,5 @@
 use std::{
+  borrow::Cow,
   collections::HashMap,
   sync::{
     atomic::{AtomicBool, Ordering},
@@ -20,13 +21,17 @@ use super::{
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
+  observe,
   options::{Options, ReloadableOptions},
+  options::{ProtocolVersion, SnapshotVersion},
   sidecar::Sidecar,
-  storage::{Log, LogStorage, SnapshotStorage, Storage},
+  storage::{Log, LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
   transport::{
-    AppendEntriesRequest, AppendEntriesResponse, Request, Response, RpcConsumer, Transport,
+    AppendEntriesRequest, AppendEntriesResponse, HeartbeatRequest, InstallSnapshotRequest,
+    InstallSnapshotResponse, Request, Response, RpcConsumer, TimeoutNowRequest, TimeoutNowResponse,
+    Transport, VoteRequest, VoteResponse,
   },
-  FinateStateMachine, Node, Role, State,
+  FinateStateMachine, Node, Observed, Role, State,
 };
 
 #[cfg(feature = "metrics")]
@@ -249,10 +254,10 @@ where
     // TODO: validate the request header
     match req {
       Request::AppendEntries(req) => self.handle_append_entries(tx, req).await,
-      Request::Vote(_) => todo!(),
-      Request::InstallSnapshot(_) => todo!(),
-      Request::TimeoutNow(_) => todo!(),
-      Request::Heartbeat(_) => todo!(),
+      Request::Vote(req) => self.handle_vote_request(tx, req).await,
+      Request::InstallSnapshot(req) => self.handle_install_snapshot_request(tx, req).await,
+      Request::TimeoutNow(req) => self.handle_timeout_now_request(tx, req).await,
+      Request::Heartbeat(req) => self.handle_heartbeat_request(tx, req).await,
     }
   }
 
@@ -475,6 +480,249 @@ where
     }
   }
 
+  /// Invoked when we get a request vote RPC call.
+  async fn handle_vote_request(
+    &self,
+    tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    req: VoteRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) {
+    macro_rules! respond {
+      ($this:ident.$tx:ident($resp:ident)) => {{
+        if $tx.send(Response::vote($resp)).is_err() {
+          tracing::error!(
+            target = "ruraft.rpc.vote_request",
+            err = "channel closed",
+            "failed to respond to vote request"
+          );
+        }
+        return;
+      }};
+    }
+
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::gauge!(
+      "ruraft.rpc.vote_request",
+      start.elapsed().as_millis() as f64
+    ));
+
+    observe(&self.observers, Observed::RequestVote(req.clone())).await;
+
+    // Setup a response
+    let mut resp = VoteResponse {
+      header: self.transport.header(),
+      term: self.current_term(),
+      granted: false,
+    };
+
+    let candidate = req.header.from().clone();
+    // if the Servers list is empty that mean the cluster is very likely trying to bootstrap,
+    // Grant the vote
+    let latest = self.memberships.latest().1.clone();
+    if !latest.is_empty() && latest.contains_id(candidate.id()) {
+      tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not in membership");
+      respond!(self.tx(resp))
+    }
+
+    if let Some(leader) = self.leader.load().as_ref() {
+      tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, leader=%leader, "rejecting vote request since we already have a leader");
+      respond!(self.tx(resp))
+    }
+
+    // Ignore an older term
+    if req.term < self.current_term() {
+      respond!(self.tx(resp))
+    }
+
+    // Increase the term if we see a newer one
+    if req.term > self.current_term() {
+      tracing::debug!(target = "ruraft.rpc.vote_request", candidate = %candidate, "lost leadership because received a vote request with a newer term");
+      // Ensure transition to follower
+      self.set_role(Role::Follower, &self.observers).await;
+      self.set_current_term(req.term);
+      resp.term = req.term;
+    }
+
+    // if we get a request for vote from a nonVoter  and the request term is higher,
+    // step down and update term, but reject the vote request
+    // This could happen when a node, previously voter, is converted to non-voter
+    // The reason we need to step in is to permit to the cluster to make progress in such a scenario
+    // More details about that in https://github.com/hashicorp/raft/pull/526
+    if !latest.is_empty() && !latest.is_voter(candidate.id()) {
+      tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not a voter");
+      respond!(self.tx(resp))
+    }
+
+    // Check if we have voted yet
+    let stable = self.storage.stable_store();
+    let last_vote_term = match stable.last_vote_term().await {
+      Ok(Some(v)) => v,
+      Ok(None) => 0,
+      Err(e) => {
+        tracing::error!(target = "ruraft.rpc.vote_request", candidate = %candidate, err=%e, "failed to get last vote term");
+        respond!(self.tx(resp))
+      }
+    };
+    let last_vote_cand = match stable.last_vote_candidate().await {
+      Ok(v) => v,
+      Err(e) => {
+        tracing::error!(target = "ruraft.rpc.vote_request", candidate = %candidate, err=%e, "failed to get last vote candidate");
+        respond!(self.tx(resp))
+      }
+    };
+    // Check if we've voted in this election before
+    if last_vote_term == req.term {
+      if let Some(last_vote_cand) = last_vote_cand {
+        tracing::info!(
+          target = "ruraft.rpc.vote_request",
+          term = req.term,
+          "duplicate vote request for same term"
+        );
+        if last_vote_cand == candidate {
+          tracing::warn!(target = "ruraft.rpc.vote_request", candidate=%candidate, "duplicate vote request for candidate");
+          resp.granted = true;
+        }
+        respond!(self.tx(resp))
+      }
+    }
+
+    // Reject if their term is older
+    let last = self.last_entry();
+    if last.term > req.last_log_term {
+      tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, last_term = last.term, last_candidate_term = req.last_log_term, "rejecting vote request since our last term is greater");
+      respond!(self.tx(resp))
+    }
+
+    if last.term == req.last_log_term && last.index > req.last_log_index {
+      tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, last_index = last.index, last_candidate_index = req.last_log_index, "rejecting vote request since our last index is greater");
+      respond!(self.tx(resp))
+    }
+
+    // Persist a vote for safety
+    if let Err(e) = Self::persist_vote(stable, req.term, candidate).await {
+      tracing::error!(target = "ruraft.rpc.vote_request", err=%e, "failed to persist vote");
+      respond!(self.tx(resp))
+    }
+
+    resp.granted = true;
+    self.update_last_contact();
+    respond!(self.tx(resp))
+  }
+
+  /// Invoked when we get a InstallSnapshot RPC call.
+  /// We must be in the follower state for this, since it means we are
+  /// too far behind a leader for log replay. This must only be called
+  /// from the main thread.
+  async fn handle_install_snapshot_request(
+    &self,
+    tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) {
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::gauge!(
+      "ruraft.rpc.install_snapshot",
+      start.elapsed().as_millis() as f64
+    ));
+
+    async fn respond<R: futures::AsyncRead + Unpin, I: nodecraft::Id, A: nodecraft::Address>(
+      reader: R,
+      resp: InstallSnapshotResponse<I, A>,
+      tx: oneshot::Sender<Response<I, A>>,
+    ) {
+    }
+
+    let mut resp = InstallSnapshotResponse {
+      header: self.transport.header(),
+      term: self.current_term(),
+      success: false,
+    };
+
+    // Ignore an older term
+    if req.term < self.current_term() {
+      tracing::info!(
+        target = "ruraft.rpc.install_snapshot",
+        request_term = req.term,
+        current_term = self.current_term(),
+        "ignoring installSnapshot request with older term than current term"
+      );
+    }
+
+    // Increase the term if we see a newer one
+    if req.term > self.current_term() {
+      // Ensure transition to follower
+      self.set_role(Role::Follower, &self.observers).await;
+      self.set_current_term(req.term);
+      resp.term = req.term;
+    }
+
+    // Save the current leader
+    self
+      .leader
+      .set(Some(req.header.from().clone()), &self.observers)
+      .await;
+
+    let snaps = self.storage.snapshot_store();
+    // Create a new snapshot
+    let mut sink = match snaps
+      .create(
+        snapshot_version(self.transport.version()),
+        req.last_log_term,
+        req.last_log_index,
+        req.membership,
+        req.membership_index,
+      )
+      .await
+    {
+      Ok(s) => s,
+      Err(e) => {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to create snapshot to install");
+        let err = Error::<F, S, T>::storage(
+          <S::Error as StorageError>::snapshot(e)
+            .with_message(Cow::Borrowed("failed to create snapshot")),
+        );
+        return;
+      }
+    };
+    todo!()
+  }
+
+  /// What happens when a server receives a [`TimeoutNowRequest`].
+  async fn handle_timeout_now_request(
+    &self,
+    tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    _: TimeoutNowRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) {
+    self.leader.set(None, &self.observers).await;
+    self.set_role(Role::Candidate, &self.observers).await;
+    self
+      .candidate_from_leadership_transfer
+      .store(true, Ordering::Release);
+    if tx
+      .send(Response::TimeoutNow(TimeoutNowResponse {
+        header: self.transport.header(),
+      }))
+      .is_err()
+    {
+      tracing::error!(
+        target = "ruraft.rpc.timeout",
+        err = "receiver channel closed",
+        "failed to respond to timeout now request"
+      );
+    }
+  }
+
+  /// What happens when a server receives a [`HeartbeatRequest`].
+  async fn handle_heartbeat_request(
+    &self,
+    tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+    req: HeartbeatRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) {
+    todo!()
+  }
+
   /// Used to apply all the committed entries that haven't been
   /// applied up to the given index limit.
   /// This can be called from both leaders and followers.
@@ -488,6 +736,15 @@ where
     futures: Option<HashMap<u64, Inflight<F, Error<F, S, T>>>>,
   ) {
     todo!()
+  }
+
+  async fn persist_vote(
+    s: &S::Stable,
+    term: u64,
+    candidate: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) -> Result<(), <S::Stable as StableStorage>::Error> {
+    s.store_last_vote_term(term).await?;
+    s.store_last_vote_candidate(candidate).await
   }
 
   fn spawn_sidecar(&self, role: Role) {
@@ -519,4 +776,10 @@ struct Inflight<F: FinateStateMachine, E> {
   dispatch: Instant,
   log: Log<F::Id, F::Address, F::Data>,
   tx: ApplySender<F, E>,
+}
+
+fn snapshot_version(proto: ProtocolVersion) -> SnapshotVersion {
+  match proto {
+    ProtocolVersion::V1 => SnapshotVersion::V1,
+  }
 }

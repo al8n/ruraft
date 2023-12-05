@@ -1,15 +1,22 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Node {
+  /// The id of the node
+  #[prost(bytes = "vec", tag = "2")]
+  pub id: ::prost::alloc::vec::Vec<u8>,
+  /// The address of the node
+  #[prost(bytes = "vec", tag = "3")]
+  pub addr: ::prost::alloc::vec::Vec<u8>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Header {
   /// ProtocolVerison is the version of the protocol the sender is speaking
   #[prost(int32, tag = "1")]
   pub protocol_version: i32,
-  /// The node id of the node sending the RPC Request or Response
-  #[prost(bytes = "vec", tag = "2")]
-  pub id: ::prost::alloc::vec::Vec<u8>,
-  /// Addr is the ServerAddr of the node sending theRPC Request or Response
-  #[prost(bytes = "vec", tag = "3")]
-  pub addr: ::prost::alloc::vec::Vec<u8>,
+  /// The source node which sending the request or response
+  #[prost(message, optional, tag = "2")]
+  pub from: ::core::option::Option<Node>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

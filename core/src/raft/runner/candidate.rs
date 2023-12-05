@@ -366,15 +366,6 @@ where
     futures::future::join_all(vote_futs).await;
     (quorum, rx)
   }
-
-  async fn persist_vote(
-    stable: &S::Stable,
-    term: u64,
-    cand: Node<T::Id, <T::Resolver as AddressResolver>::Address>,
-  ) -> Result<(), <S::Stable as StableStorage>::Error> {
-    stable.store_last_vote_term(term).await?;
-    stable.store_last_vote_candidate(cand).await
-  }
 }
 
 struct VoteResult<I, A> {

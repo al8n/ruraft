@@ -10,7 +10,7 @@ members = [
   "transport/net",
   "transport/tcp",
   "transport/grpc",
-  "transport/quic"
+  "transport/quinn"
 ]
 resolver = "2"
 
