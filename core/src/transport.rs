@@ -154,8 +154,8 @@ pub trait Transport: Send + Sync + 'static {
   /// Specifies the runtime environment for transport operations.
   type Runtime: Runtime;
 
-  /// The configuration used to construct the transport.
-  type Options: Send + Sync + 'static;
+  // /// The configuration used to construct the transport.
+  // type Options: Send + Sync + 'static;
 
   /// Unique identifier for nodes.
   type Id: Id + CheapClone + Send + Sync + 'static;
@@ -211,13 +211,13 @@ pub trait Transport: Send + Sync + 'static {
   /// Provides access to the node's address resolver.
   fn resolver(&self) -> &Self::Resolver;
 
-  /// Returns a transport
-  fn new(
-    resolver: Self::Resolver,
-    opts: Self::Options,
-  ) -> impl Future<Output = Result<Self, Self::Error>> + Send
-  where
-    Self: Sized;
+  // /// Returns a transport
+  // fn new(
+  //   resolver: Self::Resolver,
+  //   opts: Self::Options,
+  // ) -> impl Future<Output = Result<Self, Self::Error>> + Send
+  // where
+  //   Self: Sized;
 
   /// Returns a [`AppendEntriesPipeline`] that can be used to pipeline
   /// [`AppendEntriesRequest`]s.

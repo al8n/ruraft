@@ -2,6 +2,8 @@
 
 use std::{
   io,
+  net::SocketAddr,
+  path::{Path, PathBuf},
   pin::Pin,
   task::{Context, Poll},
   time::Duration,
@@ -15,44 +17,95 @@ use async_native_tls::{
   AcceptError, Certificate, Identity, Protocol, TlsAcceptor, TlsConnector,
   TlsStream as AsyncNativeTlsStream,
 };
-use futures::{AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite, Future};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};
 
 /// Tls transport based on native tls, comparing to the [`TlsTransport`](crate::tls::TlsTransport),
-/// this transport is using the native-tls but 
+/// this transport is using the native-tls but
 /// will add more overhead (deep clone on [`NativeTlsStreamOptions`] required) when building every connection.
-pub type NativeTlsTransport<I, A, D, F, W> =
-  NetTransport<I, A, D, NativeTls<F, <A as AddressResolver>::Runtime>, W>;
+pub type NativeTlsTransport<I, A, D, F, O, W> =
+  NetTransport<I, A, D, NativeTls<F, O, <A as AddressResolver>::Runtime>, W>;
 
 /// Tls stream layer
-#[repr(transparent)]
-pub struct NativeTls<F, R> {
+pub struct NativeTls<F, O, R> {
+  opener: O,
+  identity_file: PathBuf,
+  password: String,
+  stream_options: NativeTlsStreamOptions,
   _marker: std::marker::PhantomData<(F, R)>,
 }
 
-impl<F, R> Default for NativeTls<F, R> {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl<F, R> NativeTls<F, R> {
+impl<F, O, R> NativeTls<F, O, R> {
   /// Create a new tcp stream layer
   #[inline]
-  pub const fn new() -> Self {
+  pub fn new<P: AsRef<Path>>(
+    opener: O,
+    identity_file: P,
+    password: String,
+    stream_options: NativeTlsStreamOptions,
+  ) -> Self {
     Self {
+      opener,
+      identity_file: identity_file.as_ref().to_path_buf(),
+      password,
+      stream_options,
       _marker: std::marker::PhantomData,
     }
   }
 }
 
-impl<F, R: Runtime> StreamLayer for NativeTls<F, R>
+impl<F, O, R: Runtime> StreamLayer for NativeTls<F, O, R>
 where
+  O: Fn(&PathBuf) -> Pin<Box<dyn Future<Output = io::Result<F>> + Send + Sync + 'static>>
+    + Send
+    + Sync
+    + 'static,
   F: AsyncRead + Send + Sync + Unpin + 'static,
 {
   type Listener = NativeTlsListener<F, R>;
   type Stream = NativeTlsStream<R>;
+
+  async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
+    let mut connector = TlsConnector::new()
+      .use_sni(self.stream_options.use_sni())
+      .danger_accept_invalid_certs(self.stream_options.accept_invalid_certs())
+      .danger_accept_invalid_hostnames(self.stream_options.accept_invalid_hostnames())
+      .max_protocol_version(self.stream_options.max_protocol())
+      .min_protocol_version(self.stream_options.min_protocol());
+
+    if let Some(identity) = self.stream_options.identity() {
+      connector = connector.identity(identity.clone());
+    }
+
+    for cert in &self.stream_options.root_certificates {
+      connector = connector.add_root_certificate(cert.clone());
+    }
+
+    let conn = <<R::Net as Net>::TcpStream as TcpStream>::connect(addr).await?;
+    let stream = connector
+      .connect(self.stream_options.domain.clone(), conn)
+      .await
+      .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
+    Ok(NativeTlsStream { stream })
+  }
+
+  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    let f = (self.opener)(&self.identity_file).await?;
+    let acceptor = TlsAcceptor::new(f, &self.password)
+      .await
+      .map_err(|e| match e {
+        AcceptError::Io(e) => e,
+        AcceptError::NativeTls(e) => io::Error::new(io::ErrorKind::Other, e),
+      })?;
+    <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
+      .await
+      .map(|ln| NativeTlsListener {
+        ln,
+        acceptor,
+        _marker: std::marker::PhantomData,
+      })
+  }
 }
 
 /// Options for configuring the TLS listener binding.
@@ -75,27 +128,6 @@ where
   F: AsyncRead + Send + Sync + Unpin + 'static,
 {
   type Stream = NativeTlsStream<R>;
-
-  type Options = NativeNativeTlsListenerOptions<F>;
-
-  async fn bind(addr: std::net::SocketAddr, bind_opts: Self::Options) -> io::Result<Self>
-  where
-    Self: Sized,
-  {
-    let acceptor = TlsAcceptor::new(bind_opts.file, bind_opts.password)
-      .await
-      .map_err(|e| match e {
-        AcceptError::Io(e) => e,
-        AcceptError::NativeTls(e) => io::Error::new(io::ErrorKind::Other, e),
-      })?;
-    <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
-      .await
-      .map(|ln| Self {
-        ln,
-        acceptor,
-        _marker: std::marker::PhantomData,
-      })
-  }
 
   async fn accept(&self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
     let (conn, addr) = self.ln.accept().await?;
@@ -247,35 +279,6 @@ impl<R: Runtime> Connection for NativeTlsStream<R> {
 
   type OwnedWriteHalf = NativeTlsStreamOwnedWriteHalf<R>;
 
-  type Options = NativeTlsStreamOptions;
-
-  async fn connect(addr: std::net::SocketAddr, opts: Self::Options) -> io::Result<Self>
-  where
-    Self: Sized,
-  {
-    let mut connector = TlsConnector::new()
-      .use_sni(opts.use_sni())
-      .danger_accept_invalid_certs(opts.accept_invalid_certs())
-      .danger_accept_invalid_hostnames(opts.accept_invalid_hostnames())
-      .max_protocol_version(opts.max_protocol())
-      .min_protocol_version(opts.min_protocol());
-
-    if let Some(identity) = opts.identity() {
-      connector = connector.identity(identity.clone());
-    }
-
-    for cert in opts.root_certificates {
-      connector = connector.add_root_certificate(cert);
-    }
-
-    let conn = <<R::Net as Net>::TcpStream as TcpStream>::connect(addr).await?;
-    let stream = connector
-      .connect(opts.domain, conn)
-      .await
-      .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
-    Ok(Self { stream })
-  }
-
   fn set_write_timeout(&self, timeout: Option<Duration>) {
     self.stream.get_ref().set_write_timeout(timeout)
   }
@@ -296,6 +299,9 @@ impl<R: Runtime> Connection for NativeTlsStream<R> {
     use futures::AsyncReadExt;
 
     let (r, w) = self.stream.split();
-    (NativeTlsStreamOwnedReadHalf { inner: r }, NativeTlsStreamOwnedWriteHalf { inner: w })
+    (
+      NativeTlsStreamOwnedReadHalf { inner: r },
+      NativeTlsStreamOwnedWriteHalf { inner: w },
+    )
   }
 }

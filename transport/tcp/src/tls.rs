@@ -1,5 +1,6 @@
 use std::{
   io,
+  net::SocketAddr,
   pin::Pin,
   sync::Arc,
   task::{Context, Poll},
@@ -14,28 +15,27 @@ use async_rustls::{client, server, TlsAcceptor, TlsConnector};
 use futures::{AsyncRead, AsyncWrite};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};
-use rustls::{ClientConfig, ServerConfig};
+use rustls::{ClientConfig, ServerConfig, ServerName};
 
 /// Tls transport based on `rustls`
 pub type TlsTransport<I, A, D, W> = NetTransport<I, A, D, Tls<<A as AddressResolver>::Runtime>, W>;
 
-/// Tcp stream layer
-#[repr(transparent)]
+/// Tls stream layer
 pub struct Tls<R> {
+  domain: ServerName,
+  server_config: Arc<ServerConfig>,
+  client_config: Arc<ClientConfig>,
   _marker: std::marker::PhantomData<R>,
-}
-
-impl<R> Default for Tls<R> {
-  fn default() -> Self {
-    Self::new()
-  }
 }
 
 impl<R> Tls<R> {
   /// Create a new tcp stream layer
   #[inline]
-  pub const fn new() -> Self {
+  pub fn new(domain: ServerName, server_config: ServerConfig, client_config: ClientConfig) -> Self {
     Self {
+      domain,
+      server_config: Arc::new(server_config),
+      client_config: Arc::new(client_config),
       _marker: std::marker::PhantomData,
     }
   }
@@ -44,6 +44,24 @@ impl<R> Tls<R> {
 impl<R: Runtime> StreamLayer for Tls<R> {
   type Listener = TlsListener<R>;
   type Stream = TlsStream<R>;
+
+  async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
+    let connector = TlsConnector::from(self.client_config.clone());
+    let conn = <<R::Net as Net>::TcpStream as TcpStream>::connect(addr).await?;
+    let stream = connector.connect(self.domain.clone(), conn).await?;
+    Ok(TlsStream {
+      stream: TlsStreamKind::Client(stream),
+    })
+  }
+
+  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
+      .await
+      .map(|ln| TlsListener {
+        ln,
+        acceptor: TlsAcceptor::from(self.server_config.clone()),
+      })
+  }
 }
 
 /// Listener of the TLS stream layer
@@ -54,20 +72,6 @@ pub struct TlsListener<R: Runtime> {
 
 impl<R: Runtime> Listener for TlsListener<R> {
   type Stream = TlsStream<R>;
-
-  type Options = Arc<ServerConfig>;
-
-  async fn bind(addr: std::net::SocketAddr, bind_opts: Self::Options) -> io::Result<Self>
-  where
-    Self: Sized,
-  {
-    <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
-      .await
-      .map(|ln| Self {
-        ln,
-        acceptor: TlsAcceptor::from(bind_opts.clone()),
-      })
-  }
 
   async fn accept(&self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
     let (conn, addr) = self.ln.accept().await?;
@@ -92,15 +96,26 @@ enum TlsStreamKind<R: Runtime> {
 }
 
 impl<R: Runtime> TlsStreamKind<R> {
-  fn split(self) -> (TlsStreamOwnedReadHalfKind<R>, TlsStreamOwnedWriteHalfKind<R>) {
+  fn split(
+    self,
+  ) -> (
+    TlsStreamOwnedReadHalfKind<R>,
+    TlsStreamOwnedWriteHalfKind<R>,
+  ) {
     match self {
       Self::Client(s) => {
         let (r, w) = futures::AsyncReadExt::split(s);
-        (TlsStreamOwnedReadHalfKind::Client(r), TlsStreamOwnedWriteHalfKind::Client(w))
+        (
+          TlsStreamOwnedReadHalfKind::Client(r),
+          TlsStreamOwnedWriteHalfKind::Client(w),
+        )
       }
       Self::Server(s) => {
         let (r, w) = futures::AsyncReadExt::split(s);
-        (TlsStreamOwnedReadHalfKind::Server(r), TlsStreamOwnedWriteHalfKind::Server(w))
+        (
+          TlsStreamOwnedReadHalfKind::Server(r),
+          TlsStreamOwnedWriteHalfKind::Server(w),
+        )
       }
     }
   }
@@ -307,20 +322,6 @@ impl<R: Runtime> Connection for TlsStream<R> {
 
   type OwnedWriteHalf = TlsStreamOwnedWriteHalf<R>;
 
-  type Options = TlsStreamOptions;
-
-  async fn connect(addr: std::net::SocketAddr, opts: Self::Options) -> io::Result<Self>
-  where
-    Self: Sized,
-  {
-    let connector = TlsConnector::from(opts.config);
-    let conn = <<R::Net as Net>::TcpStream as TcpStream>::connect(addr).await?;
-    let stream = connector.connect(opts.domain, conn).await?;
-    Ok(Self {
-      stream: TlsStreamKind::Client(stream),
-    })
-  }
-
   fn set_write_timeout(&self, timeout: Option<Duration>) {
     match self {
       Self {
@@ -367,6 +368,9 @@ impl<R: Runtime> Connection for TlsStream<R> {
 
   fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
     let (r, w) = self.stream.split();
-    (TlsStreamOwnedReadHalf { inner: r }, TlsStreamOwnedWriteHalf { inner: w })
+    (
+      TlsStreamOwnedReadHalf { inner: r },
+      TlsStreamOwnedWriteHalf { inner: w },
+    )
   }
 }
