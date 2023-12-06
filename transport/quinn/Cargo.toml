@@ -11,4 +11,7 @@ description = "QUIC transport layer implementation for ruraft"
 
 [dependencies]
 futures = { workspace = true }
+nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
+pin-project = { workspace = true }
+ruraft-net = { path = "../net" }
 quinn = "0.10"

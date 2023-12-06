@@ -190,7 +190,7 @@ where
 /// Encapsulates configuration for the network transport layer.
 #[viewit::viewit]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NetTransportOptions<I: Id, A: Address, S: StreamLayer> {
+pub struct NetTransportOptions<I: Id, A: Address> {
   /// The protocol version to use for encoding/decoding messages.
   protocol_version: ProtocolVersion,
 
@@ -235,33 +235,12 @@ pub struct NetTransportOptions<I: Id, A: Address, S: StreamLayer> {
   /// the timeout by (SnapshotSize / TimeoutScale).
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   timeout: Duration,
-
-  /// Options for configuring the listener binding.
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "<S::Listener as Listener>::Options: ::serde::Serialize + ::serde::de::DeserializeOwned"
-    )
-  )]
-  listener_options: <S::Listener as Listener>::Options,
-
-  /// Options for configuring the stream connecting.
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "<S::Stream as Connection>::Options: ::serde::Serialize + ::serde::de::DeserializeOwned"
-    )
-  )]
-  stream_options: <S::Stream as Connection>::Options,
 }
 
-impl<I, A, S> Clone for NetTransportOptions<I, A, S>
+impl<I, A> Clone for NetTransportOptions<I, A>
 where
   I: Id,
   A: Address,
-  S: StreamLayer,
-  <S::Stream as Connection>::Options: Clone,
-  <S::Listener as Listener>::Options: Clone,
 {
   fn clone(&self) -> Self {
     Self {
@@ -271,25 +250,18 @@ where
       header: self.header.clone(),
       advertise_addr: self.advertise_addr,
       protocol_version: self.protocol_version,
-      listener_options: self.listener_options.clone(),
-      stream_options: self.stream_options.clone(),
     }
   }
 }
 
-impl<I, A, S> NetTransportOptions<I, A, S>
+impl<I, A> NetTransportOptions<I, A>
 where
   I: Id,
   A: Address,
-  S: StreamLayer,
 {
   /// Create a new [`NetTransportOptions`] with default values.
   #[inline]
-  pub const fn new(
-    header: Header<I, A>,
-    listener_options: <S::Listener as Listener>::Options,
-    stream_options: <S::Stream as Connection>::Options,
-  ) -> Self {
+  pub const fn new(header: Header<I, A>) -> Self {
     Self {
       max_pool: 3,
       max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -297,8 +269,6 @@ where
       header,
       advertise_addr: None,
       protocol_version: ProtocolVersion::V1,
-      listener_options,
-      stream_options,
     }
   }
 }
@@ -335,8 +305,91 @@ where
   max_pool: usize,
   max_inflight_requests: usize,
   timeout: Duration,
-  stream_options: <S::Stream as Connection>::Options,
+  stream_layer: S,
   _w: std::marker::PhantomData<W>,
+}
+
+impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
+where
+  I: Id + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
+  A: AddressResolver,
+  A::Address: Send + Sync + 'static,
+  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+{
+  pub async fn new(
+    resolver: A,
+    stream_layer: S,
+    opts: NetTransportOptions<I, A::Address>,
+  ) -> Result<Self, Error<I, A, W>> {
+    let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
+    let advertise_addr = if let Some(addr) = opts.advertise_addr {
+      addr
+    } else {
+      tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
+      resolver
+        .resolve(opts.header.from().addr())
+        .await
+        .map_err(<Error<_, _, _> as TransportError>::resolver)?
+    };
+    let auto_port = advertise_addr.port() == 0;
+
+    let ln = stream_layer.bind(advertise_addr)
+      .await
+      .map_err(|e| {
+        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
+        Error::IO(e)
+      })?;
+
+    let advertise_addr = if auto_port {
+      let addr = ln.local_addr()?;
+      tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
+      addr
+    } else {
+      advertise_addr
+    };
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let wg = AsyncWaitGroup::from(1);
+    let (producer, consumer) = rpc::<I, A::Address, D>();
+    let request_handler = RequestHandler {
+      ln,
+      local_header: opts.header.clone(),
+      producer,
+      shutdown: shutdown.clone(),
+      shutdown_rx,
+      wg: wg.clone(),
+    };
+    <A::Runtime as Runtime>::spawn_detach(RequestHandler::<I, A::Address, D, S>::run::<A, W>(
+      request_handler,
+    ));
+
+    Ok(Self {
+      shutdown,
+      shutdown_tx,
+      local_header: opts.header,
+      advertise_addr,
+      resolver,
+      consumer,
+      conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
+      conn_size: AtomicUsize::new(0),
+      protocol_version: opts.protocol_version,
+      wg,
+      max_pool: opts.max_pool,
+      max_inflight_requests: if opts.max_inflight_requests == 0 {
+        DEFAULT_MAX_INFLIGHT_REQUESTS
+      } else {
+        opts.max_inflight_requests
+      },
+      timeout: opts.timeout,
+      stream_layer,
+      _w: std::marker::PhantomData,
+    })
+  }
 }
 
 impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
@@ -353,7 +406,6 @@ where
 {
   type Error = Error<Self::Id, Self::Resolver, Self::Wire>;
   type Runtime = <Self::Resolver as AddressResolver>::Runtime;
-  type Options = NetTransportOptions<Self::Id, <Self::Resolver as AddressResolver>::Address, S>;
 
   type Id = I;
 
@@ -391,78 +443,6 @@ where
     &self.resolver
   }
 
-  async fn new(resolver: Self::Resolver, opts: Self::Options) -> Result<Self, Self::Error> {
-    let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
-    let advertise_addr = if let Some(addr) = opts.advertise_addr {
-      addr
-    } else {
-      tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
-      resolver
-        .resolve(opts.header.from().addr())
-        .await
-        .map_err(<Self::Error as TransportError>::resolver)?
-    };
-    let auto_port = advertise_addr.port() == 0;
-
-    let ln = <S::Listener as Listener>::bind(advertise_addr, opts.listener_options)
-      .await
-      .map_err(|e| {
-        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
-        Error::IO(e)
-      })?;
-
-    let advertise_addr = if auto_port {
-      let addr = ln.local_addr()?;
-      tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
-      addr
-    } else {
-      advertise_addr
-    };
-
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let wg = AsyncWaitGroup::from(1);
-    let (producer, consumer) =
-      rpc::<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>();
-    let request_handler = RequestHandler {
-      ln,
-      local_header: opts.header.clone(),
-      producer,
-      shutdown: shutdown.clone(),
-      shutdown_rx,
-      wg: wg.clone(),
-    };
-    <Self::Runtime as Runtime>::spawn_detach(RequestHandler::<
-      I,
-      <Self::Resolver as AddressResolver>::Address,
-      D,
-      S,
-    >::run::<Self::Resolver, Self::Wire>(
-      request_handler
-    ));
-
-    Ok(Self {
-      shutdown,
-      shutdown_tx,
-      local_header: opts.header,
-      advertise_addr,
-      resolver,
-      consumer,
-      conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
-      conn_size: AtomicUsize::new(0),
-      protocol_version: opts.protocol_version,
-      wg,
-      max_pool: opts.max_pool,
-      max_inflight_requests: if opts.max_inflight_requests == 0 {
-        DEFAULT_MAX_INFLIGHT_REQUESTS
-      } else {
-        opts.max_inflight_requests
-      },
-      timeout: opts.timeout,
-      stream_options: opts.stream_options,
-      _w: std::marker::PhantomData,
-    })
-  }
-
   async fn append_entries_pipeline(
     &self,
     target: Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
@@ -485,7 +465,7 @@ where
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
 
-    let conn = <S::Stream as Connection>::connect(addr, self.stream_options.clone())
+    let conn = self.stream_layer.connect(addr)
       .await
       .map_err(<Self::Error as TransportError>::io)?;
 
@@ -709,7 +689,7 @@ where
         }
         None => {
           let conn =
-            <S::Stream as Connection>::connect(target, self.stream_options.clone()).await?;
+            self.stream_layer.connect(target).await?;
           if !self.timeout.is_zero() {
             conn.set_timeout(Some(self.timeout));
           }
