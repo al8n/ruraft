@@ -10,17 +10,6 @@ pub trait Listener: Send + Sync + 'static {
   /// The type of the network stream associated with this listener.
   type Stream: Connection;
 
-  /// Options for configuring the listener binding.
-  type Options: Send + Sync + 'static;
-
-  /// Binds the listener to a given socket address.
-  fn bind(
-    addr: SocketAddr,
-    bind_opts: Self::Options,
-  ) -> impl Future<Output = io::Result<Self>> + Send
-  where
-    Self: Sized;
-
   /// Accepts an incoming connection.
   fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, SocketAddr)>> + Send;
 
@@ -37,17 +26,6 @@ pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static {
   type OwnedReadHalf: AsyncRead + Unpin + Send + Sync + 'static;
   /// The type representing the owned write half of the connection.
   type OwnedWriteHalf: AsyncWrite + Unpin + Send + Sync + 'static;
-
-  /// Options for configuring the connection connecting.
-  type Options: Clone + Send + Sync + 'static;
-
-  /// Establishes a connection to a specified socket address.
-  fn connect(
-    addr: SocketAddr,
-    opts: Self::Options,
-  ) -> impl Future<Output = io::Result<Self>> + Send
-  where
-    Self: Sized;
 
   /// Sets the read and write timeout for the connection.
   fn set_timeout(&self, timeout: Option<Duration>) {
@@ -87,4 +65,10 @@ pub trait StreamLayer: Send + Sync + 'static {
 
   /// The connection type for the network stream.
   type Stream: Connection;
+
+  /// Establishes a connection to a specified socket address.
+  fn connect(&self, addr: SocketAddr) -> impl Future<Output = io::Result<Self::Stream>> + Send;
+
+  /// Binds the listener to a given socket address.
+  fn bind(&self, addr: SocketAddr) -> impl Future<Output = io::Result<Self::Listener>> + Send;
 }

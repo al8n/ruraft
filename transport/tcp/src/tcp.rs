@@ -12,8 +12,10 @@ use agnostic::{
 };
 use futures::{AsyncRead, AsyncWrite};
 use nodecraft::resolver::AddressResolver;
-use ruraft_net::{stream::{Connection, Listener, StreamLayer}, NetTransport};
-
+use ruraft_net::{
+  stream::{Connection, Listener, StreamLayer},
+  NetTransport,
+};
 
 /// Tcp transport
 pub type TcpTransport<I, A, D, W> = NetTransport<I, A, D, Tcp<<A as AddressResolver>::Runtime>, W>;
@@ -43,6 +45,18 @@ impl<R> Tcp<R> {
 impl<R: Runtime> StreamLayer for Tcp<R> {
   type Listener = TcpListener<R>;
   type Stream = TcpStream<R>;
+
+  async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
+    <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
+      .await
+      .map(TcpStream)
+  }
+
+  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
+      .await
+      .map(TcpListener)
+  }
 }
 
 /// Listener of the TCP stream layer
@@ -51,16 +65,6 @@ pub struct TcpListener<R: Runtime>(<R::Net as Net>::TcpListener);
 
 impl<R: Runtime> Listener for TcpListener<R> {
   type Stream = TcpStream<R>;
-  type Options = ();
-
-  async fn bind(addr: SocketAddr, _: Self::Options) -> io::Result<Self>
-  where
-    Self: Sized,
-  {
-    <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
-      .await
-      .map(Self)
-  }
 
   async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
     self
@@ -107,17 +111,6 @@ impl<R: Runtime> Connection for TcpStream<R> {
   type OwnedReadHalf = <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::OwnedReadHalf;
 
   type OwnedWriteHalf = <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::OwnedWriteHalf;
-
-  type Options = ();
-
-  async fn connect(addr: SocketAddr, _: Self::Options) -> io::Result<Self>
-  where
-    Self: Sized,
-  {
-    <<R::Net as Net>::TcpStream as agnostic::net::TcpStream>::connect(addr)
-      .await
-      .map(Self)
-  }
 
   fn set_write_timeout(&self, timeout: Option<Duration>) {
     self.0.set_write_timeout(timeout)
