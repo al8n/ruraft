@@ -43,6 +43,8 @@ tracing = { workspace = true }
 viewit = { workspace = true }
 wg = { workspace = true }
 
+ruraft-utils = { path = "../utils" }
+
 # serialization/deserialization related dependencies
 serde = { workspace = true, optional = true, features = ["rc"] }
 serde_repr = { version = "0.1", optional = true }

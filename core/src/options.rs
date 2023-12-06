@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use ruraft_utils::Duration as DurationNoUninit;
 use std::time::Duration;
 
 /// The version of the protocol (which includes RPC messages
@@ -215,40 +216,6 @@ impl Options {
       election_timeout: other.election_timeout.to_std(),
       ..*self
     }
-  }
-}
-
-#[derive(bytemuck::NoUninit, PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Copy)]
-#[repr(transparent)]
-pub(crate) struct DurationNoUninit(u64);
-
-impl DurationNoUninit {
-  pub(crate) const fn from_std(d: Duration) -> Self {
-    Self(d.as_millis() as u64)
-  }
-
-  pub(crate) const fn to_std(self) -> Duration {
-    Duration::from_millis(self.0)
-  }
-}
-
-#[cfg(feature = "serde")]
-impl serde::Serialize for DurationNoUninit {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: serde::Serializer,
-  {
-    humantime_serde::serialize(&self.to_std(), serializer)
-  }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for DurationNoUninit {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: serde::Deserializer<'de>,
-  {
-    humantime_serde::deserialize(deserializer).map(DurationNoUninit::from_std)
   }
 }
 

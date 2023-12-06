@@ -1,9 +1,10 @@
 use std::{
   io,
+  net::SocketAddr,
   pin::Pin,
   sync::Arc,
   task::{Context, Poll},
-  time::Duration, net::SocketAddr,
+  time::Duration,
 };
 
 use agnostic::{
@@ -30,11 +31,7 @@ pub struct Tls<R> {
 impl<R> Tls<R> {
   /// Create a new tcp stream layer
   #[inline]
-  pub fn new(
-    domain: ServerName,
-    server_config: ServerConfig,
-    client_config: ClientConfig,
-  ) -> Self {
+  pub fn new(domain: ServerName, server_config: ServerConfig, client_config: ClientConfig) -> Self {
     Self {
       domain,
       server_config: Arc::new(server_config),

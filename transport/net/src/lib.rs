@@ -338,12 +338,10 @@ where
     };
     let auto_port = advertise_addr.port() == 0;
 
-    let ln = stream_layer.bind(advertise_addr)
-      .await
-      .map_err(|e| {
-        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
-        Error::IO(e)
-      })?;
+    let ln = stream_layer.bind(advertise_addr).await.map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
+      Error::IO(e)
+    })?;
 
     let advertise_addr = if auto_port {
       let addr = ln.local_addr()?;
@@ -465,7 +463,9 @@ where
       .await
       .map_err(<Self::Error as TransportError>::resolver)?;
 
-    let conn = self.stream_layer.connect(addr)
+    let conn = self
+      .stream_layer
+      .connect(addr)
       .await
       .map_err(<Self::Error as TransportError>::io)?;
 
@@ -688,8 +688,7 @@ where
           conn
         }
         None => {
-          let conn =
-            self.stream_layer.connect(target).await?;
+          let conn = self.stream_layer.connect(target).await?;
           if !self.timeout.is_zero() {
             conn.set_timeout(Some(self.timeout));
           }

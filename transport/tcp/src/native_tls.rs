@@ -2,9 +2,11 @@
 
 use std::{
   io,
+  net::SocketAddr,
+  path::{Path, PathBuf},
   pin::Pin,
   task::{Context, Poll},
-  time::Duration, net::SocketAddr, path::{Path, PathBuf},
+  time::Duration,
 };
 
 use agnostic::{
@@ -55,7 +57,10 @@ impl<F, O, R> NativeTls<F, O, R> {
 
 impl<F, O, R: Runtime> StreamLayer for NativeTls<F, O, R>
 where
-  O: Fn(&PathBuf) -> Pin<Box<dyn Future<Output = io::Result<F>> + Send + Sync + 'static>> + Send + Sync + 'static,
+  O: Fn(&PathBuf) -> Pin<Box<dyn Future<Output = io::Result<F>> + Send + Sync + 'static>>
+    + Send
+    + Sync
+    + 'static,
   F: AsyncRead + Send + Sync + Unpin + 'static,
 {
   type Listener = NativeTlsListener<F, R>;
