@@ -3,7 +3,6 @@
 use std::{
   io,
   net::SocketAddr,
-  path::{Path, PathBuf},
   pin::Pin,
   task::{Context, Poll},
   time::Duration,
@@ -13,123 +12,76 @@ use agnostic::{
   net::{Net, TcpListener, TcpStream},
   Runtime,
 };
-use async_native_tls::{
-  AcceptError, Certificate, Identity, Protocol, TlsAcceptor, TlsConnector,
-  TlsStream as AsyncNativeTlsStream,
-};
-use futures::{AsyncRead, AsyncWrite, Future};
+use async_native_tls::TlsStream as AsyncNativeTlsStream;
+pub use async_native_tls::{TlsAcceptor, TlsConnector};
+use futures::{AsyncRead, AsyncWrite};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};
 
-/// Tls transport based on native tls, comparing to the [`TlsTransport`](crate::tls::TlsTransport),
-/// this transport is using the native-tls but
-/// will add more overhead (deep clone on [`NativeTlsStreamOptions`] required) when building every connection.
-pub type NativeTlsTransport<I, A, D, F, O, W> =
-  NetTransport<I, A, D, NativeTls<F, O, <A as AddressResolver>::Runtime>, W>;
+/// Tls transport based on native tls
+pub type NativeTlsTransport<I, A, D, W> =
+  NetTransport<I, A, D, NativeTls<<A as AddressResolver>::Runtime>, W>;
 
 /// Tls stream layer
-pub struct NativeTls<F, O, R> {
-  opener: O,
-  identity_file: PathBuf,
-  password: String,
-  stream_options: NativeTlsStreamOptions,
-  _marker: std::marker::PhantomData<(F, R)>,
+pub struct NativeTls<R> {
+  acceptor: Option<TlsAcceptor>,
+  connector: TlsConnector,
+  domain: String,
+  _marker: std::marker::PhantomData<R>,
 }
 
-impl<F, O, R> NativeTls<F, O, R> {
+impl<R> NativeTls<R> {
   /// Create a new tcp stream layer
   #[inline]
-  pub fn new<P: AsRef<Path>>(
-    opener: O,
-    identity_file: P,
-    password: String,
-    stream_options: NativeTlsStreamOptions,
+  pub fn new(
+    server_name: impl Into<String>,
+    acceptor: TlsAcceptor,
+    connector: TlsConnector,
   ) -> Self {
     Self {
-      opener,
-      identity_file: identity_file.as_ref().to_path_buf(),
-      password,
-      stream_options,
+      acceptor: Some(acceptor),
+      connector,
+      domain: server_name.into(),
       _marker: std::marker::PhantomData,
     }
   }
 }
 
-impl<F, O, R: Runtime> StreamLayer for NativeTls<F, O, R>
-where
-  O: Fn(&PathBuf) -> Pin<Box<dyn Future<Output = io::Result<F>> + Send + Sync + 'static>>
-    + Send
-    + Sync
-    + 'static,
-  F: AsyncRead + Send + Sync + Unpin + 'static,
-{
-  type Listener = NativeTlsListener<F, R>;
+impl<R: Runtime> StreamLayer for NativeTls<R> {
+  type Listener = NativeTlsListener<R>;
   type Stream = NativeTlsStream<R>;
 
   async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
-    let mut connector = TlsConnector::new()
-      .use_sni(self.stream_options.use_sni())
-      .danger_accept_invalid_certs(self.stream_options.accept_invalid_certs())
-      .danger_accept_invalid_hostnames(self.stream_options.accept_invalid_hostnames())
-      .max_protocol_version(self.stream_options.max_protocol())
-      .min_protocol_version(self.stream_options.min_protocol());
-
-    if let Some(identity) = self.stream_options.identity() {
-      connector = connector.identity(identity.clone());
-    }
-
-    for cert in &self.stream_options.root_certificates {
-      connector = connector.add_root_certificate(cert.clone());
-    }
-
     let conn = <<R::Net as Net>::TcpStream as TcpStream>::connect(addr).await?;
-    let stream = connector
-      .connect(self.stream_options.domain.clone(), conn)
+    let stream = self
+      .connector
+      .connect(self.domain.clone(), conn)
       .await
       .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
     Ok(NativeTlsStream { stream })
   }
 
-  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
-    let f = (self.opener)(&self.identity_file).await?;
-    let acceptor = TlsAcceptor::new(f, &self.password)
-      .await
-      .map_err(|e| match e {
-        AcceptError::Io(e) => e,
-        AcceptError::NativeTls(e) => io::Error::new(io::ErrorKind::Other, e),
-      })?;
+  async fn bind(&mut self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    let acceptor = self
+      .acceptor
+      .take()
+      .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "already bind to local machine"))?;
     <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
       .await
-      .map(|ln| NativeTlsListener {
-        ln,
-        acceptor,
-        _marker: std::marker::PhantomData,
-      })
+      .map(|ln| NativeTlsListener { ln, acceptor })
   }
 }
 
-/// Options for configuring the TLS listener binding.
-pub struct NativeNativeTlsListenerOptions<R> {
-  /// The password for the identity file.
-  pub password: String,
-  /// The identity file.
-  pub file: R,
-}
-
 /// Listener of the TLS stream layer
-pub struct NativeTlsListener<F, R: Runtime> {
+pub struct NativeTlsListener<R: Runtime> {
   ln: <R::Net as Net>::TcpListener,
   acceptor: TlsAcceptor,
-  _marker: std::marker::PhantomData<F>,
 }
 
-impl<F, R: Runtime> Listener for NativeTlsListener<F, R>
-where
-  F: AsyncRead + Send + Sync + Unpin + 'static,
-{
+impl<R: Runtime> Listener for NativeTlsListener<R> {
   type Stream = NativeTlsStream<R>;
 
-  async fn accept(&self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
+  async fn accept(&mut self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
     let (conn, addr) = self.ln.accept().await?;
     let stream = self
       .acceptor
@@ -141,67 +93,6 @@ where
 
   fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
     self.ln.local_addr()
-  }
-}
-
-/// The options used to connect remote node.
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  getters(vis_all = "pub"),
-  setters(vis_all = "pub", prefix = "with")
-)]
-#[derive(Clone)]
-pub struct NativeTlsStreamOptions {
-  /// The domain name of the server.
-  #[viewit(getter(skip), setter(skip))]
-  domain: String,
-  /// The identity to be used for client certificate authentication.
-  #[viewit(getter(style = "ref"))]
-  identity: Option<Identity>,
-  /// The minimum supported protocol version.
-  min_protocol: Option<Protocol>,
-  /// The maximum supported protocol version.
-  max_protocol: Option<Protocol>,
-  /// Certificates to the set of roots that the connector will trust.
-  #[viewit(setter(skip), getter(style = "ref"))]
-  root_certificates: Vec<Certificate>,
-  /// Controls the use of certificate validation.
-  accept_invalid_certs: bool,
-  /// Controls the use of hostname verification.
-  accept_invalid_hostnames: bool,
-  /// Controls the use of Server Name Indication (SNI).
-  use_sni: bool,
-}
-
-impl NativeTlsStreamOptions {
-  /// Creates a new `NativeTlsStreamOptions` with the given domain name.
-  pub fn new(domain: impl Into<String>) -> Self {
-    Self {
-      domain: domain.into(),
-      identity: None,
-      min_protocol: None,
-      max_protocol: None,
-      root_certificates: vec![],
-      accept_invalid_certs: false,
-      accept_invalid_hostnames: false,
-      use_sni: true,
-    }
-  }
-
-  /// Adds a certificate to the set of roots that the connector will trust.
-  ///
-  /// The connector will use the system's trust root by default. This method can be used to add
-  /// to that set when communicating with servers not trusted by the system.
-  ///
-  /// Defaults to an empty set.
-  pub fn add_root_certificate(&mut self, cert: Certificate) {
-    self.root_certificates.push(cert);
-  }
-
-  /// Adds multiple certificates to the set of roots that the connector will trust.
-  pub fn add_root_certificates(mut self, certs: Vec<Certificate>) -> Self {
-    self.root_certificates.extend(certs);
-    self
   }
 }
 
