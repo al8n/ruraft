@@ -20,7 +20,8 @@ English | [简体中文][zh-cn-url]
 </div>
 
 ## Features
-- Functionalities:
+
+- Raft Functionalities:
   - [x] Leader Election
   - [x] Persistence
   - [x] Membership Changes
@@ -40,11 +41,14 @@ English | [简体中文][zh-cn-url]
   - Users can easily replace one component to their own implementation.
 - Multiple kinds of transport implementation
   - [TCP & TLS](./transport/tcp)
-  - [`quinn`](./transport/quinn)
-  - [`s2n-quic`](./transport/s2n)
-
+  - QUIC
+    - [`quinn`](./transport/quinn)
+    - [`s2n-quic`](./transport/s2n)
+  - GRPC
+    - [tonic](./transport/grpc): WIP
 
 ## Installation
+
 ```toml
 [dependencies]
 ruraft = "0.1"
@@ -52,22 +56,21 @@ ruraft = "0.1"
 
 ## Components
 
-### Transport Layer
+### Transport
 
-### Storage Layer
+### Storage
 
 ### Sidecar
-
 
 ## Q & A
 
 - Can `ruraft`'s node join to `hashicorp/raft`'s cluster or visa-vise?
 
-No, but yes, developers can implement their own serialization/deserialization layer to achieve this.
+  No, but yes, developers can implement their own serialization/deserialization layer to achieve this.
 
 - Will new functionalities implemented in `hashicorp/raft` also be implemented in `ruraft`?
 
-Yes, and also `ruraft` may add new functionalities which `hashicorp/raft` does not have.
+  Yes, and also `ruraft` may add new functionalities which `hashicorp/raft` does not have.
 
 
 #### License
