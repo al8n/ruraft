@@ -7,7 +7,15 @@ homepage.workspace = true
 license.workspace = true
 rust-version.workspace = true
 metadata.workspace = true
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "QUIC (s2n-quic) transport layer implementation for ruraft"
 
 [dependencies]
+arc-swap = "1.6"
+agnostic = { workspace = true, features = ["net"] }
+bytes = { workspace = true }
+futures = { workspace = true }
+nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
+pin-project = { workspace = true }
+ruraft-net = { path = "../net" }
+ruraft-utils = { path = "../../utils" }
+s2n-quic = "1.31"

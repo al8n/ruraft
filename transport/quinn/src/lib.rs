@@ -10,15 +10,13 @@ use std::{
 use agnostic::{net::Net, Runtime};
 use futures::{AsyncRead, AsyncWrite, Future};
 use nodecraft::resolver::AddressResolver;
-use quinn::{
-  ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream,
-  ServerConfig,
-};
+use quinn::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, ServerConfig};
 use ruraft_net::{stream::*, NetTransport};
 use ruraft_utils::AtomicDuration;
 
 /// Quinn transport
-pub type QuinnTransport<I, A, D, W> = NetTransport<I, A, D, Quinn<<A as AddressResolver>::Runtime>, W>;
+pub type QuinnTransport<I, A, D, W> =
+  NetTransport<I, A, D, Quinn<<A as AddressResolver>::Runtime>, W>;
 
 /// Quinn stream layer
 pub struct Quinn<R> {
@@ -72,7 +70,7 @@ impl<R: Runtime> StreamLayer for Quinn<R> {
     }
   }
 
-  async fn bind(&self, _addr: SocketAddr) -> io::Result<Self::Listener> {
+  async fn bind(&mut self, _addr: SocketAddr) -> io::Result<Self::Listener> {
     Ok(QuinnListener {
       endpoint: self.endpoint.clone(),
       _marker: std::marker::PhantomData,
@@ -89,7 +87,7 @@ pub struct QuinnListener<R> {
 impl<R: Runtime> Listener for QuinnListener<R> {
   type Stream = QuinnStream<R>;
 
-  async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
+  async fn accept(&mut self) -> io::Result<(Self::Stream, SocketAddr)> {
     match self.endpoint.accept().await {
       Some(connecting) => {
         let remote = connecting.remote_address();
@@ -161,25 +159,24 @@ pub struct QuinnStreamOwnedWriteHalf<R> {
 }
 
 impl<R: Runtime> AsyncWrite for QuinnStreamOwnedWriteHalf<R> {
-  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> { 
+  fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     let self_ref = Pin::into_inner(self);
-    let send_stream = &mut self_ref.stream;
+    let stream = &mut self_ref.stream;
     let timeout = self_ref.timeout.load(Ordering::Acquire);
     if timeout == Duration::ZERO {
-      let fut = send_stream.write(buf);
+      let fut = stream.write(buf);
       futures::pin_mut!(fut);
       match fut.as_mut().poll(cx) {
         Poll::Ready(rst) => Poll::Ready(rst.map_err(|e| io::Error::new(io::ErrorKind::Other, e))),
         Poll::Pending => Poll::Pending,
       }
     } else {
-      let fut = R::timeout(timeout, send_stream.write(buf));
+      let fut = R::timeout(timeout, stream.write(buf));
       futures::pin_mut!(fut);
       match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(
-          rst
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)),
-        ),
+        Poll::Ready(Ok(rst)) => {
+          Poll::Ready(rst.map_err(|e| io::Error::new(io::ErrorKind::Other, e)))
+        }
         Poll::Ready(Err(e)) => Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, e))),
         Poll::Pending => Poll::Pending,
       }
@@ -206,10 +203,9 @@ impl<R: Runtime> AsyncWrite for QuinnStreamOwnedWriteHalf<R> {
       let fut = R::timeout(timeout, send_stream.finish());
       futures::pin_mut!(fut);
       match fut.poll(cx) {
-        Poll::Ready(Ok(rst)) => Poll::Ready(
-          rst
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e)),
-        ),
+        Poll::Ready(Ok(rst)) => {
+          Poll::Ready(rst.map_err(|e| io::Error::new(io::ErrorKind::Other, e)))
+        }
         Poll::Ready(Err(e)) => Poll::Ready(Err(io::Error::new(io::ErrorKind::TimedOut, e))),
         Poll::Pending => Poll::Pending,
       }
@@ -307,9 +303,6 @@ impl<R: Runtime> Connection for QuinnStream<R> {
   }
 
   fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
-    (
-      self.recv_stream,
-      self.write_stream,
-    )
+    (self.recv_stream, self.write_stream)
   }
 }

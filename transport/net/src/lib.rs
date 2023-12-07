@@ -323,7 +323,7 @@ where
 {
   pub async fn new(
     resolver: A,
-    stream_layer: S,
+    mut stream_layer: S,
     opts: NetTransportOptions<I, A::Address>,
   ) -> Result<Self, Error<I, A, W>> {
     let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
@@ -739,7 +739,7 @@ where
   D: Data,
   S: StreamLayer,
 {
-  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(self)
+  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(mut self)
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
@@ -747,7 +747,8 @@ where
     const BASE_DELAY: Duration = Duration::from_millis(5);
     const MAX_DELAY: Duration = Duration::from_secs(1);
 
-    scopeguard::defer!(self.wg.done());
+    let wg = self.wg;
+    scopeguard::defer!(wg.done());
 
     let mut loop_delay = Duration::ZERO;
     loop {
@@ -765,7 +766,7 @@ where
               let producer = self.producer.clone();
               let shutdown_rx = self.shutdown_rx.clone();
               let local_header = self.local_header.clone();
-              let wg = self.wg.add(1);
+              let wg = wg.add(1);
               <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
                 if Self::handle_connection::<Resolver, W>(conn, producer, shutdown_rx, local_header)
                   .await

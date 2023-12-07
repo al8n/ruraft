@@ -11,7 +11,7 @@ pub trait Listener: Send + Sync + 'static {
   type Stream: Connection;
 
   /// Accepts an incoming connection.
-  fn accept(&self) -> impl Future<Output = io::Result<(Self::Stream, SocketAddr)>> + Send;
+  fn accept(&mut self) -> impl Future<Output = io::Result<(Self::Stream, SocketAddr)>> + Send;
 
   /// Retrieves the local socket address of the listener.
   fn local_addr(&self) -> io::Result<SocketAddr>;
@@ -70,5 +70,5 @@ pub trait StreamLayer: Send + Sync + 'static {
   fn connect(&self, addr: SocketAddr) -> impl Future<Output = io::Result<Self::Stream>> + Send;
 
   /// Binds the listener to a given socket address.
-  fn bind(&self, addr: SocketAddr) -> impl Future<Output = io::Result<Self::Listener>> + Send;
+  fn bind(&mut self, addr: SocketAddr) -> impl Future<Output = io::Result<Self::Listener>> + Send;
 }

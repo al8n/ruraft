@@ -52,7 +52,7 @@ impl<R: Runtime> StreamLayer for Tcp<R> {
       .map(TcpStream)
   }
 
-  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
+  async fn bind(&mut self, addr: SocketAddr) -> io::Result<Self::Listener> {
     <<R::Net as Net>::TcpListener as agnostic::net::TcpListener>::bind(addr)
       .await
       .map(TcpListener)
@@ -66,7 +66,7 @@ pub struct TcpListener<R: Runtime>(<R::Net as Net>::TcpListener);
 impl<R: Runtime> Listener for TcpListener<R> {
   type Stream = TcpStream<R>;
 
-  async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
+  async fn accept(&mut self) -> io::Result<(Self::Stream, SocketAddr)> {
     self
       .0
       .accept()
