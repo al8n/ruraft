@@ -3,7 +3,7 @@
 </div>
 <div align="center">
 
-An adaptable Raft implementation that's runtime-agnostic, wasm-compatible, and well-tested.
+A highly customable Raft implementation that's runtime-agnostic, wasm-compatible, and well-tested.
 
 [<img alt="github" src="https://img.shields.io/badge/github-al8n/ruraft-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
 [<img alt="Build" src="https://img.shields.io/github/actions/workflow/status/al8n/ruraft/ci.yml?logo=Github-Actions&style=for-the-badge" height="22">][CI-url]
@@ -19,11 +19,56 @@ English | [简体中文][zh-cn-url]
 
 </div>
 
+## Features
+- Functionalities:
+  - [x] Leader Election
+  - [x] Persistence
+  - [x] Membership Changes
+  - [x] Log Compaction
+  - [x] Log Replication
+- Components design
+  - Ruraft is not an all-in-one raft implementation, it consists of those components:
+    - Transport layer
+      - Address resolver layer
+      - Serialization/deserialization layer
+    - Storage layer
+      - Stable storage layer
+      - Log storage layer
+      - Snapshot storage layer
+    - State machine layer
+    - Sidecar layer
+  - Users can easily replace one component to their own implementation.
+- Multiple kinds of transport implementation
+  - [TCP & TLS](./transport/tcp)
+  - [`quinn`](./transport/quinn)
+  - [`s2n-quic`](./transport/s2n)
+
+
 ## Installation
 ```toml
 [dependencies]
 ruraft = "0.1"
 ```
+
+## Components
+
+### Transport Layer
+
+### Storage Layer
+
+### Sidecar
+
+
+## Q & A
+
+- Can `ruraft`'s node join to `hashicorp/raft`'s cluster or visa-vise?
+
+No, but yes, developers can implement their own serialization/deserialization layer to achieve this.
+
+- Will new functionalities implemented in `hashicorp/raft` also be implemented in `ruraft`?
+
+Yes, and also `ruraft` may add new functionalities which `hashicorp/raft` does not have.
+
 
 #### License
 
