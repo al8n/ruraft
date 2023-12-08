@@ -1,0 +1,19 @@
+[package]
+name = "ruraft-quinn"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+metadata.workspace = true
+rust-version.workspace = true
+description = "QUIC (quinn) transport layer implementation for ruraft"
+
+[dependencies]
+agnostic = { workspace = true, features = ["quinn"] }
+futures = { workspace = true }
+nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
+pin-project = { workspace = true }
+ruraft-net = { path = "../net" }
+ruraft-utils = { path = "../../utils" }
+quinn = "0.10"

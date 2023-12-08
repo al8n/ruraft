@@ -1,0 +1,19 @@
+[package]
+name = "ruraft-utils"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+metadata.workspace = true
+
+[features]
+serde = ["dep:serde", "humantime-serde"]
+
+[dependencies]
+atomic = "0.6"
+bytemuck = { version = "1", features = ["derive"] }
+
+serde = { workspace = true,  optional = true }
+humantime-serde = { workspace = true, optional = true }

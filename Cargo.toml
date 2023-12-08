@@ -10,7 +10,9 @@ members = [
   "transport/net",
   "transport/tcp",
   "transport/grpc",
-  "transport/quic"
+  "transport/quinn",
+  "transport/s2n",
+  "utils"
 ]
 resolver = "2"
 
@@ -27,7 +29,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-agnostic = { version = "0.2.4" }
+agnostic = { path = "../agnostic/agnostic" }
 async-channel = "2"
 async-lock = "3"
 bytes = "1.5"
