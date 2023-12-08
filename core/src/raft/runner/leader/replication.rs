@@ -1011,7 +1011,7 @@ where
               "peer_id" => id,
             );
           }
-          
+
           Replication::notify_all(&notify_all, resp.success).await;
         }
         Err(e) => {
