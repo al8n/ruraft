@@ -913,7 +913,6 @@ where
       return e;
     }
 
-    // TODO: metrics
     let (tx, rx) = oneshot::channel();
 
     if let Some(ref node) = target {
