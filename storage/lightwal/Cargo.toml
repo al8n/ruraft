@@ -1,12 +1,12 @@
 [package]
-name = "redb"
+name = "ruraft-lightwal"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 homepage.workspace = true
 license.workspace = true
-metadata.workspace = true
 rust-version.workspace = true
+metadata.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
