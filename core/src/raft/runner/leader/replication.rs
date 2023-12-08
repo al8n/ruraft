@@ -669,10 +669,14 @@ where
       }
       Ok(resp) => {
         #[cfg(feature = "metrics")]
-        metrics::gauge!(
-          format!("ruraft.repl.install_snapshot.{}", remote.id()),
-          start.elapsed().as_millis() as f64
-        );
+        {
+          let id = remote.id().to_string();
+          metrics::histogram!(
+            "ruraft.repl.install_snapshot",
+            start.elapsed().as_millis() as f64,
+            "peer_id" => id,
+          );
+        }
 
         // Check for a newer term, stop running
         if resp.term > self.current_term {
@@ -999,10 +1003,15 @@ where
           last_contact.update();
           failures = 0;
           #[cfg(feature = "metrics")]
-          metrics::gauge!(
-            format!("ruraft.repl.heartbeat.{}", remote.id()),
-            start.elapsed().as_millis() as f64
-          );
+          {
+            let id = remote.id().to_string();
+            metrics::histogram!(
+              "ruraft.repl.heartbeat",
+              start.elapsed().as_millis() as f64,
+              "peer_id" => id,
+            );
+          }
+          
           Replication::notify_all(&notify_all, resp.success).await;
         }
         Err(e) => {
@@ -1036,31 +1045,20 @@ where
 fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
   remote: &Node<I, A>,
   start: Instant,
-  _logs: u64,
+  logs: u64,
 ) {
-  enum Kind<'a, I: nodecraft::Id> {
-    Rpc(&'a I),
-    Log(&'a I),
-  }
+  let id: std::borrow::Cow<'static, str> = std::borrow::Cow::Owned(remote.id().to_string());
+  let id1 = id.clone();
 
-  impl<'a, I: nodecraft::Id> core::fmt::Display for Kind<'a, I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-      match self {
-        Kind::Rpc(id) => write!(f, "ruraft.repl.append_entries.rpc.{}", id),
-        Kind::Log(id) => write!(f, "ruraft.repl.append_entries.logs.{}", id),
-      }
-    }
-  }
+  metrics::histogram!(
+    "ruraft.repl.append_entries.rpc",
+    start.elapsed().as_millis() as f64,
+    "peer_id" => id1,
+  );
 
-  impl<'a, I: nodecraft::Id> From<Kind<'a, I>> for metrics::KeyName {
-    fn from(val: Kind<'a, I>) -> Self {
-      metrics::KeyName::from(val.to_string())
-    }
-  }
-
-  let id = remote.id();
-  let _log = Kind::Log(id);
-  let rpc = Kind::Rpc(id);
-  metrics::gauge!(rpc, start.elapsed().as_millis() as f64);
-  // metrics::counter!(log, logs as f64);
+  metrics::counter!(
+    "ruraft.repl.append_entries.logs",
+    logs,
+    "peer_id" => id,
+  );
 }

@@ -1265,7 +1265,7 @@ where
       }
 
       #[cfg(feature = "metrics")]
-      metrics::gauge!("ruraft.leader.last_contact", diff.as_millis() as f64);
+      metrics::histogram!("ruraft.leader.last_contact", diff.as_millis() as f64);
     }
 
     // Verify we can contact a quorum
