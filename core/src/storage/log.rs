@@ -199,7 +199,7 @@ impl<I, A, D> Log<I, A, D> {
 /// and retrieving logs in a durable fashion.
 ///
 /// **N.B.** The implementation of [`LogStorage`] must be thread-safe.
-pub trait LogStorage: Clone + Send + Sync + 'static {
+pub trait LogStorage: Send + Sync + 'static {
   /// The error type returned by the log storage.
   type Error: std::error::Error + Clone + Send + Sync + 'static;
   /// The async runtime used by the storage.

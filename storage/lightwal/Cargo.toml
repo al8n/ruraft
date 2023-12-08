@@ -8,6 +8,22 @@ license.workspace = true
 rust-version.workspace = true
 metadata.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["metrics"]
+metrics = ["ruraft-core/metrics", "dep:metrics"]
+
+redb = ["dep:redb"]
+sled = ["dep:sled"]
+jammdb = ["dep:jammdb"]
 
 [dependencies]
+agnostic = { workspace = true }
+bytes = { workspace = true }
+ruraft-core = { path = "../../core" }
+thiserror = { workspace = true }
+
+jammdb = { version = "0.11", optional = true }
+redb = { version = "1.4", optional = true }
+sled = { version = "0.34", optional = true }
+
+metrics = { workspace = true, optional = true }

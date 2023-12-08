@@ -1,5 +1,6 @@
 //! TCP transport implementation for [ruraft](https://github.com/al8n/ruraft).
 #![deny(unsafe_code, missing_docs)]
+
 /// TLS([`rustls`](https://github.com/smol-rs/async-rustls)) transport
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, feature = "tls")]
