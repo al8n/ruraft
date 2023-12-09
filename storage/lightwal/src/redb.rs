@@ -317,36 +317,21 @@ where
                 t.insert(idx, blob).map(|_| {
                   #[cfg(feature = "metrics")]
                   {
-                    metrics::histogram!("ruraft.redb.log_size", blob_size as f64);
+                    metrics::histogram!("ruraft.lightwal.log_size", blob_size as f64);
                   }
                 })
               })
               .map_err(ErrorKind::from)?;
             #[cfg(feature = "metrics")]
             {
-              metrics::histogram!("ruraft.redb.log_batch_size", batch_size as f64);
-              metrics::histogram!("ruraft.redb.logs_per_batch", _num_logs as f64);
+              metrics::histogram!("ruraft.lightwal.log_batch_size", batch_size as f64);
+              metrics::histogram!("ruraft.lightwal.logs_per_batch", _num_logs as f64);
             }
             Ok(())
           })
           .and_then(|_| {
             #[cfg(feature = "metrics")]
-            fn m(logs: usize, start: std::time::Instant) {
-              let duration = start.elapsed();
-              let nanos = duration.as_nanos(); // Get the elapsed time in nanoseconds
-              let val = if nanos == 0 {
-                0.0
-              } else {
-                (1_000_000_000.0 / nanos as f64) * logs as f64
-              };
-
-              metrics::histogram!("ruraft.redb.write_capacity", val);
-              metrics::histogram!("ruraft.redb.store_logs", start.elapsed().as_secs_f64());
-            }
-
-            #[cfg(feature = "metrics")]
-            scopeguard::defer!(m(_num_logs, start));
-
+            scopeguard::defer!(super::report_store_many(_num_logs, start));
             w.commit().map_err(ErrorKind::from)
           })
       })

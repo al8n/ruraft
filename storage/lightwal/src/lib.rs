@@ -26,3 +26,17 @@ const LAST_CANIDATE_ID: &str = "__ruraft_last_candidate_id__";
 const LAST_CANIDATE_ADDR: &str = "__ruraft_last_candidate_addr__";
 const LAST_VOTE_TERM: &str = "__ruraft_last_vote_term__";
 const CURRENT_TERM: &str = "__ruraft_current_term__";
+
+#[cfg(feature = "metrics")]
+fn report_store_many(logs: usize, start: std::time::Instant) {
+  let duration = start.elapsed();
+  let nanos = duration.as_nanos(); // Get the elapsed time in nanoseconds
+  let val = if nanos == 0 {
+    0.0
+  } else {
+    (1_000_000_000.0 / nanos as f64) * logs as f64
+  };
+
+  metrics::histogram!("ruraft.lightwal.write_capacity", val);
+  metrics::histogram!("ruraft.lightwal.store_logs", start.elapsed().as_secs_f64());
+}

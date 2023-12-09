@@ -12,9 +12,8 @@ use super::*;
 
 pub use ::jammdb::OpenOptions as DbOptions;
 
-const CANDIDATE_BUCKET_NAME: &str = "__ruraft_jammdb_candidate__";
-const TERM_BUCKET_NAME: &str = "__ruraft_jammdb_term__";
-const LOG_BUCKET_NAME: &str = "__ruraft_jammdb_log__";
+const STABLE_BUCKET_NAME: &str = "__ruraft_stable__";
+const LOG_BUCKET_NAME: &str = "__ruraft_log__";
 
 /// Error kind.
 pub enum ErrorKind<I: Transformable, A: Transformable, D: Transformable> {
@@ -127,6 +126,18 @@ where
 {
 }
 
+impl<I, A, D> Error<I, A, D>
+where
+  I: Transformable,
+  A: Transformable,
+  D: Transformable,
+{
+  /// Returns the error kind.
+  pub fn kind(&self) -> &ErrorKind<I, A, D> {
+    self.0.as_ref()
+  }
+}
+
 /// [`StableStorage`] and [`LogStorage`] implementor backed by [`redb`](::redb).
 pub struct Db<I, A, D, R> {
   db: DB,
@@ -143,9 +154,8 @@ where
   pub fn new<P: AsRef<Path>>(path: P, opts: DbOptions) -> Result<Self, Error<I, A, D>> {
     let db = opts.open(path).map_err(ErrorKind::from)?;
     let tx = db.tx(true).map_err(ErrorKind::from)?;
-    tx.get_or_create_bucket(CANDIDATE_BUCKET_NAME)
-      .map_err(ErrorKind::from)?;
-    tx.get_or_create_bucket(TERM_BUCKET_NAME)
+
+    tx.get_or_create_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     tx.get_or_create_bucket(LOG_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
@@ -192,7 +202,7 @@ where
         b.put(idx.to_be_bytes(), blob).map(|_| {
           #[cfg(feature = "metrics")]
           {
-            metrics::histogram!("ruraft.redb.log_size", blob_size as f64);
+            metrics::histogram!("ruraft.lightwal.log_size", blob_size as f64);
           }
         })
       })
@@ -200,26 +210,12 @@ where
 
     #[cfg(feature = "metrics")]
     {
-      metrics::histogram!("ruraft.redb.log_batch_size", batch_size as f64);
-      metrics::histogram!("ruraft.redb.logs_per_batch", _num_logs as f64);
+      metrics::histogram!("ruraft.lightwal.log_batch_size", batch_size as f64);
+      metrics::histogram!("ruraft.lightwal.logs_per_batch", _num_logs as f64);
     }
 
     #[cfg(feature = "metrics")]
-    fn m(logs: usize, start: std::time::Instant) {
-      let duration = start.elapsed();
-      let nanos = duration.as_nanos(); // Get the elapsed time in nanoseconds
-      let val = if nanos == 0 {
-        0.0
-      } else {
-        (1_000_000_000.0 / nanos as f64) * logs as f64
-      };
-
-      metrics::histogram!("ruraft.jammdb.write_capacity", val);
-      metrics::histogram!("ruraft.jammdb.store_logs", start.elapsed().as_secs_f64());
-    }
-
-    #[cfg(feature = "metrics")]
-    scopeguard::defer!(m(_num_logs, start));
+    scopeguard::defer!(super::report_store_many(_num_logs, start));
 
     txn.commit().map_err(|e| ErrorKind::from(e).into())
   }
@@ -245,7 +241,7 @@ where
 
   async fn current_term(&self) -> Result<Option<u64>, Self::Error> {
     let txn = self.db.tx(false).map_err(ErrorKind::from)?;
-    let b = txn.get_bucket(TERM_BUCKET_NAME).map_err(ErrorKind::from)?;
+    let b = txn.get_bucket(STABLE_BUCKET_NAME).map_err(ErrorKind::from)?;
 
     match b.get(CURRENT_TERM) {
       Some(d) => {
@@ -261,7 +257,7 @@ where
   async fn store_current_term(&self, term: u64) -> Result<(), Self::Error> {
     let txn = self.db.tx(true).map_err(ErrorKind::from)?;
     let b = txn
-      .create_bucket(TERM_BUCKET_NAME)
+      .create_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     b.put(CURRENT_TERM, term.to_be_bytes())
       .map_err(ErrorKind::from)?;
@@ -270,7 +266,7 @@ where
 
   async fn last_vote_term(&self) -> Result<Option<u64>, Self::Error> {
     let txn = self.db.tx(false).map_err(ErrorKind::from)?;
-    let b = txn.get_bucket(TERM_BUCKET_NAME).map_err(ErrorKind::from)?;
+    let b = txn.get_bucket(STABLE_BUCKET_NAME).map_err(ErrorKind::from)?;
 
     match b.get(LAST_VOTE_TERM) {
       Some(d) => {
@@ -286,7 +282,7 @@ where
   async fn store_last_vote_term(&self, term: u64) -> Result<(), Self::Error> {
     let txn = self.db.tx(true).map_err(ErrorKind::from)?;
     let b = txn
-      .create_bucket(TERM_BUCKET_NAME)
+      .create_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     b.put(LAST_VOTE_TERM, term.to_be_bytes())
       .map_err(ErrorKind::from)?;
@@ -298,7 +294,7 @@ where
   ) -> Result<Option<Node<Self::Id, Self::Address>>, Self::Error> {
     let txn = self.db.tx(false).map_err(ErrorKind::from)?;
     let b = txn
-      .get_bucket(CANDIDATE_BUCKET_NAME)
+      .get_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     {
       let id = b.get(LAST_CANIDATE_ID);
@@ -334,7 +330,7 @@ where
 
     let w = self.db.tx(true).map_err(ErrorKind::from)?;
     let b = w
-      .get_bucket(CANDIDATE_BUCKET_NAME)
+      .get_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     b.put(LAST_CANIDATE_ID, id_buf).map_err(ErrorKind::from)?;
     b.put(LAST_CANIDATE_ADDR, addr_buf)
