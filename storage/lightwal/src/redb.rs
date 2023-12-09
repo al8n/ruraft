@@ -5,11 +5,11 @@ use std::{
   sync::Arc,
 };
 
-use agnostic::Runtime;
-use redb::{
+use ::redb::{
   Builder, CommitError, Database, DatabaseError, Error as DbError, ReadableTable, RepairSession,
-  StorageError as ReStorageError, TableDefinition, TableError, TransactionError,
+  StorageError, TableDefinition, TableError, TransactionError,
 };
+use agnostic::Runtime;
 use ruraft_core::{
   storage::{Log, LogStorage, LogTransformError, StableStorage},
   transport::{Address, Id, Transformable},
@@ -27,15 +27,25 @@ const LOG_TABLE_DEFINITION: TableDefinition<'static, u64, Vec<u8>> =
 
 /// Error kind.
 pub enum ErrorKind<I: Transformable, A: Transformable, D: Transformable> {
+  /// [redb](::redb)'s [`Error`](::redb::Error).
   Db(DbError),
+  /// [redb](::redb)'s [`DatabaseError`]
   Database(DatabaseError),
+  /// [redb](::redb)'s [`TransactionError`]
   Transaction(TransactionError),
+  /// [redb](::redb)'s [`TableError`]
   Table(TableError),
-  Storage(ReStorageError),
+  /// [redb](::redb)'s [`StorageError`](::redb::StorageError)
+  Storage(StorageError),
+  /// [redb](::redb)'s [`CommitError`]
   Commit(CommitError),
+  /// Id transform error.
   Id(I::Error),
+  /// Address transform error.
   Address(A::Error),
+  /// Log transform error.
   Log(LogTransformError<I, A, D>),
+  /// Corrupted database.
   Corrupted(Cow<'static, str>),
 }
 
@@ -83,13 +93,13 @@ where
   }
 }
 
-impl<I, A, D> From<ReStorageError> for ErrorKind<I, A, D>
+impl<I, A, D> From<StorageError> for ErrorKind<I, A, D>
 where
   I: Transformable,
   A: Transformable,
   D: Transformable,
 {
-  fn from(value: ReStorageError) -> Self {
+  fn from(value: StorageError) -> Self {
     Self::Storage(value)
   }
 }
@@ -242,7 +252,7 @@ impl DbOptions {
   }
 }
 
-/// [`StableStorage`] and [`LogStorage`] implementor backed by [`redb`].
+/// [`StableStorage`] and [`LogStorage`] implementor backed by [`redb`](::redb).
 pub struct Db<I, A, D, R> {
   db: Database,
   _marker: std::marker::PhantomData<(I, A, D, R)>,
@@ -254,6 +264,7 @@ where
   A: Transformable,
   D: Transformable,
 {
+  /// Creates a new [`Db`].
   pub fn new(opts: DbOptions) -> Result<Self, Error<I, A, D>> {
     Builder::new()
       .set_cache_size(opts.cache_size)
