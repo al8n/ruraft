@@ -241,7 +241,9 @@ where
 
   async fn current_term(&self) -> Result<Option<u64>, Self::Error> {
     let txn = self.db.tx(false).map_err(ErrorKind::from)?;
-    let b = txn.get_bucket(STABLE_BUCKET_NAME).map_err(ErrorKind::from)?;
+    let b = txn
+      .get_bucket(STABLE_BUCKET_NAME)
+      .map_err(ErrorKind::from)?;
 
     match b.get(CURRENT_TERM) {
       Some(d) => {
@@ -266,7 +268,9 @@ where
 
   async fn last_vote_term(&self) -> Result<Option<u64>, Self::Error> {
     let txn = self.db.tx(false).map_err(ErrorKind::from)?;
-    let b = txn.get_bucket(STABLE_BUCKET_NAME).map_err(ErrorKind::from)?;
+    let b = txn
+      .get_bucket(STABLE_BUCKET_NAME)
+      .map_err(ErrorKind::from)?;
 
     match b.get(LAST_VOTE_TERM) {
       Some(d) => {
@@ -329,9 +333,7 @@ where
     addr.encode(&mut addr_buf).map_err(ErrorKind::Address)?;
 
     let w = self.db.tx(true).map_err(ErrorKind::from)?;
-    let b = w
-      .get_bucket(STABLE_BUCKET_NAME)
-      .map_err(ErrorKind::from)?;
+    let b = w.get_bucket(STABLE_BUCKET_NAME).map_err(ErrorKind::from)?;
     b.put(LAST_CANIDATE_ID, id_buf).map_err(ErrorKind::from)?;
     b.put(LAST_CANIDATE_ADDR, addr_buf)
       .map_err(ErrorKind::from)?;

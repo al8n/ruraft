@@ -196,7 +196,7 @@ impl<I, A> MembershipChangeCommand<I, A> {
 
 /// The error type returned when encoding [`Membership`] to bytes or decoding a [`Membership`] from bytes.
 #[derive(Debug)]
-pub enum MembershipTransformableError<I: Transformable, A: Transformable> {
+pub enum MembershipTransformError<I: Transformable, A: Transformable> {
   /// Returned when the encode or decode id fails.
   Id(I::Error),
   /// Returned when the encode or decode address fails.
@@ -216,7 +216,7 @@ pub enum MembershipTransformableError<I: Transformable, A: Transformable> {
 }
 
 impl<I: Transformable, A: Transformable> From<MembershipError<I, A>>
-  for MembershipTransformableError<I, A>
+  for MembershipTransformError<I, A>
 {
   fn from(e: MembershipError<I, A>) -> Self {
     Self::Membership(e)
@@ -224,7 +224,7 @@ impl<I: Transformable, A: Transformable> From<MembershipError<I, A>>
 }
 
 impl<I: Transformable, A: Transformable> From<UnknownServerSuffrage>
-  for MembershipTransformableError<I, A>
+  for MembershipTransformError<I, A>
 {
   fn from(e: UnknownServerSuffrage) -> Self {
     Self::UnknownServerSuffrage(e)
@@ -232,31 +232,31 @@ impl<I: Transformable, A: Transformable> From<UnknownServerSuffrage>
 }
 
 impl<I: Display + Transformable, A: Display + Transformable> Display
-  for MembershipTransformableError<I, A>
+  for MembershipTransformError<I, A>
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      MembershipTransformableError::Id(e) => write!(f, "id error: {}", e),
-      MembershipTransformableError::Address(e) => write!(f, "address error: {}", e),
-      MembershipTransformableError::IdTooLarge(id) => {
+      MembershipTransformError::Id(e) => write!(f, "id error: {}", e),
+      MembershipTransformError::Address(e) => write!(f, "address error: {}", e),
+      MembershipTransformError::IdTooLarge(id) => {
         write!(f, "the encoded size of id({}) is too large", id)
       }
-      MembershipTransformableError::AddressTooLarge(addr) => {
+      MembershipTransformError::AddressTooLarge(addr) => {
         write!(f, "the encoded size of address({}) is too large", addr)
       }
-      MembershipTransformableError::TooLarge(size) => {
+      MembershipTransformError::TooLarge(size) => {
         write!(f, "membership too large, too many servers({})", size)
       }
-      MembershipTransformableError::EncodeBufferTooSmall => write!(f, "encode buffer too small"),
-      MembershipTransformableError::Corrupted => write!(f, "corrupted"),
-      MembershipTransformableError::UnknownServerSuffrage(e) => write!(f, "{}", e),
-      MembershipTransformableError::Membership(e) => write!(f, "{}", e),
+      MembershipTransformError::EncodeBufferTooSmall => write!(f, "encode buffer too small"),
+      MembershipTransformError::Corrupted => write!(f, "corrupted"),
+      MembershipTransformError::UnknownServerSuffrage(e) => write!(f, "{}", e),
+      MembershipTransformError::Membership(e) => write!(f, "{}", e),
     }
   }
 }
 
 impl<I: Display + Debug + Transformable, A: Display + Debug + Transformable> std::error::Error
-  for MembershipTransformableError<I, A>
+  for MembershipTransformError<I, A>
 {
 }
 
@@ -489,7 +489,7 @@ where
   A: Address + Send + Sync + 'static,
   <A as Transformable>::Error: Send + Sync + 'static,
 {
-  type Error = MembershipTransformableError<I, A>;
+  type Error = MembershipTransformError<I, A>;
 
   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
     let dst_len = dst.len();
