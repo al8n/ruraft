@@ -1,2 +1,1 @@
-use jammdb::{DB, OpenOptions};
-
+use jammdb::{OpenOptions, DB};

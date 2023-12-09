@@ -1,2 +1,1 @@
-use sled::{Db, Config};
-
+use sled::{Config, Db};

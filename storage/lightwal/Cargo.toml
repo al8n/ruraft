@@ -20,7 +20,9 @@ jammdb = ["dep:jammdb"]
 agnostic = { workspace = true }
 bytes = { workspace = true }
 ruraft-core = { path = "../../core" }
+scopeguard = { workspace = true }
 thiserror = { workspace = true }
+
 
 jammdb = { version = "0.11", optional = true }
 redb = { version = "1.4", optional = true }

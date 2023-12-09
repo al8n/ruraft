@@ -5,7 +5,6 @@ members = [
   "ruraft",
   "storage/snapshot",
   "storage/lightwal",
-  "storage/wal",
   "transport/net",
   "transport/tcp",
   "transport/grpc",

@@ -1,7 +1,9 @@
-use std::{future::Future, ops::RangeBounds, sync::Arc, time::Instant};
+use std::{future::Future, io, ops::RangeBounds, sync::Arc, time::Instant};
 
+use futures::AsyncWrite;
 #[cfg(feature = "metrics")]
 use futures::FutureExt;
+use nodecraft::Transformable;
 
 use crate::{
   membership::Membership,
@@ -192,6 +194,89 @@ impl<I, A, D> Log<I, A, D> {
       kind,
       appended_at: None,
     }
+  }
+}
+
+#[derive(thiserror::Error)]
+pub enum LogTransformError<I: Transformable, A: Transformable, D: Transformable> {
+  #[error("{0}")]
+  Id(I::Error),
+  #[error("{0}")]
+  Address(A::Error),
+  #[error("{0}")]
+  Data(D::Error),
+}
+
+impl<I, A, D> core::fmt::Debug for LogTransformError<I, A, D>
+where
+  I: Transformable,
+  A: Transformable,
+  D: Transformable,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Id(arg0) => f.debug_tuple("Id").field(arg0).finish(),
+      Self::Address(arg0) => f.debug_tuple("Address").field(arg0).finish(),
+      Self::Data(arg0) => f.debug_tuple("Data").field(arg0).finish(),
+    }
+  }
+}
+
+impl<I, A, D> Transformable for Log<I, A, D>
+where
+  I: Transformable + Send + Sync + 'static,
+  <I as Transformable>::Error: Send + Sync + 'static,
+  A: Transformable + Send + Sync + 'static,
+  <A as Transformable>::Error: Send + Sync + 'static,
+  D: Data,
+  <D as Transformable>::Error: Send + Sync + 'static,
+{
+  type Error = LogTransformError<I, A, D>;
+
+  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    todo!()
+  }
+
+  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+    todo!()
+  }
+
+  async fn encode_to_async_writer<W: AsyncWrite + Send + Unpin>(
+    &self,
+    writer: &mut W,
+  ) -> io::Result<()>
+  where
+    Self::Error: Send + Sync + 'static,
+  {
+    todo!()
+  }
+
+  fn encoded_len(&self) -> usize {
+    todo!()
+  }
+
+  fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
+  where
+    Self: Sized,
+  {
+    todo!()
+  }
+
+  fn decode_from_reader<R: io::Read>(reader: &mut R) -> io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    todo!()
+  }
+
+  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
+    reader: &mut R,
+  ) -> io::Result<(usize, Self)>
+  where
+    Self: Sized,
+    Self::Error: Send + Sync + 'static,
+  {
+    todo!()
   }
 }
 
