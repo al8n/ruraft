@@ -1,13 +1,19 @@
-use std::{future::Future, ops::RangeBounds, sync::Arc, time::Instant};
+use std::{future::Future, io, mem, ops::RangeBounds, sync::Arc, time::SystemTime};
 
+use futures::AsyncWrite;
 #[cfg(feature = "metrics")]
 use futures::FutureExt;
+use nodecraft::Transformable;
 
 use crate::{
   membership::Membership,
   transport::{Address, Id},
+  utils::invalid_data,
   Data,
 };
+
+mod transform;
+pub use transform::*;
 
 /// A log entry that contains a new membership.
 #[derive(Clone)]
@@ -39,6 +45,7 @@ impl<I, A> MembershipLog<I, A> {
 
 /// Describes various types of log entries.
 #[derive(Debug)]
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
 pub enum LogKind<I, A, D> {
@@ -68,6 +75,22 @@ pub enum LogKind<I, A, D> {
   ),
 }
 
+impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for LogKind<I, A, D> {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Self::Data(data), Self::Data(other_data)) => data == other_data,
+      (Self::Noop, Self::Noop) => true,
+      (Self::Barrier, Self::Barrier) => true,
+      (Self::Membership(membership), Self::Membership(other_membership)) => {
+        membership == other_membership
+      }
+      _ => false,
+    }
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for LogKind<I, A, D> {}
+
 impl<I: Clone, A: Clone, D> Clone for LogKind<I, A, D> {
   fn clone(&self) -> Self {
     match self {
@@ -75,6 +98,17 @@ impl<I: Clone, A: Clone, D> Clone for LogKind<I, A, D> {
       Self::Noop => Self::Noop,
       Self::Barrier => Self::Barrier,
       Self::Membership(membership) => Self::Membership(membership.clone()),
+    }
+  }
+}
+
+impl<I, A, D> LogKind<I, A, D> {
+  fn tag(&self) -> u8 {
+    match self {
+      Self::Data(_) => 0,
+      Self::Noop => 1,
+      Self::Barrier => 2,
+      Self::Membership(_) => 3,
     }
   }
 }
@@ -147,9 +181,20 @@ pub struct Log<I, A, D> {
       )
     )
   )]
-  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant::option"))]
-  appended_at: Option<Instant>,
+  #[cfg_attr(feature = "serde", serde(with = "serde_millis"))]
+  appended_at: Option<SystemTime>,
 }
+
+impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Log<I, A, D> {
+  fn eq(&self, other: &Self) -> bool {
+    self.index == other.index
+      && self.term == other.term
+      && self.kind == other.kind
+      && self.appended_at == other.appended_at
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for Log<I, A, D> {}
 
 impl<I: Clone, A: Clone, D> Clone for Log<I, A, D> {
   fn clone(&self) -> Self {
@@ -172,6 +217,20 @@ impl<I, A, D> Log<I, A, D> {
       kind: LogKind::Data(Arc::new(data)),
       appended_at: None,
     }
+  }
+
+  /// Only used for testing.
+  #[cfg(feature = "test")]
+  pub fn set_index(mut self, index: u64) -> Self {
+    self.index = index;
+    self
+  }
+
+  /// Only used for testing.
+  #[cfg(feature = "test")]
+  pub fn set_term(mut self, term: u64) -> Self {
+    self.term = term;
+    self
   }
 
   #[inline]
@@ -199,7 +258,7 @@ impl<I, A, D> Log<I, A, D> {
 /// and retrieving logs in a durable fashion.
 ///
 /// **N.B.** The implementation of [`LogStorage`] must be thread-safe.
-pub trait LogStorage: Clone + Send + Sync + 'static {
+pub trait LogStorage: Send + Sync + 'static {
   /// The error type returned by the log storage.
   type Error: std::error::Error + Clone + Send + Sync + 'static;
   /// The async runtime used by the storage.
@@ -330,7 +389,7 @@ pub(crate) trait LogStorageExt: LogStorage {
             if let Ok(Some(log)) = self.oldest_log().await {
               match log.appended_at {
                 Some(append_at) => {
-                  age_ms = append_at.elapsed().as_millis() as u64;
+                  age_ms = append_at.duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::ZERO).as_millis() as u64;
                 }
                 None => {
                   age_ms = 0;

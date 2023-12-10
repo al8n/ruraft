@@ -1150,7 +1150,9 @@ where
     leader_state: &mut LeaderState<F, S, T>,
     reqs: SmallVec<[ApplyRequest<F, Error<F, S, T>>; NUM_INLINED]>,
   ) -> Option<LastLog> {
+    #[cfg(feature = "metrics")]
     let now = Instant::now();
+    let appended_at = std::time::SystemTime::now();
     #[cfg(feature = "metrics")]
     scopeguard::defer! {
       metrics::histogram!("ruraft.leader.dispatch_logs", now.elapsed().as_millis() as f64);
@@ -1171,7 +1173,7 @@ where
         term,
         index: last_idx,
         kind: req.log,
-        appended_at: Some(now),
+        appended_at: Some(appended_at),
       };
       logs.push(log.clone());
       leader_state.inflight.push_back(Inflight {
