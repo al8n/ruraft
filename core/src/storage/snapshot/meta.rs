@@ -3,7 +3,7 @@ use core::mem;
 use nodecraft::Transformable;
 
 use crate::{
-  membership::MembershipTransformableError, options::UnknownSnapshotVersion, utils::invalid_data,
+  membership::MembershipTransformError, options::UnknownSnapshotVersion, utils::invalid_data,
 };
 
 use super::*;
@@ -121,7 +121,7 @@ pub enum SnapshotMetaTransformableError<I: Transformable, A: Transformable> {
   )]
   EncodeBufferTooSmall,
   #[error("{0}")]
-  Membership(#[from] MembershipTransformableError<I, A>),
+  Membership(#[from] MembershipTransformError<I, A>),
   #[error("corrupted")]
   Corrupted,
   #[error("{0}")]
