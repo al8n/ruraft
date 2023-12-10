@@ -29,7 +29,7 @@ ruraft = "0.1"
 
 `ruraft` is under the terms of the MPL-2.0 license.
 
-See [LICENSE](LICENSE-APACHE) for details.
+See [LICENSE](LICENSE) for details.
 
 Copyright (c) 2023 Al Liu.
 
