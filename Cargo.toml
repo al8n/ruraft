@@ -27,13 +27,13 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-agnostic = { path = "../agnostic/agnostic" }
+agnostic = "0.2" 
 async-channel = "2"
 async-lock = "3"
 bytes = "1.5"
 futures = "0.3"
 humantime-serde = "1.1"
-nodecraft = { path = "../nodecraft" }
+nodecraft = "0.2"
 pin-project = "1.1"
 pollster = "0.3"
 smol_str = { version = "0.2" }

@@ -254,7 +254,7 @@ where
     if src.len() < LOG_HEADER_SIZE {
       return Err(LogTransformError::Corrupted("corrupted log"));
     }
-  
+
     let mut header = [0; LOG_HEADER_SIZE];
     header.copy_from_slice(&src[..LOG_HEADER_SIZE]);
     let Header {
@@ -359,7 +359,9 @@ where
             .map_err(invalid_data)
         }
       }
-      _ => Err(invalid_data(LogTransformError::<I, A, D>::UnknownLogKind(tag))),
+      _ => Err(invalid_data(LogTransformError::<I, A, D>::UnknownLogKind(
+        tag,
+      ))),
     }
   }
 
@@ -437,29 +439,28 @@ where
   }
 }
 
-
 #[cfg(test)]
 mod tests {
   use std::net::SocketAddr;
 
-use crate::membership::sample_membership;
+  use crate::membership::sample_membership;
 
-use super::*;
-  use nodecraft::{NodeId, NodeAddress};
-use smol_str::SmolStr;
+  use super::*;
+  use nodecraft::{NodeAddress, NodeId};
+  use smol_str::SmolStr;
 
   async fn test_log_transformable_in<I, A, D>(log: Log<I, A, D>)
   where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  <A as Transformable>::Error: Send + Sync + 'static,
-  D: Data + PartialEq + core::fmt::Debug,
-  <D as Transformable>::Error: Send + Sync + 'static,
+    I: Id + Send + Sync + 'static,
+    <I as Transformable>::Error: Send + Sync + 'static,
+    A: Address + Send + Sync + 'static,
+    <A as Transformable>::Error: Send + Sync + 'static,
+    D: Data + PartialEq + core::fmt::Debug,
+    <D as Transformable>::Error: Send + Sync + 'static,
   {
     let mut buf = vec![0; log.encoded_len()];
     log.encode(&mut buf).unwrap();
-    
+
     let (_, decoded) = Log::<I, A, D>::decode(&buf).unwrap();
     assert_eq!(log, decoded);
 
@@ -472,7 +473,9 @@ use smol_str::SmolStr;
     let mut buf = Vec::with_capacity(log.encoded_len());
     log.encode_to_async_writer(&mut buf).await.unwrap();
 
-    let (_, decoded) = Log::<I, A, D>::decode_from_async_reader(&mut buf.as_slice()).await.unwrap();
+    let (_, decoded) = Log::<I, A, D>::decode_from_async_reader(&mut buf.as_slice())
+      .await
+      .unwrap();
     assert_eq!(log, decoded);
   }
 

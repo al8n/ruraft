@@ -206,7 +206,7 @@ pub struct PipelineAppendEntriesResponse<I, A> {
   num_entries: usize,
 
   /// The time that the original request was started
-  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant"))]
+  #[cfg_attr(feature = "serde", serde(with = "serde_millis"))]
   start: Instant,
 
   /// The response of the [`AppendEntriesRequest`]

@@ -219,6 +219,20 @@ impl<I, A, D> Log<I, A, D> {
     }
   }
 
+  /// Only used for testing.
+  #[cfg(feature = "test")]
+  pub fn set_index(mut self, index: u64) -> Self {
+    self.index = index;
+    self
+  }
+
+  /// Only used for testing.
+  #[cfg(feature = "test")]
+  pub fn set_term(mut self, term: u64) -> Self {
+    self.term = term;
+    self
+  }
+
   #[inline]
   pub(crate) const fn is_membership(&self) -> bool {
     matches!(self.kind, LogKind::Membership(_))

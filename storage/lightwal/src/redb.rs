@@ -266,7 +266,7 @@ where
 {
   /// Creates a new [`Db`].
   pub fn new(opts: DbOptions) -> Result<Self, Error<I, A, D>> {
-    Builder::new()
+    let this = Builder::new()
       .set_cache_size(opts.cache_size)
       .set_repair_callback(opts.repair_callback)
       .create(opts.path)
@@ -274,7 +274,16 @@ where
         db,
         _marker: std::marker::PhantomData,
       })
-      .map_err(|e| ErrorKind::from(e).into())
+      .map_err(ErrorKind::from)?;
+    let t = this.db.begin_write().map_err(ErrorKind::from)?;
+    t.open_table(TERM_TABLE_DEFINITION)
+      .map_err(ErrorKind::from)?;
+    t.open_table(CANDIDATE_TABLE_DEFINITION)
+      .map_err(ErrorKind::from)?;
+    t.open_table(LOG_TABLE_DEFINITION)
+      .map_err(ErrorKind::from)?;
+    t.commit().map_err(ErrorKind::from)?;
+    Ok(this)
   }
 }
 
@@ -374,6 +383,7 @@ where
         .map_err(ErrorKind::from)?;
       t.insert(CURRENT_TERM, term).map_err(ErrorKind::from)?;
     }
+    w.commit().map_err(ErrorKind::from)?;
     Ok(())
   }
 
@@ -394,6 +404,7 @@ where
         .map_err(ErrorKind::from)?;
       t.insert(LAST_VOTE_TERM, term).map_err(ErrorKind::from)?;
     }
+    w.commit().map_err(ErrorKind::from)?;
     Ok(())
   }
 
@@ -556,5 +567,83 @@ where
           .and_then(|_| w.commit().map_err(ErrorKind::from))
       })
       .map_err(Into::into)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{net::SocketAddr, ops::Deref};
+
+  use agnostic::tokio::TokioRuntime;
+  use smol_str::SmolStr;
+
+  use super::*;
+  use crate::test;
+
+  struct TestDb {
+    _dir: tempfile::TempDir,
+    db: Db<SmolStr, SocketAddr, Vec<u8>, TokioRuntime>,
+  }
+
+  impl Deref for TestDb {
+    type Target = Db<SmolStr, SocketAddr, Vec<u8>, TokioRuntime>;
+
+    fn deref(&self) -> &Self::Target {
+      &self.db
+    }
+  }
+
+  fn test_db() -> TestDb {
+    use tempfile::tempdir;
+    let dir = tempdir().unwrap();
+    TestDb {
+      db: Db::new(DbOptions::new(dir.path().join("test"))).unwrap(),
+      _dir: dir,
+    }
+  }
+
+  #[tokio::test]
+  async fn test_first_index() {
+    test::test_first_index(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_index() {
+    test::test_last_index(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_get_log() {
+    test::test_get_log(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_store_log() {
+    test::test_store_log(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_store_logs() {
+    test::test_store_logs(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_remove_range() {
+    test::test_remove_range(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_current_term() {
+    test::test_current_term(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_vote_term() {
+    test::test_last_vote_term(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_vote_candidate() {
+    test::test_last_vote_candidate(test_db().deref()).await;
   }
 }

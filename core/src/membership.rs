@@ -441,7 +441,9 @@ pub struct Membership<I, A> {
 
 impl<I: Hash + Eq, A: PartialEq> PartialEq for Membership<I, A> {
   fn eq(&self, other: &Self) -> bool {
-    self.quorum_size == other.quorum_size && self.voters == other.voters && self.servers.eq(&other.servers)
+    self.quorum_size == other.quorum_size
+      && self.voters == other.voters
+      && self.servers.eq(&other.servers)
   }
 }
 

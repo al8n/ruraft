@@ -29,3 +29,12 @@ redb = { version = "1.4", optional = true }
 sled = { version = "0.34", optional = true }
 
 metrics = { workspace = true, optional = true }
+
+[dev-dependencies]
+agnostic = { workspace = true, features = ["tokio"] }
+criterion = "0.5"
+nodecraft = { workspace = true, feature = ["smol_str"] }
+ruraft-core = { path = "../../core", features = ["test"] }
+smol_str = "0.2"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

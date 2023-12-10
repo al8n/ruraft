@@ -1,6 +1,5 @@
 use std::future::Future;
 
-use bytes::Bytes;
 use nodecraft::{Address, CheapClone, Id};
 
 use crate::Node;

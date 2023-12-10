@@ -476,3 +476,63 @@ where
       })
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use std::net::SocketAddr;
+
+  use agnostic::tokio::TokioRuntime;
+  use smol_str::SmolStr;
+
+  use super::*;
+  use crate::test;
+
+  fn test_db() -> Db<SmolStr, SocketAddr, Vec<u8>, TokioRuntime> {
+    Db::new(DbOptions::new().temporary(true)).unwrap()
+  }
+
+  #[tokio::test]
+  async fn test_first_index() {
+    test::test_first_index(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_index() {
+    test::test_last_index(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_get_log() {
+    test::test_get_log(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_store_log() {
+    test::test_store_log(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_store_logs() {
+    test::test_store_logs(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_remove_range() {
+    test::test_remove_range(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_current_term() {
+    test::test_current_term(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_vote_term() {
+    test::test_last_vote_term(&test_db()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_vote_candidate() {
+    test::test_last_vote_candidate(&test_db()).await;
+  }
+}

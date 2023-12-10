@@ -259,7 +259,7 @@ where
   async fn store_current_term(&self, term: u64) -> Result<(), Self::Error> {
     let txn = self.db.tx(true).map_err(ErrorKind::from)?;
     let b = txn
-      .create_bucket(STABLE_BUCKET_NAME)
+      .get_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     b.put(CURRENT_TERM, term.to_be_bytes())
       .map_err(ErrorKind::from)?;
@@ -286,7 +286,7 @@ where
   async fn store_last_vote_term(&self, term: u64) -> Result<(), Self::Error> {
     let txn = self.db.tx(true).map_err(ErrorKind::from)?;
     let b = txn
-      .create_bucket(STABLE_BUCKET_NAME)
+      .get_bucket(STABLE_BUCKET_NAME)
       .map_err(ErrorKind::from)?;
     b.put(LAST_VOTE_TERM, term.to_be_bytes())
       .map_err(ErrorKind::from)?;
@@ -441,25 +441,111 @@ where
     let txn = self.db.tx(true).map_err(ErrorKind::from)?;
     let b = txn.get_bucket(LOG_BUCKET_NAME).map_err(ErrorKind::from)?;
     let start = match range.start_bound() {
-      Bound::Included(v) => v.to_be_bytes(),
-      Bound::Excluded(v) => (*v + 1).to_be_bytes(),
-      Bound::Unbounded => 0u64.to_be_bytes(),
+      Bound::Included(v) => *v,
+      Bound::Excluded(v) => *v + 1,
+      Bound::Unbounded => 0u64,
     };
 
     let end = match range.end_bound() {
-      Bound::Included(v) => v.to_be_bytes(),
+      Bound::Included(v) => *v,
       Bound::Excluded(v) => {
         if *v == 0 {
-          0u64.to_be_bytes()
+          0u64
         } else {
-          (*v - 1).to_be_bytes()
+          *v - 1
         }
       }
-      Bound::Unbounded => u64::MAX.to_be_bytes(),
+      Bound::Unbounded => u64::MAX,
     };
 
-    b.range((start.as_slice())..=(end.as_slice()))
-      .try_for_each(|d| b.delete(d.key()).map(|_| {}))
-      .map_err(|e| ErrorKind::from(e).into())
+    for idx in start..=end {
+      if let Err(e) = b.delete(idx.to_be_bytes().as_slice()) {
+        if let DbError::KeyValueMissing = e {
+          continue;
+        } else {
+          return Err(ErrorKind::from(e).into());
+        }
+      }
+    }
+
+    txn.commit().map_err(|e| ErrorKind::from(e).into())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{net::SocketAddr, ops::Deref};
+
+  use agnostic::tokio::TokioRuntime;
+  use smol_str::SmolStr;
+
+  use super::*;
+  use crate::test;
+
+  struct TestDb {
+    _dir: tempfile::TempDir,
+    db: Db<SmolStr, SocketAddr, Vec<u8>, TokioRuntime>,
+  }
+
+  impl Deref for TestDb {
+    type Target = Db<SmolStr, SocketAddr, Vec<u8>, TokioRuntime>;
+
+    fn deref(&self) -> &Self::Target {
+      &self.db
+    }
+  }
+
+  fn test_db() -> TestDb {
+    use tempfile::tempdir;
+    let dir = tempdir().unwrap();
+    TestDb {
+      db: Db::new(dir.path().join("test"), DbOptions::new()).unwrap(),
+      _dir: dir,
+    }
+  }
+
+  #[tokio::test]
+  async fn test_first_index() {
+    test::test_first_index(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_index() {
+    test::test_last_index(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_get_log() {
+    test::test_get_log(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_store_log() {
+    test::test_store_log(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_store_logs() {
+    test::test_store_logs(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_remove_range() {
+    test::test_remove_range(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_current_term() {
+    test::test_current_term(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_vote_term() {
+    test::test_last_vote_term(test_db().deref()).await;
+  }
+
+  #[tokio::test]
+  async fn test_last_vote_candidate() {
+    test::test_last_vote_candidate(test_db().deref()).await;
   }
 }
