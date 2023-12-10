@@ -439,6 +439,14 @@ pub struct Membership<I, A> {
   pub(crate) servers: Arc<IndexMap<I, (A, ServerSuffrage)>>,
 }
 
+impl<I: Hash + Eq, A: PartialEq> PartialEq for Membership<I, A> {
+  fn eq(&self, other: &Self) -> bool {
+    self.quorum_size == other.quorum_size && self.voters == other.voters && self.servers.eq(&other.servers)
+  }
+}
+
+impl<I: Eq + Hash, A: Eq> Eq for Membership<I, A> {}
+
 impl<I, A> Clone for Membership<I, A> {
   fn clone(&self) -> Self {
     Self {
@@ -1072,39 +1080,40 @@ impl<I: Display, A: Display> core::fmt::Display for MembershipError<I, A> {
 impl<I: Display + Debug, A: Display + Debug> std::error::Error for MembershipError<I, A> {}
 
 #[cfg(test)]
+pub(crate) fn sample_membership() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
+  let mut membership = MembershipBuilder::new();
+  membership
+    .insert(Server {
+      id: "id0".into(),
+      addr: "127.0.0.1:8080".parse().unwrap(),
+      suffrage: ServerSuffrage::Nonvoter,
+    })
+    .unwrap();
+
+  membership
+    .insert(Server {
+      id: "id1".into(),
+      addr: "127.0.0.1:8081".parse().unwrap(),
+      suffrage: ServerSuffrage::Voter,
+    })
+    .unwrap();
+
+  membership
+    .insert(Server {
+      id: "id2".into(),
+      addr: "[::1]:8082".parse().unwrap(),
+      suffrage: ServerSuffrage::Nonvoter,
+    })
+    .unwrap();
+
+  membership.build().unwrap()
+}
+
+#[cfg(test)]
 mod tests {
   use super::*;
   use smol_str::SmolStr;
   use std::net::SocketAddr;
-
-  fn sample_membership() -> Membership<SmolStr, SocketAddr> {
-    let mut membership = MembershipBuilder::new();
-    membership
-      .insert(Server {
-        id: "id0".into(),
-        addr: "127.0.0.1:8080".parse().unwrap(),
-        suffrage: ServerSuffrage::Nonvoter,
-      })
-      .unwrap();
-
-    membership
-      .insert(Server {
-        id: "id1".into(),
-        addr: "127.0.0.1:8081".parse().unwrap(),
-        suffrage: ServerSuffrage::Voter,
-      })
-      .unwrap();
-
-    membership
-      .insert(Server {
-        id: "id2".into(),
-        addr: "127.0.0.1:8082".parse().unwrap(),
-        suffrage: ServerSuffrage::Nonvoter,
-      })
-      .unwrap();
-
-    membership.build().unwrap()
-  }
 
   fn single_server() -> Membership<SmolStr, SocketAddr> {
     let mut membership = MembershipBuilder::new();

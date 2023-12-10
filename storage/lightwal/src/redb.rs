@@ -157,8 +157,8 @@ where
 
 impl<I, A, D> core::fmt::Debug for Error<I, A, D>
 where
-  I: Transformable,
-  A: Transformable,
+  I: Id,
+  A: Address,
   D: Transformable,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -179,8 +179,8 @@ where
 
 impl<I, A, D> core::fmt::Display for Error<I, A, D>
 where
-  I: Transformable,
-  A: Transformable,
+  I: Id,
+  A: Address,
   D: Transformable,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -201,8 +201,8 @@ where
 
 impl<I, A, D> std::error::Error for Error<I, A, D>
 where
-  I: Transformable,
-  A: Transformable,
+  I: Id,
+  A: Address,
   D: Transformable,
 {
 }
