@@ -14,7 +14,7 @@ default = []
 test = ["tracing-subscriber", "tempfile"]
 metrics = ["dep:metrics"]
 
-serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde"]
+serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "dep:serde_millis", "ruraft-utils/serde"]
 
 [dependencies]
 arc-swap = "1.6"
@@ -48,6 +48,7 @@ ruraft-utils = { path = "../utils" }
 # serialization/deserialization related dependencies
 serde = { workspace = true, optional = true, features = ["rc"] }
 serde_repr = { version = "0.1", optional = true }
+serde_millis = { version = "0.1", optional = true }
 humantime-serde = { workspace = true, optional = true }
 
 # metrics
@@ -60,5 +61,6 @@ tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "net", "async-std", "smol"] }
+tokio = { version = "1", features = ["full"] }
 
 

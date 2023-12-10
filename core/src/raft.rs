@@ -15,7 +15,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
 use futures::channel::oneshot;
-use nodecraft::CheapClone;
+use nodecraft::{CheapClone, Transformable};
 use wg::AsyncWaitGroup;
 
 use crate::{
@@ -82,6 +82,20 @@ impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
     write!(f, "{}({})", self.id, self.addr)
   }
 }
+
+// impl<I: Transformable, A: Transformable> Transformable for Node<I, A> {
+//   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+
+//   }
+
+//   fn decode(src: &[u8]) -> Result<Self, Self::Error> {
+
+//   }
+
+//   fn encoded_len(&self) -> usize {
+//     self.id.encoded_len() + self.addr.encoded_len()
+//   }
+// }
 
 impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
