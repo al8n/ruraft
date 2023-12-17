@@ -74,8 +74,8 @@ where
 
           match rpc {
             Ok(rpc) => {
-              let (tx, req) = rpc.into_components();
-              self.handle_request(tx, req).await;
+              let (tx, req, conn) = rpc.into_components();
+              self.handle_request(tx, req, conn).await;
             }
             Err(e) => {
               tracing::error!(target = "ruraft.candidate", err=%e, "rpc consumer closed unexpectedly, shutting down...");

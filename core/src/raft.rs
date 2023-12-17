@@ -83,20 +83,6 @@ impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
   }
 }
 
-// impl<I: Transformable, A: Transformable> Transformable for Node<I, A> {
-//   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
-
-//   }
-
-//   fn decode(src: &[u8]) -> Result<Self, Self::Error> {
-
-//   }
-
-//   fn encoded_len(&self) -> usize {
-//     self.id.encoded_len() + self.addr.encoded_len()
-//   }
-// }
-
 impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]

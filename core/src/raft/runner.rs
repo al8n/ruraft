@@ -16,8 +16,8 @@ use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
 use super::{
-  api::ApplySender, fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer,
-  ObserverId, OptionalContact, Shutdown,
+  api::ApplySender, fsm::FSMRequest, state::LastLog, CountingReader, Leader,
+  MembershipChangeRequest, Observer, ObserverId, OptionalContact, Shutdown,
 };
 use crate::{
   error::Error,
@@ -25,14 +25,18 @@ use crate::{
   observe,
   options::{Options, ReloadableOptions},
   options::{ProtocolVersion, SnapshotVersion},
+  raft::snapshot::SnapshotRestoreMonitor,
   sidecar::Sidecar,
-  storage::{Log, LogKind, LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
-  transport::{
-    AppendEntriesRequest, AppendEntriesResponse, HeartbeatRequest, InstallSnapshotRequest,
-    InstallSnapshotResponse, Request, Response, RpcConsumer, TimeoutNowRequest, TimeoutNowResponse,
-    Transport, VoteRequest, VoteResponse,
+  storage::{
+    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotStorage,
+    StableStorage, Storage, StorageError,
   },
-  FinateStateMachine, Node, Observed, Role, State,
+  transport::{
+    AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, HeartbeatRequest,
+    InstallSnapshotRequest, InstallSnapshotResponse, Request, Response, RpcConsumer,
+    TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest, VoteResponse,
+  },
+  FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
 };
 
 #[cfg(feature = "metrics")]
@@ -64,7 +68,8 @@ where
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
-  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+  pub(super) rpc:
+    RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data, T::RpcConnection>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   pub(super) candidate_from_leadership_transfer: AtomicBool,
   /// last_contact is the last time we had contact from the
@@ -251,12 +256,21 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    rpc_reader: Option<T::RpcConnection>,
   ) {
     // TODO: validate the request header
     match req {
       Request::AppendEntries(req) => self.handle_append_entries(tx, req).await,
       Request::Vote(req) => self.handle_vote_request(tx, req).await,
-      Request::InstallSnapshot(req) => self.handle_install_snapshot_request(tx, req).await,
+      Request::InstallSnapshot(req) => {
+        if let Some(rpc_reader) = rpc_reader {
+          self
+            .handle_install_snapshot_request(tx, req, rpc_reader)
+            .await
+        } else {
+          panic!("ruraft: failed to handle install snapshot request since rpc reader is not available, this may be a bug in the transport implementation, if you are not using a custom transport, please report this issue to the http://github.com/al8n/ruraft/issues/new");
+        }
+      }
       Request::TimeoutNow(req) => self.handle_timeout_now_request(tx, req).await,
       Request::Heartbeat(req) => self.handle_heartbeat_request(tx, req).await,
     }
@@ -619,7 +633,38 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+    reader: T::RpcConnection,
   ) {
+    async fn respond<R: futures::AsyncRead + Unpin, I: nodecraft::Id, A: nodecraft::Address>(
+      reader: R,
+      resp: either::Either<InstallSnapshotResponse<I, A>, ErrorResponse<I, A>>,
+      tx: oneshot::Sender<Response<I, A>>,
+    ) {
+      // ensure we always consume all the snapshot data from the stream
+      let _ = futures::io::copy(reader, &mut ruraft_utils::io::Discard).await;
+
+      match resp {
+        either::Either::Left(resp) => {
+          if tx.send(Response::InstallSnapshot(resp)).is_err() {
+            tracing::error!(
+              target = "ruraft.rpc.install_snapshot",
+              err = "channel closed",
+              "failed to respond to install snapshot request"
+            );
+          }
+        }
+        either::Either::Right(resp) => {
+          if tx.send(Response::Error(resp)).is_err() {
+            tracing::error!(
+              target = "ruraft.rpc.install_snapshot",
+              err = "channel closed",
+              "failed to respond to install snapshot request"
+            );
+          }
+        }
+      }
+    }
+
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
@@ -628,12 +673,7 @@ where
       start.elapsed().as_millis() as f64
     ));
 
-    async fn respond<R: futures::AsyncRead + Unpin, I: nodecraft::Id, A: nodecraft::Address>(
-      reader: R,
-      resp: InstallSnapshotResponse<I, A>,
-      tx: oneshot::Sender<Response<I, A>>,
-    ) {
-    }
+    let req_size = *req.size();
 
     let mut resp = InstallSnapshotResponse {
       header: self.transport.header(),
@@ -672,7 +712,7 @@ where
         snapshot_version(self.transport.version()),
         req.last_log_term,
         req.last_log_index,
-        req.membership,
+        req.membership.clone(),
         req.membership_index,
       )
       .await
@@ -684,9 +724,174 @@ where
           <S::Error as StorageError>::snapshot(e)
             .with_message(Cow::Borrowed("failed to create snapshot")),
         );
+        let resp = either::Either::Right(ErrorResponse {
+          header: self.transport.header(),
+          error: err.to_string(),
+        });
+        respond(reader, resp, tx).await;
         return;
       }
     };
+
+    let snapshot_id = sink.id();
+
+    // Separately track the progress of streaming a snapshot over the network
+    // because this too can take a long time.
+    let mut counting_rpc_reader = CountingReader::from(reader);
+
+    // Spill the remote snapshot to disk
+    let ctr = counting_rpc_reader.ctr();
+    let transfer_monitor = SnapshotRestoreMonitor::<R>::new(ctr, req_size, true);
+    let copy_result = futures::io::copy(&mut counting_rpc_reader, &mut sink).await;
+    transfer_monitor.stop_and_wait().await;
+    let copied = match copy_result {
+      Ok(n) => n,
+      Err(e) => {
+        if let Err(e) = sink.cancel().await {
+          tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to cancel snapshot sink");
+        }
+
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to copy snapshot");
+
+        let resp = either::Either::Right(ErrorResponse {
+          header: self.transport.header(),
+          error: Error::<F, S, T>::storage(<S::Error as StorageError>::io(e)).to_string(),
+        });
+
+        respond(counting_rpc_reader, resp, tx).await;
+        return;
+      }
+    };
+
+    // Check that we received it all
+    if copied != req_size {
+      if let Err(e) = sink.cancel().await {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to cancel snapshot sink");
+      }
+
+      tracing::error!(
+        target = "ruraft.rpc.install_snapshot",
+        received = copied / req_size,
+        err = "short read",
+        "failed to copy whole snapshot"
+      );
+      let resp = either::Either::Right(ErrorResponse {
+        header: self.transport.header(),
+        error: "short read".to_string(),
+      });
+      respond(counting_rpc_reader, resp, tx).await;
+      return;
+    }
+
+    // Finalize the snapshot
+    if let Err(e) = sink.close().await {
+      tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to finalize snapshot");
+      let resp = either::Either::Right(ErrorResponse {
+        header: self.transport.header(),
+        error: Error::<F, S, T>::storage(<S::Error as StorageError>::io(e)).to_string(),
+      });
+      respond(counting_rpc_reader, resp, tx).await;
+      return;
+    }
+
+    // TODO: Restore snapshot
+    let (restore_tx, restore_rx) = futures::channel::oneshot::channel();
+    futures::select! {
+      res = self.fsm_mutate_tx.send(FSMRequest::Restore {
+        id: snapshot_id,
+        tx: restore_tx,
+        shutdown_rx: self.shutdown_rx.clone(),
+      }).fuse() => {
+        if let Err(e) = res {
+          tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to send restore request to fsm");
+          let resp = either::Either::Right(ErrorResponse {
+            header: self.transport.header(),
+            error: e.to_string(),
+          });
+          respond(counting_rpc_reader, resp, tx).await;
+          return;
+        }
+      },
+      _ = self.shutdown_rx.recv().fuse() => {
+        let resp = either::Either::Right(ErrorResponse {
+          header: self.transport.header(),
+          error: Error::<F, S, T>::shutdown().to_string(),
+        });
+        respond(counting_rpc_reader, resp, tx).await;
+        return;
+      }
+    }
+
+    // Wait for the restore to happen
+    match restore_rx.await {
+      Ok(Ok(())) => {}
+      Ok(Err(e)) => {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to restore snapshot");
+        let resp = either::Either::Right(ErrorResponse {
+          header: self.transport.header(),
+          error: e.to_string(),
+        });
+        return respond(counting_rpc_reader, resp, tx).await;
+      }
+      Err(e) => {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to receive restore response");
+        let resp = either::Either::Right(ErrorResponse {
+          header: self.transport.header(),
+          error: e.to_string(),
+        });
+        return respond(counting_rpc_reader, resp, tx).await;
+      }
+    }
+
+    // Update the lastApplied so we don't replay old logs
+    self.set_last_applied(req.last_log_index);
+
+    // Update the last stable snapshot info
+    self.set_last_snapshot(LastSnapshot::new(req.last_log_index, req.last_log_term));
+
+    // Restore the peer set
+    let updated_membership = Arc::new((req.membership_index, req.membership));
+    self.memberships.latest.store(updated_membership.clone());
+    self.memberships.committed.store(updated_membership);
+
+    // Clear old logs if req.logs is a MonotonicLogStore. Otherwise compact the
+    // logs. In both cases, log any errors and continue.
+    if <S::Log as LogStorage>::is_monotonic() {
+      if let Err(err) = remove_old_logs::<S>(self.storage.log_store()).await {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%err, "failed to remove old logs");
+
+        let resp = either::Either::Right(ErrorResponse {
+          header: self.transport.header(),
+          error: err.to_string(),
+        });
+        respond(counting_rpc_reader, resp, tx).await;
+        return;
+      }
+    } else if let Err(e) = compact_logs::<S>(
+      self.storage.log_store(),
+      &self.state,
+      req.last_log_index,
+      self
+        .reloadable_options
+        .load(Ordering::Acquire)
+        .trailing_logs(),
+    )
+    .await
+    {
+      tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to compact logs");
+      let resp = either::Either::Right(ErrorResponse {
+        header: self.transport.header(),
+        error: e.to_string(),
+      });
+      respond(counting_rpc_reader, resp, tx).await;
+      return;
+    }
+
+    tracing::info!(
+      target = "ruraft.rpc.install_snapshot",
+      "successfully installed remote snapshot"
+    );
+    self.last_contact.update();
     todo!()
   }
 

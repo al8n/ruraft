@@ -154,9 +154,6 @@ pub trait Transport: Send + Sync + 'static {
   /// Specifies the runtime environment for transport operations.
   type Runtime: Runtime;
 
-  // /// The configuration used to construct the transport.
-  // type Options: Send + Sync + 'static;
-
   /// Unique identifier for nodes.
   type Id: Id + CheapClone + Send + Sync + 'static;
 
@@ -182,10 +179,18 @@ pub trait Transport: Send + Sync + 'static {
     Data = Self::Data,
   >;
 
+  /// Represents the type of network connection used by the transport.
+  type RpcConnection: AsyncRead + Unpin + Send + 'static;
+
   /// Consumes and responds to incoming RPC requests.
   fn consumer(
     &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>;
+  ) -> RpcConsumer<
+    Self::Id,
+    <Self::Resolver as AddressResolver>::Address,
+    Self::Data,
+    Self::RpcConnection,
+  >;
 
   /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;

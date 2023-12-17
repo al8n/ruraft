@@ -677,16 +677,19 @@ impl<I, A> Future for RpcHandle<I, A> {
 }
 
 /// The struct is used to interact with the Raft.
-pub struct Rpc<I, A, D> {
+pub struct Rpc<I, A, D, R> {
   req: Request<I, A, D>,
   tx: oneshot::Sender<Response<I, A>>,
+  reader: Option<R>,
 }
 
-impl<I, A, D> Rpc<I, A, D> {
-  /// Create a new command from the given request.
-  pub fn new(req: Request<I, A, D>) -> (Self, RpcHandle<I, A>) {
+impl<I, A, D, R> Rpc<I, A, D, R> {
+  /// Create a new command from the given request and reader.
+  /// This reader must be provided when sending in the
+  /// install snapshot rpc.
+  pub fn new(req: Request<I, A, D>, reader: Option<R>) -> (Self, RpcHandle<I, A>) {
     let (tx, rx) = oneshot::channel();
-    (Self { req, tx }, RpcHandle::new(rx))
+    (Self { req, tx, reader }, RpcHandle::new(rx))
   }
 
   /// Returns the header of the request.
@@ -700,8 +703,10 @@ impl<I, A, D> Rpc<I, A, D> {
     self.tx.send(resp)
   }
 
-  pub(crate) fn into_components(self) -> (oneshot::Sender<Response<I, A>>, Request<I, A, D>) {
-    (self.tx, self.req)
+  pub(crate) fn into_components(
+    self,
+  ) -> (oneshot::Sender<Response<I, A>>, Request<I, A, D>, Option<R>) {
+    (self.tx, self.req, self.reader)
   }
 }
 
@@ -709,12 +714,12 @@ impl<I, A, D> Rpc<I, A, D> {
 /// from remote nodes
 #[pin_project::pin_project]
 #[derive(Debug)]
-pub struct RpcConsumer<I, A, D> {
+pub struct RpcConsumer<I, A, D, R> {
   #[pin]
-  rx: async_channel::Receiver<Rpc<I, A, D>>,
+  rx: async_channel::Receiver<Rpc<I, A, D, R>>,
 }
 
-impl<I, A, D> Clone for RpcConsumer<I, A, D> {
+impl<I, A, D, R> Clone for RpcConsumer<I, A, D, R> {
   fn clone(&self) -> Self {
     Self {
       rx: self.rx.clone(),
@@ -722,34 +727,34 @@ impl<I, A, D> Clone for RpcConsumer<I, A, D> {
   }
 }
 
-impl<I, A, D> Stream for RpcConsumer<I, A, D> {
-  type Item = <async_channel::Receiver<Rpc<I, A, D>> as Stream>::Item;
+impl<I, A, D, R> Stream for RpcConsumer<I, A, D, R> {
+  type Item = <async_channel::Receiver<Rpc<I, A, D, R>> as Stream>::Item;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    <async_channel::Receiver<Rpc<I, A, D>> as Stream>::poll_next(self.project().rx, cx)
+    <async_channel::Receiver<Rpc<I, A, D, R>> as Stream>::poll_next(self.project().rx, cx)
   }
 }
 
-impl<I, A, D> RpcConsumer<I, A, D> {
+impl<I, A, D, R> RpcConsumer<I, A, D, R> {
   /// Receives a [`Rpc`] from the consumer.
-  pub async fn recv(&self) -> Result<Rpc<I, A, D>, RecvError> {
+  pub async fn recv(&self) -> Result<Rpc<I, A, D, R>, RecvError> {
     self.rx.recv().await
   }
 
   /// Attempts to receive a [`Rpc`] from the consumer.
   ///
   /// If the consumer is empty, or empty and closed, this method returns an error
-  pub fn try_recv(&self) -> Result<Rpc<I, A, D>, TryRecvError> {
+  pub fn try_recv(&self) -> Result<Rpc<I, A, D, R>, TryRecvError> {
     self.rx.try_recv()
   }
 }
 
 /// A producer for [`Rpc`]s
-pub struct RpcProducer<I, A, D> {
-  tx: async_channel::Sender<Rpc<I, A, D>>,
+pub struct RpcProducer<I, A, D, R> {
+  tx: async_channel::Sender<Rpc<I, A, D, R>>,
 }
 
-impl<I, A, D> Clone for RpcProducer<I, A, D> {
+impl<I, A, D, R> Clone for RpcProducer<I, A, D, R> {
   fn clone(&self) -> Self {
     Self {
       tx: self.tx.clone(),
@@ -757,18 +762,18 @@ impl<I, A, D> Clone for RpcProducer<I, A, D> {
   }
 }
 
-impl<I, A, D> RpcProducer<I, A, D> {
+impl<I, A, D, R> RpcProducer<I, A, D, R> {
   /// Produce a command for processing
   pub async fn send(
     &self,
-    req: Rpc<I, A, D>,
-  ) -> Result<(), async_channel::SendError<Rpc<I, A, D>>> {
+    req: Rpc<I, A, D, R>,
+  ) -> Result<(), async_channel::SendError<Rpc<I, A, D, R>>> {
     self.tx.send(req).await
   }
 }
 
 /// Returns unbounded command producer and command consumer.
-pub fn rpc<I, A, D>() -> (RpcProducer<I, A, D>, RpcConsumer<I, A, D>) {
+pub fn rpc<I, A, D, R>() -> (RpcProducer<I, A, D, R>, RpcConsumer<I, A, D, R>) {
   let (tx, rx) = async_channel::unbounded();
   (RpcProducer { tx }, RpcConsumer { rx })
 }

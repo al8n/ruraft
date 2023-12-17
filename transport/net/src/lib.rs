@@ -6,6 +6,7 @@
 /// Stream layer abstraction.
 pub mod stream;
 use nodecraft::CheapClone;
+use ruraft_utils::io::LimitedReader;
 use stream::{Connection, Listener, StreamLayer};
 
 use std::{
@@ -296,7 +297,12 @@ where
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <A as AddressResolver>::Address>,
   advertise_addr: SocketAddr,
-  consumer: RpcConsumer<I, <A as AddressResolver>::Address, D>,
+  consumer: RpcConsumer<
+    I,
+    <A as AddressResolver>::Address,
+    D,
+    LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
+  >,
   resolver: A,
   wg: AsyncWaitGroup,
   conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, S::Stream>>,
@@ -353,7 +359,7 @@ where
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let wg = AsyncWaitGroup::from(1);
-    let (producer, consumer) = rpc::<I, A::Address, D>();
+    let (producer, consumer) = rpc();
     let request_handler = RequestHandler {
       ln,
       local_header: opts.header.clone(),
@@ -415,9 +421,16 @@ where
 
   type Data = D;
 
+  type RpcConnection = LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>;
+
   fn consumer(
     &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
+  ) -> RpcConsumer<
+    Self::Id,
+    <Self::Resolver as AddressResolver>::Address,
+    Self::Data,
+    Self::RpcConnection,
+  > {
     self.consumer.clone()
   }
 
@@ -726,7 +739,8 @@ where
 struct RequestHandler<I, A, D, S: StreamLayer> {
   ln: S::Listener,
   local_header: Header<I, A>,
-  producer: RpcProducer<I, A, D>,
+  producer:
+    RpcProducer<I, A, D, LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   wg: AsyncWaitGroup,
@@ -813,7 +827,12 @@ where
 
   async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
     conn: S::Stream,
-    producer: RpcProducer<I, A, D>,
+    producer: RpcProducer<
+      I,
+      A,
+      D,
+      LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
+    >,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<(), Error<I, Resolver, W>>
@@ -821,7 +840,13 @@ where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
-    let mut r = BufReader::with_capacity(CONN_RECEIVE_BUFFER_SIZE, conn);
+    let (mut reader, mut writer) = {
+      let (reader, writer) = conn.into_split();
+      (
+        BufReader::with_capacity(CONN_RECEIVE_BUFFER_SIZE, reader),
+        BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, writer),
+      )
+    };
 
     let _get_type_start = Instant::now();
 
@@ -832,7 +857,7 @@ where
     #[cfg(feature = "metrics")]
     let decode_start = Instant::now();
     // Get the request meta
-    let req = <W as Wire>::decode_request(&mut r)
+    let req = <W as Wire>::decode_request(&mut reader)
       .await
       .map_err(Error::Wire)?;
     #[cfg(feature = "metrics")]
@@ -851,7 +876,14 @@ where
     let resp = if let Request::Heartbeat(_) = &req {
       Response::heartbeat(HeartbeatResponse::new(local_header, true))
     } else {
-      let (tx, handle) = Rpc::<I, A, D>::new(req);
+      let (tx, handle) = match &req {
+        Request::InstallSnapshot(ireq) => {
+          let lr = LimitedReader::new(*ireq.size(), reader);
+          Rpc::new(req, Some(lr))
+        }
+        _ => Rpc::new(req, None),
+      };
+
       futures::select! {
         res = producer.send(tx).fuse() => {
           #[cfg(feature = "metrics")]
@@ -892,8 +924,13 @@ where
       Error::Wire(e)
     })?;
 
-    r.into_inner().write_all(resp.as_ref()).await.map_err(|e| {
+    writer.write_all(resp.as_ref()).await.map_err(|e| {
       tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
+      Error::IO(e)
+    })?;
+
+    writer.flush().await.map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to flush response");
       Error::IO(e)
     })
   }

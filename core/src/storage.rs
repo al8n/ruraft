@@ -10,7 +10,7 @@ use std::{borrow::Cow, future::Future};
 
 use crate::{
   transport::{Address, Id},
-  Data,
+  Data, State,
 };
 
 /// Represents a comprehensive set of errors arising from operations within the [`Storage`] trait.
@@ -126,6 +126,25 @@ pub trait Storage: Send + Sync + 'static {
 
   /// Returns a reference to the membership storage.
   fn membership_store(&self) -> Option<&Self::Membership>;
+}
+
+pub(crate) async fn compact_logs<S: Storage>(
+  ls: &S::Log,
+  state: &State,
+  snap_idx: u64,
+  trailing_logs: u64,
+) -> Result<(), S::Error> {
+  #[cfg(feature = "metrics")]
+  let start = std::time::Instant::now();
+
+  #[cfg(feature = "metrics")]
+  scopeguard::defer!(metrics::histogram!(
+    "ruraft.snapshot.compact_logs",
+    start.elapsed().as_millis() as f64
+  ));
+
+  let last_log = state.last_log();
+  compact_logs_with_trailing::<S>(ls, snap_idx, last_log.index, trailing_logs).await
 }
 
 /// Takes the last inclusive index of a snapshot,
