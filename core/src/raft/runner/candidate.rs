@@ -2,7 +2,6 @@ use std::sync::atomic::Ordering;
 
 use crate::{
   membership::ServerSuffrage,
-  storage::StableStorage,
   transport::{Header, VoteRequest, VoteResponse},
   utils::random_timeout,
 };

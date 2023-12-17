@@ -12,6 +12,7 @@ use agnostic::Runtime;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
+use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
 use super::{
@@ -25,7 +26,7 @@ use crate::{
   options::{Options, ReloadableOptions},
   options::{ProtocolVersion, SnapshotVersion},
   sidecar::Sidecar,
-  storage::{Log, LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
+  storage::{Log, LogKind, LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, HeartbeatRequest, InstallSnapshotRequest,
     InstallSnapshotResponse, Request, Response, RpcConsumer, TimeoutNowRequest, TimeoutNowResponse,
@@ -735,7 +736,107 @@ where
     index: u64,
     futures: Option<HashMap<u64, Inflight<F, Error<F, S, T>>>>,
   ) {
-    todo!()
+    // Reject logs we've applied already
+    let last_applied = self.last_applied();
+    if index <= last_applied {
+      tracing::warn!(
+        target = "ruraft",
+        index = index,
+        "skipping application of old log"
+      );
+    }
+
+    let batch_enabled = self.options.batch_apply();
+    let apply_batch = |batch: BatchCommit<F, Error<F, S, T>>| async {
+      let req = if batch_enabled {
+        FSMRequest::Batch(batch)
+      } else {
+        FSMRequest::AdHoc(batch)
+      };
+
+      futures::select! {
+        res = self.fsm_mutate_tx.send(req).fuse() => {
+          if let Err(e) = res {
+            tracing::error!(target = "ruraft", err=%e, "failed to send batch to fsm");
+          }
+        },
+        _ = self.shutdown_rx.recv().fuse() => {},
+      }
+    };
+
+    // Store max_append_entries for this call in case it ever becomes reloadable. We
+    // need to use the same value for all lines here to get the expected result.
+    let max_append_entries = self.options.max_append_entries();
+
+    // Apply all the preceding logs
+    if let Some(mut futures) = futures {
+      let mut batch = BatchCommit::with_capacity(max_append_entries);
+
+      for idx in (last_applied + 1)..=index {
+        // Get the log, either from the future or from our log store
+
+        let inflight = futures.remove(&idx);
+        let prepared_log = if let Some(inflight) = inflight {
+          if inflight.log.is_noop() {
+            inflight.tx.respond_noop();
+            continue;
+          }
+
+          self.prepare_log(inflight.log, Some(inflight.tx))
+        } else {
+          let log = match self.storage.log_store().get_log(idx).await {
+            Ok(Some(log)) => log,
+            Ok(None) => {
+              tracing::error!(
+                target = "ruraft",
+                index = idx,
+                err = "log not found",
+                "failed to get log"
+              );
+              panic!("ruraft: log not found");
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft", index = idx, err=%e, "failed to get log");
+              panic!("{e}");
+            }
+          };
+
+          self.prepare_log(log, None)
+        };
+
+        if let Some(prepared_log) = prepared_log {
+          // If we have a log ready to send to the FSM add it to the batch.
+          // The FSM thread will respond to the future.
+          batch.push(prepared_log);
+
+          // If we have filled up a batch, send it to the FSM
+          if batch.len() >= max_append_entries {
+            let mut old_batch = BatchCommit::with_capacity(max_append_entries);
+            std::mem::swap(&mut batch, &mut old_batch);
+            apply_batch(old_batch).await;
+          }
+        }
+      }
+
+      // If there are any remaining logs in the batch apply them
+      if !batch.is_empty() {
+        apply_batch(batch).await;
+      }
+    }
+
+    // Update the lastApplied index and term
+    self.set_last_applied(index);
+  }
+
+  fn prepare_log(
+    &self,
+    l: Log<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    fut: Option<ApplySender<F, Error<F, S, T>>>,
+  ) -> Option<CommitTuple<F, Error<F, S, T>>> {
+    match &l.kind {
+      LogKind::Noop => None,
+      _ => Some(CommitTuple { log: l, tx: fut }),
+    }
   }
 
   async fn persist_vote(
@@ -777,6 +878,15 @@ struct Inflight<F: FinateStateMachine, E> {
   log: Log<F::Id, F::Address, F::Data>,
   tx: ApplySender<F, E>,
 }
+
+pub(crate) struct CommitTuple<F: FinateStateMachine, E> {
+  pub(crate) log: Log<F::Id, F::Address, F::Data>,
+  pub(crate) tx: Option<ApplySender<F, E>>,
+}
+
+const INLINE: usize = 2;
+
+pub(crate) type BatchCommit<F, E> = SmallVec<[CommitTuple<F, E>; INLINE]>;
 
 fn snapshot_version(proto: ProtocolVersion) -> SnapshotVersion {
   match proto {
