@@ -27,7 +27,7 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
 /// This trait encapsulates a range of error types, providing a structured approach to categorizing
 /// and handling fsm-level errors. Implementers can leverage this to define both generic and
 /// fsm-specific error scenarios.
-pub trait FinateStateMachineError: std::error::Error + Send + Sync + 'static {
+pub trait FinateStateMachineError: Clone + std::error::Error + Send + Sync + 'static {
   /// The snapshot of the finate state machine
   type Snapshot: FinateStateMachineSnapshot;
 

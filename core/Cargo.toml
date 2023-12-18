@@ -26,6 +26,7 @@ atomic = "0.6"
 bytes = { workspace = true, features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-skiplist = "0.1"
+either = "1.9"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["resolver", "agnostic"] }
 humantime = "2.1"
@@ -43,7 +44,7 @@ tracing = { workspace = true }
 viewit = { workspace = true }
 wg = { workspace = true }
 
-ruraft-utils = { path = "../utils" }
+ruraft-utils = { path = "../utils", features = ["io"] }
 
 # serialization/deserialization related dependencies
 serde = { workspace = true, optional = true, features = ["rc"] }

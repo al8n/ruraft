@@ -11,12 +11,13 @@ use std::{
 use agnostic::Runtime;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
-use nodecraft::resolver::AddressResolver;
+use nodecraft::{resolver::AddressResolver, Address, Id};
+use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
 use super::{
-  api::ApplySender, fsm::FSMRequest, state::LastLog, Leader, MembershipChangeRequest, Observer,
-  ObserverId, OptionalContact, Shutdown,
+  api::ApplySender, fsm::FSMRequest, state::LastLog, CountingReader, Leader,
+  MembershipChangeRequest, Observer, ObserverId, OptionalContact, Shutdown,
 };
 use crate::{
   error::Error,
@@ -24,14 +25,19 @@ use crate::{
   observe,
   options::{Options, ReloadableOptions},
   options::{ProtocolVersion, SnapshotVersion},
+  raft::snapshot::SnapshotRestoreMonitor,
   sidecar::Sidecar,
-  storage::{Log, LogStorage, SnapshotStorage, StableStorage, Storage, StorageError},
-  transport::{
-    AppendEntriesRequest, AppendEntriesResponse, HeartbeatRequest, InstallSnapshotRequest,
-    InstallSnapshotResponse, Request, Response, RpcConsumer, TimeoutNowRequest, TimeoutNowResponse,
-    Transport, VoteRequest, VoteResponse,
+  storage::{
+    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotStorage,
+    StableStorage, Storage, StorageError,
   },
-  FinateStateMachine, Node, Observed, Role, State,
+  transport::{
+    AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatRequest,
+    HeartbeatResponse, InstallSnapshotRequest, InstallSnapshotResponse, Request, Response,
+    RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest,
+    VoteResponse,
+  },
+  FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
 };
 
 #[cfg(feature = "metrics")]
@@ -40,6 +46,49 @@ use crate::metrics::SaturationMetric;
 mod candidate;
 mod follower;
 mod leader;
+
+/// Heartbeat RPC handler, can be used to handle heartbeat requests in a fast-path manner.
+pub struct HeartbeatHandler<I, A> {
+  pub(super) state: Arc<State>,
+  pub(super) last_contact: OptionalContact,
+  pub(super) shutdown_rx: async_channel::Receiver<()>,
+  pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
+  pub(super) observers: Arc<async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>>,
+}
+
+impl<I, A> HeartbeatHandler<I, A>
+where
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
+{
+  /// Handle a heartbeat request in a fast-path manner.
+  pub async fn handle_heartbeat(
+    &self,
+    header: Header<I, A>,
+    req: HeartbeatRequest<I, A>,
+    sender: RpcResponseSender<I, A>,
+  ) {
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.rpc.process_heartbeat",
+      start.elapsed().as_millis() as f64
+    ));
+
+    handle_heartbeat_request(
+      header,
+      &self.state,
+      &self.shutdown_rx,
+      &self.last_contact,
+      &self.candidate_from_leadership_transfer,
+      &self.observers,
+      sender.into(),
+      req,
+    )
+    .await
+  }
+}
 
 pub(super) struct RaftRunner<F, S, T, SC, R>
 where
@@ -63,9 +112,10 @@ where
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
-  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+  pub(super) rpc:
+    RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data, T::SnapshotInstaller>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  pub(super) candidate_from_leadership_transfer: AtomicBool,
+  pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
   pub(super) last_contact: OptionalContact,
@@ -250,12 +300,21 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    rpc_reader: Option<T::SnapshotInstaller>,
   ) {
     // TODO: validate the request header
     match req {
       Request::AppendEntries(req) => self.handle_append_entries(tx, req).await,
       Request::Vote(req) => self.handle_vote_request(tx, req).await,
-      Request::InstallSnapshot(req) => self.handle_install_snapshot_request(tx, req).await,
+      Request::InstallSnapshot(req) => {
+        if let Some(rpc_reader) = rpc_reader {
+          self
+            .handle_install_snapshot_request(tx, req, rpc_reader)
+            .await
+        } else {
+          panic!("ruraft: failed to handle install snapshot request since rpc reader is not available, this may be a bug in the transport implementation, if you are not using a custom transport, please report this issue to the http://github.com/al8n/ruraft/issues/new");
+        }
+      }
       Request::TimeoutNow(req) => self.handle_timeout_now_request(tx, req).await,
       Request::Heartbeat(req) => self.handle_heartbeat_request(tx, req).await,
     }
@@ -266,35 +325,26 @@ where
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   ) {
-    // TODO: defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
 
-    macro_rules! respond {
-      ($tx:ident.send($resp:ident)) => {
-        if $tx.send(Response::append_entries($resp)).is_err() {
-          tracing::error!(
-            target = "ruraft.follower",
-            err = "channel closed",
-            "failed to respond to append entries request"
-          );
-        }
-      };
-    }
-
-    let protocol_version = self.options.protocol_version;
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.rpc.append_entries",
+      start.elapsed().as_millis() as f64
+    ));
 
     // Setup a response
-    let mut resp = AppendEntriesResponse::new(
-      protocol_version,
-      self.transport.local_id().clone(),
-      self.transport.local_addr().clone(),
-    )
-    .with_term(self.current_term())
-    .with_last_log(self.last_index());
-
+    let mut resp = AppendEntriesResponse {
+      header: self.transport.header(),
+      term: self.current_term(),
+      last_log: self.last_index(),
+      success: false,
+      no_retry_backoff: false,
+    };
     // Ignore an older term
     if req.term < self.current_term() {
-      respond!(tx.send(resp));
-      return;
+      return respond_append_entries_request::<T>(resp, tx).await;
     }
 
     // Increase the term if we see a newer one, also transition to follower
@@ -328,14 +378,12 @@ where
           Ok(None) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%Error::<F, S, T>::log_not_found(req.prev_log_entry), "previous log entry not found");
             resp.no_retry_backoff = true;
-            respond!(tx.send(resp));
-            return;
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
             resp.no_retry_backoff = true;
-            respond!(tx.send(resp));
-            return;
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
         }
       };
@@ -347,11 +395,9 @@ where
           prev_log_term,
           req.prev_log_term
         );
-
         resp.no_retry_backoff = true;
 
-        respond!(tx.send(resp));
-        return;
+        return respond_append_entries_request::<T>(resp, tx).await;
       }
     }
 
@@ -382,8 +428,7 @@ where
               if let Err(e) = ls.remove_range(ent_idx..=last_log.index).await {
                 tracing::warn!(target = "ruraft.follower", from=%ent_idx, to=%last_log.index, err=%e, "failed to clear log suffix");
                 resp.no_retry_backoff = true;
-                respond!(tx.send(resp));
-                return;
+                return respond_append_entries_request::<T>(resp, tx).await;
               }
               if ent_idx <= self.memberships.latest().0 {
                 self
@@ -397,13 +442,11 @@ where
           }
           Ok(None) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%Error::<F, S, T>::log_not_found(ent_idx), "failed to get log entry");
-            respond!(tx.send(resp));
-            return;
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%e, "failed to get log entry");
-            respond!(tx.send(resp));
-            return;
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
         }
       }
@@ -412,8 +455,9 @@ where
         // Append the new entries
         if let Err(e) = ls.store_logs(&req.entries[pos..]).await {
           tracing::error!(target = "ruraft.follower", err=%e, "failed to append to logs");
-          respond!(tx.send(resp));
-          return;
+          // TODO: leaving r.getLastLog() in the wrong
+          // state if there was a truncation above
+          return respond_append_entries_request::<T>(resp, tx).await;
         }
 
         let last = req.entries.last().unwrap();
@@ -422,7 +466,6 @@ where
         // Handle any new membership changes
         for entry in req.entries.drain(pos..) {
           if entry.is_membership() {
-            //TODO: handle membership changes
             self.process_membership_log(entry);
           }
         }
@@ -461,7 +504,7 @@ where
     // Everything went well, set success
     resp.success = true;
     self.update_last_contact();
-    respond!(tx.send(resp));
+    respond_append_entries_request::<T>(resp, tx).await;
   }
 
   /// Takes a log entry and updates the latest
@@ -486,7 +529,7 @@ where
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: VoteRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) {
-    macro_rules! respond {
+    macro_rules! return_and_respond {
       ($this:ident.$tx:ident($resp:ident)) => {{
         if $tx.send(Response::vote($resp)).is_err() {
           tracing::error!(
@@ -502,7 +545,7 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::gauge!(
+    scopeguard::defer!(metrics::histogram!(
       "ruraft.rpc.vote_request",
       start.elapsed().as_millis() as f64
     ));
@@ -522,17 +565,17 @@ where
     let latest = self.memberships.latest().1.clone();
     if !latest.is_empty() && latest.contains_id(candidate.id()) {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not in membership");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     if let Some(leader) = self.leader.load().as_ref() {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, leader=%leader, "rejecting vote request since we already have a leader");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Ignore an older term
     if req.term < self.current_term() {
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Increase the term if we see a newer one
@@ -551,7 +594,7 @@ where
     // More details about that in https://github.com/hashicorp/raft/pull/526
     if !latest.is_empty() && !latest.is_voter(candidate.id()) {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not a voter");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Check if we have voted yet
@@ -561,14 +604,14 @@ where
       Ok(None) => 0,
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.vote_request", candidate = %candidate, err=%e, "failed to get last vote term");
-        respond!(self.tx(resp))
+        return_and_respond!(self.tx(resp))
       }
     };
     let last_vote_cand = match stable.last_vote_candidate().await {
       Ok(v) => v,
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.vote_request", candidate = %candidate, err=%e, "failed to get last vote candidate");
-        respond!(self.tx(resp))
+        return_and_respond!(self.tx(resp))
       }
     };
     // Check if we've voted in this election before
@@ -583,7 +626,7 @@ where
           tracing::warn!(target = "ruraft.rpc.vote_request", candidate=%candidate, "duplicate vote request for candidate");
           resp.granted = true;
         }
-        respond!(self.tx(resp))
+        return_and_respond!(self.tx(resp))
       }
     }
 
@@ -591,23 +634,23 @@ where
     let last = self.last_entry();
     if last.term > req.last_log_term {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, last_term = last.term, last_candidate_term = req.last_log_term, "rejecting vote request since our last term is greater");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     if last.term == req.last_log_term && last.index > req.last_log_index {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, last_index = last.index, last_candidate_index = req.last_log_index, "rejecting vote request since our last index is greater");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Persist a vote for safety
     if let Err(e) = Self::persist_vote(stable, req.term, candidate).await {
       tracing::error!(target = "ruraft.rpc.vote_request", err=%e, "failed to persist vote");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     resp.granted = true;
     self.update_last_contact();
-    respond!(self.tx(resp))
+    return_and_respond!(self.tx(resp))
   }
 
   /// Invoked when we get a InstallSnapshot RPC call.
@@ -618,6 +661,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
+    reader: T::SnapshotInstaller,
   ) {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
@@ -627,12 +671,7 @@ where
       start.elapsed().as_millis() as f64
     ));
 
-    async fn respond<R: futures::AsyncRead + Unpin, I: nodecraft::Id, A: nodecraft::Address>(
-      reader: R,
-      resp: InstallSnapshotResponse<I, A>,
-      tx: oneshot::Sender<Response<I, A>>,
-    ) {
-    }
+    let req_size = *req.size();
 
     let mut resp = InstallSnapshotResponse {
       header: self.transport.header(),
@@ -648,6 +687,7 @@ where
         current_term = self.current_term(),
         "ignoring installSnapshot request with older term than current term"
       );
+      return;
     }
 
     // Increase the term if we see a newer one
@@ -671,7 +711,7 @@ where
         snapshot_version(self.transport.version()),
         req.last_log_term,
         req.last_log_index,
-        req.membership,
+        req.membership.clone(),
         req.membership_index,
       )
       .await
@@ -683,10 +723,165 @@ where
           <S::Error as StorageError>::snapshot(e)
             .with_message(Cow::Borrowed("failed to create snapshot")),
         );
-        return;
+
+        return respond_install_snapshot_request(&self.transport, reader, Err(err), tx).await;
       }
     };
-    todo!()
+
+    let snapshot_id = sink.id();
+
+    // Separately track the progress of streaming a snapshot over the network
+    // because this too can take a long time.
+    let mut counting_rpc_reader = CountingReader::from(reader);
+
+    // Spill the remote snapshot to disk
+    let ctr = counting_rpc_reader.ctr();
+    let transfer_monitor = SnapshotRestoreMonitor::<R>::new(ctr, req_size, true);
+    let copy_result = futures::io::copy(&mut counting_rpc_reader, &mut sink).await;
+    transfer_monitor.stop_and_wait().await;
+    let copied = match copy_result {
+      Ok(n) => n,
+      Err(e) => {
+        if let Err(e) = sink.cancel().await {
+          tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to cancel snapshot sink");
+        }
+
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to copy snapshot");
+
+        return respond_install_snapshot_request(
+          &self.transport,
+          counting_rpc_reader,
+          Err(Error::<F, S, T>::storage(<S::Error as StorageError>::io(e))),
+          tx,
+        )
+        .await;
+      }
+    };
+
+    // Check that we received it all
+    if copied != req_size {
+      if let Err(e) = sink.cancel().await {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to cancel snapshot sink");
+      }
+
+      tracing::error!(
+        target = "ruraft.rpc.install_snapshot",
+        received = copied / req_size,
+        err = "short read",
+        "failed to copy whole snapshot"
+      );
+
+      return respond_install_snapshot_request(
+        &self.transport,
+        counting_rpc_reader,
+        Err("short read"),
+        tx,
+      )
+      .await;
+    }
+
+    // Finalize the snapshot
+    if let Err(e) = sink.close().await {
+      tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to finalize snapshot");
+
+      return respond_install_snapshot_request(
+        &self.transport,
+        counting_rpc_reader,
+        Err(Error::<F, S, T>::storage(<S::Error as StorageError>::io(e))),
+        tx,
+      )
+      .await;
+    }
+
+    // Restore snapshot
+    let (restore_tx, restore_rx) = futures::channel::oneshot::channel();
+    futures::select! {
+      res = self.fsm_mutate_tx.send(FSMRequest::Restore {
+        id: snapshot_id,
+        tx: restore_tx,
+        shutdown_rx: self.shutdown_rx.clone(),
+      }).fuse() => {
+        if let Err(e) = res {
+          tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to send restore request to fsm");
+
+          return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx).await;
+        }
+      },
+      _ = self.shutdown_rx.recv().fuse() => {
+        return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(Error::<F, S, T>::shutdown()), tx).await;
+      }
+    }
+
+    // Wait for the restore to happen
+    match restore_rx.await {
+      Ok(Ok(())) => {}
+      Ok(Err(e)) => {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to restore snapshot");
+        return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx)
+          .await;
+      }
+      Err(e) => {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to receive restore response");
+        return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx)
+          .await;
+      }
+    }
+
+    // Update the lastApplied so we don't replay old logs
+    self.set_last_applied(req.last_log_index);
+
+    // Update the last stable snapshot info
+    self.set_last_snapshot(LastSnapshot::new(req.last_log_index, req.last_log_term));
+
+    // Restore the peer set
+    let updated_membership = Arc::new((req.membership_index, req.membership));
+    self.memberships.latest.store(updated_membership.clone());
+    self.memberships.committed.store(updated_membership);
+
+    // Clear old logs if req.logs is a MonotonicLogStore. Otherwise compact the
+    // logs. In both cases, log any errors and continue.
+    if <S::Log as LogStorage>::is_monotonic() {
+      if let Err(err) = remove_old_logs::<S>(self.storage.log_store()).await {
+        tracing::error!(target = "ruraft.rpc.install_snapshot", err=%err, "failed to remove old logs");
+
+        return respond_install_snapshot_request(
+          &self.transport,
+          counting_rpc_reader,
+          Err(err),
+          tx,
+        )
+        .await;
+      }
+    } else if let Err(e) = compact_logs::<S>(
+      self.storage.log_store(),
+      &self.state,
+      req.last_log_index,
+      self
+        .reloadable_options
+        .load(Ordering::Acquire)
+        .trailing_logs(),
+    )
+    .await
+    {
+      tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to compact logs");
+
+      return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx)
+        .await;
+    }
+
+    tracing::info!(
+      target = "ruraft.rpc.install_snapshot",
+      "successfully installed remote snapshot"
+    );
+    self.update_last_contact();
+    resp.success = true;
+    respond_install_snapshot_request::<_, _, &str>(
+      &self.transport,
+      counting_rpc_reader,
+      Ok(resp),
+      tx,
+    )
+    .await;
   }
 
   /// What happens when a server receives a [`TimeoutNowRequest`].
@@ -720,7 +915,25 @@ where
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: HeartbeatRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) {
-    todo!()
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.rpc.heartbeat",
+      start.elapsed().as_millis() as f64
+    ));
+
+    handle_heartbeat_request::<_, _>(
+      self.transport.header(),
+      &self.state,
+      &self.shutdown_rx,
+      &self.last_contact,
+      &self.candidate_from_leadership_transfer,
+      &self.observers,
+      tx,
+      req,
+    )
+    .await;
   }
 
   /// Used to apply all the committed entries that haven't been
@@ -735,7 +948,107 @@ where
     index: u64,
     futures: Option<HashMap<u64, Inflight<F, Error<F, S, T>>>>,
   ) {
-    todo!()
+    // Reject logs we've applied already
+    let last_applied = self.last_applied();
+    if index <= last_applied {
+      tracing::warn!(
+        target = "ruraft",
+        index = index,
+        "skipping application of old log"
+      );
+    }
+
+    let batch_enabled = self.options.batch_apply();
+    let apply_batch = |batch: BatchCommit<F, Error<F, S, T>>| async {
+      let req = if batch_enabled {
+        FSMRequest::Batch(batch)
+      } else {
+        FSMRequest::AdHoc(batch)
+      };
+
+      futures::select! {
+        res = self.fsm_mutate_tx.send(req).fuse() => {
+          if let Err(e) = res {
+            tracing::error!(target = "ruraft", err=%e, "failed to send batch to fsm");
+          }
+        },
+        _ = self.shutdown_rx.recv().fuse() => {},
+      }
+    };
+
+    // Store max_append_entries for this call in case it ever becomes reloadable. We
+    // need to use the same value for all lines here to get the expected result.
+    let max_append_entries = self.options.max_append_entries();
+
+    // Apply all the preceding logs
+    if let Some(mut futures) = futures {
+      let mut batch = BatchCommit::with_capacity(max_append_entries);
+
+      for idx in (last_applied + 1)..=index {
+        // Get the log, either from the future or from our log store
+
+        let inflight = futures.remove(&idx);
+        let prepared_log = if let Some(inflight) = inflight {
+          if inflight.log.is_noop() {
+            inflight.tx.respond_noop();
+            continue;
+          }
+
+          self.prepare_log(inflight.log, Some(inflight.tx))
+        } else {
+          let log = match self.storage.log_store().get_log(idx).await {
+            Ok(Some(log)) => log,
+            Ok(None) => {
+              tracing::error!(
+                target = "ruraft",
+                index = idx,
+                err = "log not found",
+                "failed to get log"
+              );
+              panic!("ruraft: log not found");
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft", index = idx, err=%e, "failed to get log");
+              panic!("{e}");
+            }
+          };
+
+          self.prepare_log(log, None)
+        };
+
+        if let Some(prepared_log) = prepared_log {
+          // If we have a log ready to send to the FSM add it to the batch.
+          // The FSM thread will respond to the future.
+          batch.push(prepared_log);
+
+          // If we have filled up a batch, send it to the FSM
+          if batch.len() >= max_append_entries {
+            let mut old_batch = BatchCommit::with_capacity(max_append_entries);
+            std::mem::swap(&mut batch, &mut old_batch);
+            apply_batch(old_batch).await;
+          }
+        }
+      }
+
+      // If there are any remaining logs in the batch apply them
+      if !batch.is_empty() {
+        apply_batch(batch).await;
+      }
+    }
+
+    // Update the lastApplied index and term
+    self.set_last_applied(index);
+  }
+
+  fn prepare_log(
+    &self,
+    l: Log<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    fut: Option<ApplySender<F, Error<F, S, T>>>,
+  ) -> Option<CommitTuple<F, Error<F, S, T>>> {
+    match &l.kind {
+      LogKind::Noop => None,
+      _ => Some(CommitTuple { log: l, tx: fut }),
+    }
   }
 
   async fn persist_vote(
@@ -778,8 +1091,130 @@ struct Inflight<F: FinateStateMachine, E> {
   tx: ApplySender<F, E>,
 }
 
+pub(crate) struct CommitTuple<F: FinateStateMachine, E> {
+  pub(crate) log: Log<F::Id, F::Address, F::Data>,
+  pub(crate) tx: Option<ApplySender<F, E>>,
+}
+
+const INLINE: usize = 2;
+
+pub(crate) type BatchCommit<F, E> = SmallVec<[CommitTuple<F, E>; INLINE]>;
+
 fn snapshot_version(proto: ProtocolVersion) -> SnapshotVersion {
   match proto {
     ProtocolVersion::V1 => SnapshotVersion::V1,
+  }
+}
+
+async fn respond_install_snapshot_request<
+  T: Transport,
+  R: futures::AsyncRead + Unpin,
+  E: ToString,
+>(
+  transport: &Arc<T>,
+  reader: R,
+  resp: Result<InstallSnapshotResponse<T::Id, <T::Resolver as AddressResolver>::Address>, E>,
+  tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+) {
+  // ensure we always consume all the snapshot data from the stream
+  let _ = futures::io::copy(reader, &mut ruraft_utils::io::Discard).await;
+
+  match resp {
+    Ok(resp) => {
+      if tx.send(Response::InstallSnapshot(resp)).is_err() {
+        tracing::error!(
+          target = "ruraft.rpc.install_snapshot",
+          err = "channel closed",
+          "failed to respond to install snapshot request"
+        );
+      }
+    }
+    Err(e) => {
+      let resp = ErrorResponse {
+        header: transport.header(),
+        error: e.to_string(),
+      };
+      if tx.send(Response::Error(resp)).is_err() {
+        tracing::error!(
+          target = "ruraft.rpc.install_snapshot",
+          err = "channel closed",
+          "failed to respond to install snapshot request"
+        );
+      }
+    }
+  }
+}
+
+async fn respond_append_entries_request<T: Transport>(
+  resp: AppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
+  tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+) {
+  if tx.send(Response::AppendEntries(resp)).is_err() {
+    tracing::error!(
+      target = "ruraft.rpc.append_entries",
+      err = "channel closed",
+      "failed to respond to append entries request"
+    );
+  }
+}
+
+/// What happens when a server receives a [`HeartbeatRequest`].
+#[allow(clippy::too_many_arguments)]
+async fn handle_heartbeat_request<I: Id, A: Address>(
+  header: Header<I, A>,
+  state: &State,
+  shutdown_rx: &async_channel::Receiver<()>,
+  last_contact: &OptionalContact,
+  candidate_from_leadership_transfer: &AtomicBool,
+  observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
+  tx: oneshot::Sender<Response<I, A>>,
+  req: HeartbeatRequest<I, A>,
+) {
+  // Check if we are shutdown, just ignore the RPC
+  futures::select! {
+    _ = shutdown_rx.recv().fuse() => {
+      return;
+    },
+    default => {}
+  }
+
+  // Setup a response
+  let mut resp = HeartbeatResponse {
+    header,
+    success: false,
+  };
+
+  // Ignore an older term
+  if req.term < state.current_term() {
+    return respond_heartbeat_request(resp, tx).await;
+  }
+
+  // Increase the term if we see a newer one, also transition to follower
+  // if we ever get an appendEntries call
+  if req.term > state.current_term()
+    || (state.role() != Role::Follower
+      && !candidate_from_leadership_transfer.load(Ordering::Acquire))
+  {
+    // Ensure transition to follower
+    state.set_role(Role::Follower, observers).await;
+    state.set_current_term(req.term);
+  }
+
+  // Everything went well, set success
+  resp.success = true;
+  last_contact.update();
+  respond_heartbeat_request(resp, tx).await;
+}
+
+async fn respond_heartbeat_request<I: Id, A: Address>(
+  resp: HeartbeatResponse<I, A>,
+  tx: oneshot::Sender<Response<I, A>>,
+) {
+  if tx.send(Response::Heartbeat(resp)).is_err() {
+    tracing::error!(
+      target = "ruraft.rpc.heartbeat",
+      err = "channel closed",
+      "failed to respond to heartbeat request"
+    );
   }
 }

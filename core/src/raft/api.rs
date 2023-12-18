@@ -1120,11 +1120,11 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> Future for ErrorFuture<F, 
 
 pub(super) struct MembershipChangeRequest<F: FinateStateMachine, S: Storage, T: Transport> {
   pub(super) cmd: MembershipChangeCommand<T::Id, <T::Resolver as AddressResolver>::Address>,
-  pub(super) tx: oneshot::Sender<Result<u64, Error<F, S, T>>>,
+  pub(super) tx: oneshot::Sender<Result<F::Response, Error<F, S, T>>>,
 }
 
 pub(super) enum ApplySender<F: FinateStateMachine, E> {
-  Membership(oneshot::Sender<Result<u64, E>>),
+  Membership(oneshot::Sender<Result<F::Response, E>>),
   Log(oneshot::Sender<Result<F::Response, E>>),
   Barrier(oneshot::Sender<Result<F::Response, E>>),
   Noop(oneshot::Sender<Result<(), E>>),
@@ -1137,6 +1137,25 @@ impl<F: FinateStateMachine, E> ApplySender<F, E> {
       Self::Log(tx) => tx.send(Err(err)).map_err(|_| ()),
       Self::Barrier(tx) => tx.send(Err(err)).map_err(|_| ()),
       Self::Noop(tx) => tx.send(Err(err)).map_err(|_| ()),
+    }
+  }
+
+  pub(super) fn respond_fsm(
+    self,
+    resp: Result<F::Response, E>,
+  ) -> Result<(), Result<F::Response, E>> {
+    match self {
+      Self::Noop(_) => panic!("unexpected noop sender, please report this bug to https://github.com/al8n/ruraft/issues/new"),
+      Self::Barrier(tx) | Self::Log(tx) | Self::Membership(tx) => tx.send(resp),
+    }
+  }
+
+  pub(super) fn respond_noop(self) {
+    match self {
+      Self::Noop(tx) => if tx.send(Ok(())).is_err() {
+        panic!("unexpectedly fail to send noop response to the sender, please report this bug to https://github.com/al8n/ruraft/issues/new");
+      },
+      _ => panic!("expect a noop sender, but got other. please report this bug to https://github.com/al8n/ruraft/issues/new"),
     }
   }
 }
@@ -1194,7 +1213,7 @@ macro_rules! resp {
 
 resp!(
   #[doc = "A future that can be used to wait on the result of a membership change. The index is the output of the future."]
-  MembershipChangeResponse<u64>,
+  MembershipChangeResponse<F::Response>,
   #[doc = "Used for apply and can return the [`FinateStateMachine`] response."]
   ApplyResponse<F::Response>,
   #[doc = "Used for barrier and can return the [`FinateStateMachine`] response."]

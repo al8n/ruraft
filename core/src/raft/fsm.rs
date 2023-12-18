@@ -15,16 +15,19 @@ use crate::{
   error::Error,
   fsm::{
     FinateStateMachine, FinateStateMachineLog, FinateStateMachineLogKind,
-    FinateStateMachineResponse, FinateStateMachineSnapshot,
+    FinateStateMachineSnapshot,
   },
-  storage::{Log, LogKind, SnapshotId, SnapshotSource, SnapshotStorage, Storage},
+  storage::{LogKind, SnapshotId, SnapshotSource, SnapshotStorage, Storage},
   transport::Transport,
 };
 
 #[cfg(feature = "metrics")]
 use crate::metrics::SaturationMetric;
 
-use super::snapshot::{CountingReader, SnapshotRestoreMonitor};
+use super::{
+  runner::{BatchCommit, CommitTuple},
+  snapshot::{CountingReader, SnapshotRestoreMonitor},
+};
 
 pub(crate) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
   pub(crate) term: u64,
@@ -32,43 +35,9 @@ pub(crate) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
   pub(crate) snapshot: S,
 }
 
-pub(crate) enum FSMLogResponse<R: FinateStateMachineResponse> {
-  One(R),
-  More(Vec<R>),
-}
-
-pub(crate) enum FSMResponse<R: FinateStateMachineResponse> {
-  Log(FSMLogResponse<R>),
-  Membership,
-}
-
-impl<R: FinateStateMachineResponse> FSMResponse<R> {
-  fn one(resp: R) -> Self {
-    Self::Log(FSMLogResponse::One(resp))
-  }
-
-  fn more(resp: Vec<R>) -> Self {
-    Self::Log(FSMLogResponse::More(resp))
-  }
-
-  fn membership() -> Self {
-    Self::Membership
-  }
-}
-
-const INLINE: usize = 2;
-
-pub(crate) struct FSMLogRequest<F: FinateStateMachine, S: Storage, T: Transport> {
-  log: Log<F::Id, F::Address, F::Data>,
-  tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
-}
-
 pub(crate) enum FSMRequest<F: FinateStateMachine, S: Storage, T: Transport> {
-  AdHoc(SmallVec<[FSMLogRequest<F, S, T>; INLINE]>),
-  Batch {
-    logs: SmallVec<[Log<F::Id, F::Address, F::Data>; INLINE]>,
-    tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
-  },
+  AdHoc(BatchCommit<F, Error<F, S, T>>),
+  Batch(BatchCommit<F, Error<F, S, T>>),
   Restore {
     id: SnapshotId,
     tx: oneshot::Sender<Result<(), Error<F, S, T>>>,
@@ -156,25 +125,23 @@ where
               Ok(FSMRequest::AdHoc(reqs)) => {
                 let mut last_batch_index = 0;
                 let mut last_batch_term = 0;
-                for FSMLogRequest { log, tx } in reqs {
+                for commit in reqs {
                   let ApplyResult {
                     term,
                     index,
-                  } = Self::apply_single(&fsm, log, tx).await;
+                  } = Self::apply_single(&fsm, commit).await;
                   last_batch_index = index;
                   last_batch_term = term;
                 }
                 last_index = last_batch_index;
                 last_term = last_batch_term;
               },
-              Ok(FSMRequest::Batch {
-                logs,
-                tx,
-              }) => {
+              Ok(FSMRequest::Batch(reqs)) => {
                 let ApplyResult {
                   term,
                   index,
-                } = Self::apply_batch(&fsm, logs, tx).await;
+                } = Self::apply_batch(&fsm, reqs).await;
+
                 last_index = index;
                 last_term = term;
               }
@@ -320,32 +287,31 @@ where
     }
   }
 
-  async fn apply_batch(
-    fsm: &F,
-    logs: SmallVec<[Log<F::Id, F::Address, F::Data>; INLINE]>,
-    tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
-  ) -> ApplyResult {
+  async fn apply_batch(fsm: &F, logs: BatchCommit<F, Error<F, S, T>>) -> ApplyResult {
     let mut last_batch_index = 0;
     let mut last_batch_term = 0;
     let mut should_send = 0;
 
-    let logs = logs.into_iter().filter_map(|l| {
-      last_batch_index = l.index;
-      last_batch_term = l.term;
-      Some(match l.kind {
+    let mut futs = SmallVec::<[_; 8]>::with_capacity(logs.len());
+    let logs = logs.into_iter().filter_map(|commit| {
+      last_batch_index = commit.log.index;
+      last_batch_term = commit.log.term;
+      Some(match commit.log.kind {
         LogKind::Data(data) => {
           should_send += 1;
+          futs.push(commit.tx);
           FinateStateMachineLog {
-            index: l.index,
-            term: l.term,
+            index: commit.log.index,
+            term: commit.log.term,
             kind: FinateStateMachineLogKind::Log(data),
           }
         }
         LogKind::Membership(m) => {
           should_send += 1;
+          futs.push(commit.tx);
           FinateStateMachineLog {
-            index: l.index,
-            term: l.term,
+            index: commit.log.index,
+            term: commit.log.term,
             kind: FinateStateMachineLogKind::Membership(m),
           }
         }
@@ -371,11 +337,15 @@ where
             metrics::counter!("raft.fsm.apply_batch_num", len as u64);
           }
 
-          if tx.send(Ok(FSMResponse::more(resps))).is_err() {
-            tracing::error!(
-              target = "ruraft.fsm.runner",
-              "failed to send finate state machine response, receiver closed"
-            );
+          for (tx, resp) in futs.into_iter().zip(resps.into_iter()) {
+            if let Some(tx) = tx {
+              if tx.respond_fsm(Ok(resp)).is_err() {
+                tracing::error!(
+                  target = "ruraft.fsm.runner",
+                  "failed to send finate state machine response, receiver closed"
+                );
+              }
+            }
           }
         }
         Err(e) => {
@@ -386,11 +356,13 @@ where
             metrics::counter!("raft.fsm.apply_batch_num", len as u64);
           }
 
-          if tx.send(Err(Error::fsm(e))).is_err() {
-            tracing::error!(
-              target = "ruraft.fsm.runner",
-              "failed to send finate state machine response, receiver closed"
-            );
+          for tx in futs.into_iter().flatten() {
+            if tx.respond_fsm(Err(Error::fsm(e.clone()))).is_err() {
+              tracing::error!(
+                target = "ruraft.fsm.runner",
+                "failed to send finate state machine response, receiver closed"
+              );
+            }
           }
         }
       }
@@ -402,24 +374,20 @@ where
     }
   }
 
-  async fn apply_single(
-    fsm: &F,
-    log: Log<F::Id, F::Address, F::Data>,
-    tx: oneshot::Sender<Result<FSMResponse<F::Response>, Error<F, S, T>>>,
-  ) -> ApplyResult {
+  async fn apply_single(fsm: &F, commit: CommitTuple<F, Error<F, S, T>>) -> ApplyResult {
     let rst = ApplyResult {
-      term: log.term,
-      index: log.index,
+      term: commit.log.term,
+      index: commit.log.index,
     };
     // Apply the log if a command or config change
-    match log.kind {
+    match commit.log.kind {
       LogKind::Data(data) => {
         #[cfg(feature = "metrics")]
         let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {
-            index: log.index,
-            term: log.term,
+            index: commit.log.index,
+            term: commit.log.term,
             kind: FinateStateMachineLogKind::Log(data),
           })
           .await;
@@ -427,14 +395,13 @@ where
         #[cfg(feature = "metrics")]
         metrics::histogram!("ruraft.fsm.apply", start.elapsed().as_millis() as f64);
 
-        if tx
-          .send(resp.map(FSMResponse::one).map_err(Error::fsm))
-          .is_err()
-        {
-          tracing::error!(
-            target = "ruraft.fsm.runner",
-            "failed to send finate state machine response, receiver closed"
-          );
+        if let Some(tx) = commit.tx {
+          if tx.respond_fsm(resp.map_err(Error::fsm)).is_err() {
+            tracing::error!(
+              target = "ruraft.fsm.runner",
+              "failed to send finate state machine response, receiver closed"
+            );
+          }
         }
       }
       LogKind::Membership(membership) => {
@@ -442,22 +409,21 @@ where
         let start = Instant::now();
         let resp = fsm
           .apply(FinateStateMachineLog {
-            index: log.index,
-            term: log.term,
+            index: commit.log.index,
+            term: commit.log.term,
             kind: FinateStateMachineLogKind::Membership(membership),
           })
           .await;
         #[cfg(feature = "metrics")]
         metrics::histogram!("ruraft.fsm.apply", start.elapsed().as_millis() as f64);
 
-        if tx
-          .send(resp.map(FSMResponse::one).map_err(Error::fsm))
-          .is_err()
-        {
-          tracing::error!(
-            target = "ruraft.fsm.runner",
-            "failed to send finate state machine response, receiver closed"
-          );
+        if let Some(tx) = commit.tx {
+          if tx.respond_fsm(resp.map_err(Error::fsm)).is_err() {
+            tracing::error!(
+              target = "ruraft.fsm.runner",
+              "failed to send finate state machine response, receiver closed"
+            );
+          }
         }
       }
       _ => {}

@@ -15,7 +15,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
 use futures::channel::oneshot;
-use nodecraft::{CheapClone, Transformable};
+use nodecraft::CheapClone;
 use wg::AsyncWaitGroup;
 
 use crate::{
@@ -45,6 +45,7 @@ mod observer;
 pub use observer::*;
 
 mod runner;
+pub use runner::HeartbeatHandler;
 
 mod snapshot;
 use snapshot::{CountingReader, SnapshotRestoreMonitor};
@@ -82,20 +83,6 @@ impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
     write!(f, "{}({})", self.id, self.addr)
   }
 }
-
-// impl<I: Transformable, A: Transformable> Transformable for Node<I, A> {
-//   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
-
-//   }
-
-//   fn decode(src: &[u8]) -> Result<Self, Self::Error> {
-
-//   }
-
-//   fn encoded_len(&self) -> usize {
-//     self.id.encoded_len() + self.addr.encoded_len()
-//   }
-// }
 
 impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
@@ -834,13 +821,26 @@ where
     let wg = AsyncWaitGroup::new();
     let transport = Arc::new(transport);
     let observers = Arc::new(async_lock::RwLock::new(HashMap::new()));
+    let candidate_from_leadership_transfer = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(Shutdown::new(shutdown_tx, wg.clone()));
+
+    // Setup a heartbeat fast-path to avoid head-of-line
+    // blocking where possible. It MUST be safe for this
+    // to be called concurrently with a blocking RPC.
+    transport.set_heartbeat_handler(Some(HeartbeatHandler {
+      state: state.clone(),
+      last_contact: last_contact.clone(),
+      shutdown_rx: shutdown_rx.clone(),
+      observers: observers.clone(),
+      candidate_from_leadership_transfer: candidate_from_leadership_transfer.clone(),
+    }));
+
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
       memberships: memberships.clone(),
       rpc: transport.consumer(),
-      candidate_from_leadership_transfer: AtomicBool::new(false),
+      candidate_from_leadership_transfer,
       leader: leader.clone(),
       last_contact: last_contact.clone(),
       state: state.clone(),

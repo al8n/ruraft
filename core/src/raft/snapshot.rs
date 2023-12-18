@@ -18,8 +18,7 @@ use crate::{
   membership::Membership,
   options::ReloadableOptions,
   storage::{
-    compact_logs_with_trailing, LogStorage, SnapshotId, SnapshotSink, SnapshotStorage, Storage,
-    StorageError,
+    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotStorage, Storage, StorageError,
   },
   transport::Transport,
   FinateStateMachine, FinateStateMachineError, FinateStateMachineSnapshot, LastSnapshot,
@@ -296,20 +295,10 @@ where
   /// Takes the last inclusive index of a snapshot
   /// and trims the logs that are no longer needed.
   async fn compact_logs(&self, snap_idx: u64) -> Result<(), S::Error> {
-    #[cfg(feature = "metrics")]
-    let start = Instant::now();
-
-    #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.snapshot.compact_logs",
-      start.elapsed().as_millis() as f64
-    ));
-
-    let last_log = self.state.last_log();
-    compact_logs_with_trailing::<S>(
+    compact_logs::<S>(
       self.store.log_store(),
+      &self.state,
       snap_idx,
-      last_log.index,
       self.trailing_logs(),
     )
     .await

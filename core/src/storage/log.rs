@@ -239,8 +239,8 @@ impl<I, A, D> Log<I, A, D> {
   }
 
   #[inline]
-  pub(crate) const fn is_data(&self) -> bool {
-    matches!(self.kind, LogKind::Data(_))
+  pub(crate) fn is_noop(&self) -> bool {
+    matches!(self.kind, LogKind::Noop)
   }
 
   #[inline]

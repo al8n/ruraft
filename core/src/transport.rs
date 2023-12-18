@@ -12,7 +12,7 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-use crate::{options::ProtocolVersion, Data, Node};
+use crate::{options::ProtocolVersion, Data, HeartbeatHandler, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -145,7 +145,6 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Gracefully closes the pipeline and terminates any in-flight requests.
   fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
-
 /// Defines the capabilities and requirements for communication with other nodes across a network.
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
@@ -153,9 +152,6 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Specifies the runtime environment for transport operations.
   type Runtime: Runtime;
-
-  // /// The configuration used to construct the transport.
-  // type Options: Send + Sync + 'static;
 
   /// Unique identifier for nodes.
   type Id: Id + CheapClone + Send + Sync + 'static;
@@ -182,10 +178,18 @@ pub trait Transport: Send + Sync + 'static {
     Data = Self::Data,
   >;
 
+  /// Represents the type used by the transport to install the snapshot from remote.
+  type SnapshotInstaller: AsyncRead + Unpin + Send + 'static;
+
   /// Consumes and responds to incoming RPC requests.
   fn consumer(
     &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>;
+  ) -> RpcConsumer<
+    Self::Id,
+    <Self::Resolver as AddressResolver>::Address,
+    Self::Data,
+    Self::SnapshotInstaller,
+  >;
 
   /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
@@ -195,6 +199,15 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Provides the protocol version used by the transport.
   fn version(&self) -> ProtocolVersion;
+
+  /// Setup a Heartbeat handler
+  /// as a fast-pass. This can be used to avoid head-of-line blocking from
+  /// disk IO. If a [`Transport`] does not support this, it can simply
+  /// ignore the call, and push the heartbeat onto the [`RpcResponseSender`].
+  fn set_heartbeat_handler(
+    &self,
+    handler: Option<HeartbeatHandler<Self::Id, <Self::Resolver as AddressResolver>::Address>>,
+  );
 
   /// Provides the header used for all RPC requests.
   fn header(&self) -> Header<Self::Id, <Self::Resolver as AddressResolver>::Address> {
@@ -210,14 +223,6 @@ pub trait Transport: Send + Sync + 'static {
 
   /// Provides access to the node's address resolver.
   fn resolver(&self) -> &Self::Resolver;
-
-  // /// Returns a transport
-  // fn new(
-  //   resolver: Self::Resolver,
-  //   opts: Self::Options,
-  // ) -> impl Future<Output = Result<Self, Self::Error>> + Send
-  // where
-  //   Self: Sized;
 
   /// Returns a [`AppendEntriesPipeline`] that can be used to pipeline
   /// [`AppendEntriesRequest`]s.
