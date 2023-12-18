@@ -12,7 +12,7 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-use crate::{options::ProtocolVersion, Data, DefaultHeartbeatHandler, Node};
+use crate::{options::ProtocolVersion, Data, HeartbeatHandler, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -145,37 +145,6 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Gracefully closes the pipeline and terminates any in-flight requests.
   fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
-
-/// By default, the raft will use the default heartbeat handler.
-/// If you want to use a custom heartbeat handler, you can say `Heartbeater::Custom(handler)`.
-pub enum Heartbeater<C: HeartbeatHandler> {
-  /// The default heartbeat handler.
-  Default(DefaultHeartbeatHandler<C::Id, C::Address>),
-  /// Use a custom heartbeat handler.
-  Custom(C),
-}
-
-/// Heartbeat handler
-/// as a fast-pass. This can be used to avoid head-of-line blocking from
-/// disk IO. If a [`Transport`] does not support this, it can simply
-/// ignore the call, and push the heartbeat onto the [`RpcProducer`].
-pub trait HeartbeatHandler: Send + Sync + 'static {
-  type Id: Id + Send + Sync + 'static;
-  type Address: Address + Send + Sync + 'static;
-
-  /// Handles the heartbeat request from the leader in a fast-path.
-  ///
-  /// # Parameters
-  /// - `header`: the self header.
-  /// - `req`: the heartbeat request from the leader.
-  fn handle_heartbeat(
-    &self,
-    header: Header<Self::Id, Self::Address>,
-    req: HeartbeatRequest<Self::Id, Self::Address>,
-    sender: RpcResponseSender<Self::Id, Self::Address>,
-  ) -> impl Future<Output = ()> + Send;
-}
-
 /// Defines the capabilities and requirements for communication with other nodes across a network.
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
@@ -212,13 +181,6 @@ pub trait Transport: Send + Sync + 'static {
   /// Represents the type used by the transport to install the snapshot from remote.
   type SnapshotInstaller: AsyncRead + Unpin + Send + 'static;
 
-  /// The heartbeat handler which specifies how to handle the heartbeat request
-  /// when the transport receives it.
-  type HeartbeatHandler: HeartbeatHandler<
-    Id = Self::Id,
-    Address = <Self::Resolver as AddressResolver>::Address,
-  >;
-
   /// Consumes and responds to incoming RPC requests.
   fn consumer(
     &self,
@@ -238,12 +200,13 @@ pub trait Transport: Send + Sync + 'static {
   /// Provides the protocol version used by the transport.
   fn version(&self) -> ProtocolVersion;
 
-  /// Setup a heartbeat handler as a fast-pass
+  /// Setup a Heartbeat handler
+  /// as a fast-pass. This can be used to avoid head-of-line blocking from
+  /// disk IO. If a [`Transport`] does not support this, it can simply
+  /// ignore the call, and push the heartbeat onto the [`RpcResponseSender`].
   fn set_heartbeat_handler(
     &self,
-    handler: Option<
-      DefaultHeartbeatHandler<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    >,
+    handler: Option<HeartbeatHandler<Self::Id, <Self::Resolver as AddressResolver>::Address>>,
   );
 
   /// Provides the header used for all RPC requests.

@@ -32,10 +32,10 @@ use crate::{
     StableStorage, Storage, StorageError,
   },
   transport::{
-    AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatHandler,
-    HeartbeatRequest, HeartbeatResponse, InstallSnapshotRequest, InstallSnapshotResponse, Request,
-    Response, RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport,
-    VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatRequest,
+    HeartbeatResponse, InstallSnapshotRequest, InstallSnapshotResponse, Request, Response,
+    RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest,
+    VoteResponse,
   },
   FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
 };
@@ -47,25 +47,24 @@ mod candidate;
 mod follower;
 mod leader;
 
-pub struct DefaultHeartbeatHandler<I, A> {
-  state: Arc<State>,
-  last_contact: OptionalContact,
-  shutdown_rx: async_channel::Receiver<()>,
-  candidate_from_leadership_transfer: Arc<AtomicBool>,
-  observers: Arc<async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>>,
+/// Heartbeat RPC handler, can be used to handle heartbeat requests in a fast-path manner.
+pub struct HeartbeatHandler<I, A> {
+  pub(super) state: Arc<State>,
+  pub(super) last_contact: OptionalContact,
+  pub(super) shutdown_rx: async_channel::Receiver<()>,
+  pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
+  pub(super) observers: Arc<async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>>,
 }
 
-impl<I, A> HeartbeatHandler for DefaultHeartbeatHandler<I, A>
+impl<I, A> HeartbeatHandler<I, A>
 where
   I: Id + Send + Sync + 'static,
   A: Address + Send + Sync + 'static,
 {
-  type Id = I;
-  type Address = A;
-
-  async fn handle_heartbeat(
+  /// Handle a heartbeat request in a fast-path manner.
+  pub async fn handle_heartbeat(
     &self,
-    header: Header<Self::Id, Self::Address>,
+    header: Header<I, A>,
     req: HeartbeatRequest<I, A>,
     sender: RpcResponseSender<I, A>,
   ) {

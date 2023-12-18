@@ -45,7 +45,7 @@ mod observer;
 pub use observer::*;
 
 mod runner;
-pub use runner::DefaultHeartbeatHandler;
+pub use runner::HeartbeatHandler;
 
 mod snapshot;
 use snapshot::{CountingReader, SnapshotRestoreMonitor};
@@ -821,13 +821,26 @@ where
     let wg = AsyncWaitGroup::new();
     let transport = Arc::new(transport);
     let observers = Arc::new(async_lock::RwLock::new(HashMap::new()));
+    let candidate_from_leadership_transfer = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(Shutdown::new(shutdown_tx, wg.clone()));
+
+    // Setup a heartbeat fast-path to avoid head-of-line
+    // blocking where possible. It MUST be safe for this
+    // to be called concurrently with a blocking RPC.
+    transport.set_heartbeat_handler(Some(HeartbeatHandler {
+      state: state.clone(),
+      last_contact: last_contact.clone(),
+      shutdown_rx: shutdown_rx.clone(),
+      observers: observers.clone(),
+      candidate_from_leadership_transfer: candidate_from_leadership_transfer.clone(),
+    }));
+
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
       reloadable_options: reloadable_options.clone(),
       memberships: memberships.clone(),
       rpc: transport.consumer(),
-      candidate_from_leadership_transfer: Arc::new(AtomicBool::new(false)),
+      candidate_from_leadership_transfer,
       leader: leader.clone(),
       last_contact: last_contact.clone(),
       state: state.clone(),
