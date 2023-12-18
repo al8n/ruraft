@@ -33,8 +33,8 @@ use crate::{
   },
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, HeartbeatRequest,
-    InstallSnapshotRequest, InstallSnapshotResponse, Request, Response, RpcConsumer,
-    TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest, VoteResponse,
+    HeartbeatResponse, InstallSnapshotRequest, InstallSnapshotResponse, Request, Response,
+    RpcConsumer, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest, VoteResponse,
   },
   FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
 };
@@ -333,12 +333,12 @@ where
           Ok(Some(prev_log)) => prev_log.term,
           Ok(None) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%Error::<F, S, T>::log_not_found(req.prev_log_entry), "previous log entry not found");
-            resp.no_retry_backoff = true; 
+            resp.no_retry_backoff = true;
             return respond_append_entries_request::<T>(resp, tx).await;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
-            resp.no_retry_backoff = true; 
+            resp.no_retry_backoff = true;
             return respond_append_entries_request::<T>(resp, tx).await;
           }
         }
@@ -412,7 +412,7 @@ where
         if let Err(e) = ls.store_logs(&req.entries[pos..]).await {
           tracing::error!(target = "ruraft.follower", err=%e, "failed to append to logs");
           // TODO: leaving r.getLastLog() in the wrong
-				  // state if there was a truncation above
+          // state if there was a truncation above
           return respond_append_entries_request::<T>(resp, tx).await;
         }
 
@@ -829,7 +829,7 @@ where
       target = "ruraft.rpc.install_snapshot",
       "successfully installed remote snapshot"
     );
-    self.last_contact.update();
+    self.update_last_contact();
     resp.success = true;
     respond_install_snapshot_request::<_, _, &str>(
       &self.transport,
@@ -871,7 +871,50 @@ where
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: HeartbeatRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) {
-    todo!()
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.rpc.heartbeat",
+      start.elapsed().as_millis() as f64
+    ));
+
+    // Check if we are shutdown, just ignore the RPC
+    futures::select! {
+      _ = self.shutdown_rx.recv().fuse() => {
+        return;
+      },
+      default => {}
+    }
+
+    // Setup a response
+    let mut resp = HeartbeatResponse {
+      header: self.transport.header(),
+      success: false,
+    };
+
+    // Ignore an older term
+    if req.term < self.current_term() {
+      return respond_heartbeat_request::<T>(resp, tx).await;
+    }
+
+    // Increase the term if we see a newer one, also transition to follower
+    // if we ever get an appendEntries call
+    if req.term > self.current_term()
+      || (self.role() != Role::Follower
+        && !self
+          .candidate_from_leadership_transfer
+          .load(Ordering::Acquire))
+    {
+      // Ensure transition to follower
+      self.set_role(Role::Follower, &self.observers).await;
+      self.set_current_term(req.term);
+    }
+
+    // Everything went well, set success
+    resp.success = true;
+    self.update_last_contact();
+    respond_heartbeat_request::<T>(resp, tx).await;
   }
 
   /// Used to apply all the committed entries that haven't been
@@ -1092,6 +1135,19 @@ async fn respond_append_entries_request<T: Transport>(
       target = "ruraft.rpc.append_entries",
       err = "channel closed",
       "failed to respond to append entries request"
+    );
+  }
+}
+
+async fn respond_heartbeat_request<T: Transport>(
+  resp: HeartbeatResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
+  tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+) {
+  if tx.send(Response::Heartbeat(resp)).is_err() {
+    tracing::error!(
+      target = "ruraft.rpc.heartbeat",
+      err = "channel closed",
+      "failed to respond to heartbeat request"
     );
   }
 }
