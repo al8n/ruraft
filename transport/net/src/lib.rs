@@ -5,6 +5,7 @@
 
 /// Stream layer abstraction.
 pub mod stream;
+use arc_swap::ArcSwapOption;
 use nodecraft::CheapClone;
 use ruraft_utils::io::LimitedReader;
 use stream::{Connection, Listener, StreamLayer};
@@ -26,7 +27,7 @@ use futures::{
   io::{BufReader, BufWriter},
   AsyncRead, AsyncWriteExt, FutureExt,
 };
-use ruraft_core::{options::ProtocolVersion, transport::*, Data, Node};
+use ruraft_core::{options::ProtocolVersion, transport::*, Data, DefaultHeartbeatHandler, Node};
 use wg::AsyncWaitGroup;
 
 /// Network [`Wire`](ruraft_core::transport::Wire) implementors.
@@ -287,10 +288,11 @@ where
 /// InstallSnapshot is special, in that after the request we stream
 /// the entire state. That socket is not re-used as the connection state
 /// is not known if there is an error.
-pub struct NetTransport<I, A, D, S, W>
+pub struct NetTransport<I, A, D, H, S, W>
 where
   A: AddressResolver,
   A::Address: Send + Sync + 'static,
+  H: HeartbeatHandler<Id = I, Address = A::Address>,
   S: StreamLayer,
 {
   shutdown: Arc<AtomicBool>,
@@ -312,10 +314,11 @@ where
   max_inflight_requests: usize,
   timeout: Duration,
   stream_layer: S,
+  heartbeat_handler: Arc<ArcSwapOption<DefaultHeartbeatHandler<I, A::Address>>>,
   _w: std::marker::PhantomData<W>,
 }
 
-impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
+impl<I, A, D, H, S, W> NetTransport<I, A, D, H, S, W>
 where
   I: Id + Send + Sync + 'static,
   <I as Transformable>::Error: Send + Sync + 'static,
@@ -324,6 +327,7 @@ where
   <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
+  H: HeartbeatHandler<Id = I, Address = A::Address>,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
@@ -360,6 +364,7 @@ where
     let shutdown = Arc::new(AtomicBool::new(false));
     let wg = AsyncWaitGroup::from(1);
     let (producer, consumer) = rpc();
+    let heartbeat_handler = Arc::new(ArcSwapOption::from_pointee(None));
     let request_handler = RequestHandler {
       ln,
       local_header: opts.header.clone(),
@@ -367,6 +372,7 @@ where
       shutdown: shutdown.clone(),
       shutdown_rx,
       wg: wg.clone(),
+      heartbeat_handler: heartbeat_handler.clone(),
     };
     <A::Runtime as Runtime>::spawn_detach(RequestHandler::<I, A::Address, D, S>::run::<A, W>(
       request_handler,
@@ -391,12 +397,13 @@ where
       },
       timeout: opts.timeout,
       stream_layer,
+      heartbeat_handler,
       _w: std::marker::PhantomData,
     })
   }
 }
 
-impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
+impl<I, A, D, H, S, W> Transport for NetTransport<I, A, D, H, S, W>
 where
   I: Id + Send + Sync + 'static,
   <I as Transformable>::Error: Send + Sync + 'static,
@@ -405,6 +412,7 @@ where
   <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
+  H: HeartbeatHandler<Id = I, Address = A::Address>,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
@@ -421,7 +429,9 @@ where
 
   type Data = D;
 
-  type RpcConnection = LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>;
+  type SnapshotInstaller = LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>;
+
+  type HeartbeatHandler = H;
 
   fn consumer(
     &self,
@@ -429,7 +439,7 @@ where
     Self::Id,
     <Self::Resolver as AddressResolver>::Address,
     Self::Data,
-    Self::RpcConnection,
+    Self::SnapshotInstaller,
   > {
     self.consumer.clone()
   }
@@ -452,6 +462,15 @@ where
 
   fn resolver(&self) -> &<Self as ruraft_core::transport::Transport>::Resolver {
     &self.resolver
+  }
+
+  fn set_heartbeat_handler(
+    &self,
+    handler: Option<
+      DefaultHeartbeatHandler<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+    >,
+  ) {
+    self.heartbeat_handler.store(handler.map(Arc::new));
   }
 
   async fn append_entries_pipeline(
@@ -657,7 +676,7 @@ where
   }
 }
 
-impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
+impl<I, A, D, H, S, W> NetTransport<I, A, D, H, S, W>
 where
   I: Id + Send + Sync + 'static,
   <I as Transformable>::Error: Send + Sync + 'static,
@@ -666,6 +685,7 @@ where
   <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
+  H: HeartbeatHandler<Id = I, Address = A::Address>,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
@@ -719,11 +739,12 @@ where
   }
 }
 
-impl<I, A, D, S, W> Drop for NetTransport<I, A, D, S, W>
+impl<I, A, D, H, S, W> Drop for NetTransport<I, A, D, H, S, W>
 where
   A: AddressResolver,
   A::Address: Send + Sync + 'static,
   S: StreamLayer,
+  H: HeartbeatHandler<Id = I, Address = A::Address>,
 {
   fn drop(&mut self) {
     if self.shutdown.load(Ordering::Acquire) {
@@ -743,6 +764,7 @@ struct RequestHandler<I, A, D, S: StreamLayer> {
     RpcProducer<I, A, D, LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
+  heartbeat_handler: ArcSwapOption<DefaultHeartbeatHandler<I, A>>,
   wg: AsyncWaitGroup,
 }
 
@@ -782,7 +804,13 @@ where
               let local_header = self.local_header.clone();
               let wg = wg.add(1);
               <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
-                if Self::handle_connection::<Resolver, W>(conn, producer, shutdown_rx, local_header)
+                if Self::handle_connection::<Resolver, W>(
+                  &self.heartbeat_handler,
+                  conn,
+                  producer,
+                  shutdown_rx,
+                  local_header
+                )
                   .await
                   .is_err()
                 {
@@ -826,6 +854,7 @@ where
   }
 
   async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
+    heartbeat_handler: &ArcSwapOption<DefaultHeartbeatHandler<I, A>>,
     conn: S::Stream,
     producer: RpcProducer<
       I,
@@ -833,6 +862,7 @@ where
       D,
       LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
     >,
+
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<(), Error<I, Resolver, W>>
@@ -847,8 +877,6 @@ where
         BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, writer),
       )
     };
-
-    let _get_type_start = Instant::now();
 
     // TODO: metrics
     // measuring the time to get the first byte separately because the heartbeat conn will hang out here
@@ -873,43 +901,40 @@ where
     #[cfg(feature = "metrics")]
     let respond_label = req.respond_label();
 
-    let resp = if let Request::Heartbeat(_) = &req {
-      Response::heartbeat(HeartbeatResponse::new(local_header, true))
-    } else {
-      let (tx, handle) = match &req {
-        Request::InstallSnapshot(ireq) => {
-          let lr = LimitedReader::new(*ireq.size(), reader);
-          Rpc::new(req, Some(lr))
+    let mut is_heartbeat = false;
+    let (rpc, handle) = match &req {
+      Request::InstallSnapshot(ireq) => {
+        let lr = LimitedReader::new(*ireq.size(), reader);
+        Rpc::new(req, Some(lr))
+      }
+      Request::Heartbeat(hreq) => {
+        is_heartbeat = true;
+        Rpc::new(req, None)
+      }
+      _ => Rpc::new(req, None),
+    };
+
+    // Check for heartbeat fast-path
+    let mut should_dispath = true;
+    if is_heartbeat {
+      let handler = heartbeat_handler.load();
+      if let Some(h) = handler.as_ref() {
+        let (sender, req, _) = rpc.into_components();
+        if let Request::Heartbeat(req) = req {
+          h.handle_heartbeat(local_header, req, sender).await;
+        } else {
+          unreachable!();
         }
-        _ => Rpc::new(req, None),
-      };
+        should_dispath = false;
+      }
+    }
 
+    if should_dispath {
+      // Dispatch the RPC
       futures::select! {
-        res = producer.send(tx).fuse() => {
-          #[cfg(feature = "metrics")]
-          metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
-
+        res = producer.send(rpc).fuse() => {
           match res {
-            Ok(_) => {
-              #[cfg(feature = "metrics")]
-              let resp_wait_start = Instant::now();
-
-              futures::select! {
-                res = handle.fuse() => {
-                  #[cfg(feature = "metrics")]
-                  metrics::histogram!(respond_label, resp_wait_start.elapsed().as_millis() as f64);
-
-                  match res {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                      tracing::error!(target = "ruraft.net.transport", err=%e, "canceled command");
-                      Response::error(ErrorResponse::new(local_header, e.to_string()))
-                    },
-                  }
-                },
-                _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
-              }
-            },
+            Ok(_) => {},
             Err(e) => {
               tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send dispatch request");
               return Err(Error::Dispatch);
@@ -918,21 +943,46 @@ where
         },
         _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
       }
-    };
-    let resp = W::encode_response(&resp).map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to encode response");
-      Error::Wire(e)
-    })?;
+    }
 
-    writer.write_all(resp.as_ref()).await.map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
-      Error::IO(e)
-    })?;
+    #[cfg(feature = "metrics")]
+    metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
+    #[cfg(feature = "metrics")]
+    let resp_wait_start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      respond_label,
+      resp_wait_start.elapsed().as_millis() as f64
+    ));
 
-    writer.flush().await.map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to flush response");
-      Error::IO(e)
-    })
+    // Wait for response
+    futures::select! {
+      res = handle.fuse() => {
+        match res {
+          Ok(resp) => {
+            let resp = W::encode_response(&resp).map_err(|e| {
+              tracing::error!(target = "ruraft.net.transport", err=%e, "failed to encode response");
+              Error::Wire(e)
+            })?;
+
+            writer.write_all(resp.as_ref()).await.map_err(|e| {
+              tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
+              Error::IO(e)
+            })?;
+
+            writer.flush().await.map_err(|e| {
+              tracing::error!(target = "ruraft.net.transport", err=%e, "failed to flush response");
+              Error::IO(e)
+            })
+          },
+          Err(e) => {
+            tracing::error!(target = "ruraft.net.transport", err=%e, "canceled command");
+            Response::error(ErrorResponse::new(local_header, e.to_string()))
+          },
+        }
+      },
+      _ = shutdown_rx.recv().fuse() => Err(Error::AlreadyShutdown),
+    }
   }
 }
 

@@ -45,6 +45,7 @@ mod observer;
 pub use observer::*;
 
 mod runner;
+pub use runner::DefaultHeartbeatHandler;
 
 mod snapshot;
 use snapshot::{CountingReader, SnapshotRestoreMonitor};
@@ -826,7 +827,7 @@ where
       reloadable_options: reloadable_options.clone(),
       memberships: memberships.clone(),
       rpc: transport.consumer(),
-      candidate_from_leadership_transfer: AtomicBool::new(false),
+      candidate_from_leadership_transfer: Arc::new(AtomicBool::new(false)),
       leader: leader.clone(),
       last_contact: last_contact.clone(),
       state: state.clone(),

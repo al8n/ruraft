@@ -22,6 +22,7 @@ metrics = ["ruraft-core/metrics", "dep:metrics"]
 test = ["ruraft-core/test", "tempfile"]
 
 [dependencies]
+arc-swap = "1"
 agnostic = { workspace = true }
 async-channel = { workspace = true }
 async-lock = { workspace = true }

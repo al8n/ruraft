@@ -639,6 +639,29 @@ impl<I, A> Response<I, A> {
   }
 }
 
+/// Used to send a response back to the remote.
+pub struct RpcResponseSender<I, A>(oneshot::Sender<Response<I, A>>);
+
+impl<I, A> RpcResponseSender<I, A> {
+  /// Respond to the heartbeat RPC, if the remote half is closed, then the response will be returned back as an error.
+  #[inline]
+  pub fn respond(self, resp: Response<I, A>) -> Result<(), Response<I, A>> {
+    self.0.send(resp)
+  }
+}
+
+impl<I, A> From<oneshot::Sender<Response<I, A>>> for RpcResponseSender<I, A> {
+  fn from(tx: oneshot::Sender<Response<I, A>>) -> Self {
+    Self(tx)
+  }
+}
+
+impl<I, A> From<RpcResponseSender<I, A>> for oneshot::Sender<Response<I, A>> {
+  fn from(sender: RpcResponseSender<I, A>) -> Self {
+    sender.0
+  }
+}
+
 /// Errors returned by the [`RpcHandle`].
 #[derive(Debug, thiserror::Error)]
 pub enum RpcHandleError {
@@ -703,10 +726,9 @@ impl<I, A, D, R> Rpc<I, A, D, R> {
     self.tx.send(resp)
   }
 
-  pub(crate) fn into_components(
-    self,
-  ) -> (oneshot::Sender<Response<I, A>>, Request<I, A, D>, Option<R>) {
-    (self.tx, self.req, self.reader)
+  /// Consumes the [`Rpc`] and returns the components.
+  pub fn into_components(self) -> (RpcResponseSender<I, A>, Request<I, A, D>, Option<R>) {
+    (RpcResponseSender(self.tx), self.req, self.reader)
   }
 }
 

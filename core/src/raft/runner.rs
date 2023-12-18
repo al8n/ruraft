@@ -11,7 +11,7 @@ use std::{
 use agnostic::Runtime;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
-use nodecraft::resolver::AddressResolver;
+use nodecraft::{resolver::AddressResolver, Address, Id};
 use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
@@ -32,9 +32,10 @@ use crate::{
     StableStorage, Storage, StorageError,
   },
   transport::{
-    AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, HeartbeatRequest,
-    HeartbeatResponse, InstallSnapshotRequest, InstallSnapshotResponse, Request, Response,
-    RpcConsumer, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatHandler,
+    HeartbeatRequest, HeartbeatResponse, InstallSnapshotRequest, InstallSnapshotResponse, Request,
+    Response, RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport,
+    VoteRequest, VoteResponse,
   },
   FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
 };
@@ -45,6 +46,50 @@ use crate::metrics::SaturationMetric;
 mod candidate;
 mod follower;
 mod leader;
+
+pub struct DefaultHeartbeatHandler<I, A> {
+  state: Arc<State>,
+  last_contact: OptionalContact,
+  shutdown_rx: async_channel::Receiver<()>,
+  candidate_from_leadership_transfer: Arc<AtomicBool>,
+  observers: Arc<async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>>,
+}
+
+impl<I, A> HeartbeatHandler for DefaultHeartbeatHandler<I, A>
+where
+  I: Id + Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
+{
+  type Id = I;
+  type Address = A;
+
+  async fn handle_heartbeat(
+    &self,
+    header: Header<Self::Id, Self::Address>,
+    req: HeartbeatRequest<I, A>,
+    sender: RpcResponseSender<I, A>,
+  ) {
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.rpc.process_heartbeat",
+      start.elapsed().as_millis() as f64
+    ));
+
+    handle_heartbeat_request(
+      header,
+      &self.state,
+      &self.shutdown_rx,
+      &self.last_contact,
+      &self.candidate_from_leadership_transfer,
+      &self.observers,
+      sender.into(),
+      req,
+    )
+    .await
+  }
+}
 
 pub(super) struct RaftRunner<F, S, T, SC, R>
 where
@@ -69,9 +114,9 @@ where
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
   pub(super) rpc:
-    RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data, T::RpcConnection>,
+    RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data, T::SnapshotInstaller>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  pub(super) candidate_from_leadership_transfer: AtomicBool,
+  pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
   /// last_contact is the last time we had contact from the
   /// leader node. This can be used to gauge staleness.
   pub(super) last_contact: OptionalContact,
@@ -256,7 +301,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
-    rpc_reader: Option<T::RpcConnection>,
+    rpc_reader: Option<T::SnapshotInstaller>,
   ) {
     // TODO: validate the request header
     match req {
@@ -617,7 +662,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
-    reader: T::RpcConnection,
+    reader: T::SnapshotInstaller,
   ) {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
@@ -879,42 +924,17 @@ where
       start.elapsed().as_millis() as f64
     ));
 
-    // Check if we are shutdown, just ignore the RPC
-    futures::select! {
-      _ = self.shutdown_rx.recv().fuse() => {
-        return;
-      },
-      default => {}
-    }
-
-    // Setup a response
-    let mut resp = HeartbeatResponse {
-      header: self.transport.header(),
-      success: false,
-    };
-
-    // Ignore an older term
-    if req.term < self.current_term() {
-      return respond_heartbeat_request::<T>(resp, tx).await;
-    }
-
-    // Increase the term if we see a newer one, also transition to follower
-    // if we ever get an appendEntries call
-    if req.term > self.current_term()
-      || (self.role() != Role::Follower
-        && !self
-          .candidate_from_leadership_transfer
-          .load(Ordering::Acquire))
-    {
-      // Ensure transition to follower
-      self.set_role(Role::Follower, &self.observers).await;
-      self.set_current_term(req.term);
-    }
-
-    // Everything went well, set success
-    resp.success = true;
-    self.update_last_contact();
-    respond_heartbeat_request::<T>(resp, tx).await;
+    handle_heartbeat_request::<_, _>(
+      self.transport.header(),
+      &self.state,
+      &self.shutdown_rx,
+      &self.last_contact,
+      &self.candidate_from_leadership_transfer,
+      &self.observers,
+      tx,
+      req,
+    )
+    .await;
   }
 
   /// Used to apply all the committed entries that haven't been
@@ -1139,9 +1159,57 @@ async fn respond_append_entries_request<T: Transport>(
   }
 }
 
-async fn respond_heartbeat_request<T: Transport>(
-  resp: HeartbeatResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
-  tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+/// What happens when a server receives a [`HeartbeatRequest`].
+#[allow(clippy::too_many_arguments)]
+async fn handle_heartbeat_request<I: Id, A: Address>(
+  header: Header<I, A>,
+  state: &State,
+  shutdown_rx: &async_channel::Receiver<()>,
+  last_contact: &OptionalContact,
+  candidate_from_leadership_transfer: &AtomicBool,
+  observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
+  tx: oneshot::Sender<Response<I, A>>,
+  req: HeartbeatRequest<I, A>,
+) {
+  // Check if we are shutdown, just ignore the RPC
+  futures::select! {
+    _ = shutdown_rx.recv().fuse() => {
+      return;
+    },
+    default => {}
+  }
+
+  // Setup a response
+  let mut resp = HeartbeatResponse {
+    header,
+    success: false,
+  };
+
+  // Ignore an older term
+  if req.term < state.current_term() {
+    return respond_heartbeat_request(resp, tx).await;
+  }
+
+  // Increase the term if we see a newer one, also transition to follower
+  // if we ever get an appendEntries call
+  if req.term > state.current_term()
+    || (state.role() != Role::Follower
+      && !candidate_from_leadership_transfer.load(Ordering::Acquire))
+  {
+    // Ensure transition to follower
+    state.set_role(Role::Follower, observers).await;
+    state.set_current_term(req.term);
+  }
+
+  // Everything went well, set success
+  resp.success = true;
+  last_contact.update();
+  respond_heartbeat_request(resp, tx).await;
+}
+
+async fn respond_heartbeat_request<I: Id, A: Address>(
+  resp: HeartbeatResponse<I, A>,
+  tx: oneshot::Sender<Response<I, A>>,
 ) {
   if tx.send(Response::Heartbeat(resp)).is_err() {
     tracing::error!(
