@@ -244,7 +244,7 @@ impl<I, A, D> Log<I, A, D> {
   }
 
   #[inline]
-  pub(crate) const fn crate_new(index: u64, term: u64, kind: LogKind<I, A, D>) -> Self {
+  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
     Self {
       index,
       term,
@@ -407,67 +407,3 @@ pub(crate) trait LogStorageExt: LogStorage {
 
 #[cfg(feature = "metrics")]
 impl<T: LogStorage> LogStorageExt for T {}
-
-#[cfg(all(feature = "test", feature = "metrics"))]
-pub(super) mod tests {
-  use smol_str::SmolStr;
-
-  use super::*;
-  use std::net::SocketAddr;
-
-  struct TestCase {
-    name: &'static str,
-    logs: Vec<Log<SmolStr, SocketAddr, Vec<u8>>>,
-    want_idx: u64,
-    want_err: bool,
-  }
-
-  pub async fn test_oldest_log<
-    S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>,
-  >(
-    store: S,
-  ) {
-    let cases = vec![
-      TestCase {
-        name: "empty logs",
-        logs: Vec::new(),
-        want_idx: 0,
-        want_err: true,
-      },
-      TestCase {
-        name: "simple case",
-        logs: vec![
-          Log::crate_new(1, 1234, LogKind::Noop),
-          Log::crate_new(1, 1235, LogKind::Noop),
-          Log::crate_new(2, 1236, LogKind::Noop),
-        ],
-        want_idx: 1234,
-        want_err: false,
-      },
-    ];
-
-    for case in cases {
-      store
-        .store_logs(&case.logs)
-        .await
-        .expect("expected store logs not to fail");
-
-      let got = store.oldest_log().await;
-      if case.want_err && got.is_ok() {
-        panic!("{}: wanted error got ok", case.name);
-      }
-
-      if !case.want_err && got.is_err() {
-        panic!("{}: wanted no error but got err", case.name);
-      }
-
-      if let Ok(Some(got)) = got {
-        assert_eq!(
-          got.index, case.want_idx,
-          "{}: got index {}, want {}",
-          case.name, got.index, case.want_idx
-        );
-      }
-    }
-  }
-}

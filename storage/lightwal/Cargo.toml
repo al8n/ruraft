@@ -12,6 +12,8 @@ metadata.workspace = true
 default = ["metrics"]
 metrics = ["ruraft-core/metrics", "dep:metrics"]
 
+test = ["ruraft-core/test", "smol_str", "tempfile"]
+
 redb = ["dep:redb"]
 sled = ["dep:sled"]
 jammdb = ["dep:jammdb"]
@@ -23,18 +25,35 @@ ruraft-core = { path = "../../core" }
 scopeguard = { workspace = true }
 thiserror = { workspace = true }
 
-
 jammdb = { version = "0.11", optional = true }
 redb = { version = "1.4", optional = true }
 sled = { version = "0.34", optional = true }
 
+smol_str = { version = "0.2", optional = true }
+tempfile = { version = "3", optional = true }
+
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-agnostic = { workspace = true, features = ["tokio"] }
+agnostic = { workspace = true, features = ["tokio", "async-std", "smol"] }
 criterion = "0.5"
 nodecraft = { workspace = true, feature = ["smol_str"] }
 ruraft-core = { path = "../../core", features = ["test"] }
 smol_str = "0.2"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
+
+[[test]]
+name = "async-std-runtime"
+path = "tests/async_std.rs"
+required-features = ["test", "metrics", "redb", "jammdb", "sled"]
+
+[[test]]
+name = "smol-runtime"
+path = "tests/smol.rs"
+required-features = ["test", "metrics", "redb", "jammdb", "sled"]
+
+[[test]]
+name = "tokio-runtime"
+path = "tests/tokio.rs"
+required-features = ["test", "metrics", "redb", "jammdb", "sled"]

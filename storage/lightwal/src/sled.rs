@@ -477,62 +477,109 @@ where
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use std::net::SocketAddr;
-
-  use agnostic::tokio::TokioRuntime;
+/// Exports unit tests to let users test [`sled::Db`] implementation if they want to
+/// use their own [`agnostic::Runtime`] implementation.
+#[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(test, feature = "test"))))]
+pub mod test {
   use smol_str::SmolStr;
+  use std::net::SocketAddr;
 
   use super::*;
   use crate::test;
 
-  fn test_db() -> Db<SmolStr, SocketAddr, Vec<u8>, TokioRuntime> {
+  fn test_db<R: Runtime>() -> Db<SmolStr, SocketAddr, Vec<u8>, R> {
     Db::new(DbOptions::new().temporary(true)).unwrap()
   }
 
-  #[tokio::test]
-  async fn test_first_index() {
-    test::test_first_index(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test get first index
+  pub async fn first_index<R: Runtime>() {
+    test::first_index(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_last_index() {
-    test::test_last_index(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test get last index
+  pub async fn last_index<R: Runtime>() {
+    test::last_index(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_get_log() {
-    test::test_get_log(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test get log
+  pub async fn get_log<R: Runtime>() {
+    test::get_log(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_store_log() {
-    test::test_store_log(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test store log
+  pub async fn store_log<R: Runtime>() {
+    test::store_log(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_store_logs() {
-    test::test_store_logs(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test store logs
+  pub async fn store_logs<R: Runtime>() {
+    test::store_logs(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_remove_range() {
-    test::test_remove_range(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test remove logs by range
+  pub async fn remove_range<R: Runtime>() {
+    test::remove_range(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_current_term() {
-    test::test_current_term(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test current term
+  pub async fn current_term<R: Runtime>() {
+    test::current_term(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_last_vote_term() {
-    test::test_last_vote_term(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test last vote term
+  pub async fn last_vote_term<R: Runtime>() {
+    test::last_vote_term(&test_db::<R>()).await;
   }
 
-  #[tokio::test]
-  async fn test_last_vote_candidate() {
-    test::test_last_vote_candidate(&test_db()).await;
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test last vote candidate
+  pub async fn last_vote_candidate<R: Runtime>() {
+    test::last_vote_candidate(&test_db::<R>()).await;
+  }
+
+  /// [`sled::Db`] test
+  ///
+  /// Description:
+  ///
+  /// Test oldest log
+  #[cfg(all(feature = "test", feature = "metrics"))]
+  pub async fn oldest_log<R: Runtime>() {
+    test::oldest_log(&test_db::<R>()).await;
   }
 }

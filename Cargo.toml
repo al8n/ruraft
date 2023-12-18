@@ -2,6 +2,7 @@
 members = [
   "autopilot",
   "core",
+  "memory",
   "ruraft",
   "storage/snapshot",
   "storage/lightwal",

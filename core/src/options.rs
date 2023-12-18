@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use ruraft_utils::Duration as DurationNoUninit;
+use ruraft_utils::atomic_duration::Duration as DurationNoUninit;
 use std::time::Duration;
 
 /// The version of the protocol (which includes RPC messages

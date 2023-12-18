@@ -3,11 +3,11 @@ use std::sync::atomic::Ordering;
 use crate::{
   membership::ServerSuffrage,
   transport::{Header, VoteRequest, VoteResponse},
-  utils::random_timeout,
 };
 
 use super::*;
 use futures::{future::Either, StreamExt};
+use ruraft_utils::random_timeout;
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where

@@ -24,8 +24,10 @@ impl<I, A, D> Default for Inner<I, A, D> {
   }
 }
 
+/// Error for [`MemoryLogStorage`]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum MemoryLogStorageError {
+  /// Log not found in the log storage
   #[error("log with index {0} not found in storage")]
   LogNotFound(u64),
 }
@@ -83,11 +85,19 @@ where
   type Data = D;
 
   async fn first_index(&self) -> Result<Option<u64>, Self::Error> {
-    Ok(Some(self.store.lock().await.low_index))
+    let index = self.store.lock().await.low_index;
+    if index == 0 {
+      return Ok(None);
+    }
+    Ok(Some(index))
   }
 
   async fn last_index(&self) -> Result<Option<u64>, Self::Error> {
-    Ok(Some(self.store.lock().await.high_index))
+    let index = self.store.lock().await.high_index;
+    if index == 0 {
+      return Ok(None);
+    }
+    Ok(Some(index))
   }
 
   async fn get_log(

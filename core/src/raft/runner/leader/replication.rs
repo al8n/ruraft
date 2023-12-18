@@ -4,6 +4,8 @@ use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt, Stream, StreamExt};
 use nodecraft::resolver::AddressResolver;
 use parking_lot::Mutex;
+use ruraft_utils::{backoff, capped_exponential_backoff, random_timeout};
+
 use std::{
   collections::HashMap,
   future::Future,
@@ -26,7 +28,6 @@ use crate::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
   },
-  utils::{backoff, capped_exponential_backoff, random_timeout},
   FinateStateMachine, LastSnapshot, Observed, Observer, ObserverId,
 };
 

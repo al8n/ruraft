@@ -223,7 +223,193 @@ pub(crate) async fn remove_old_logs<S: Storage>(ls: &S::Log) -> Result<(), S::Er
   }
 }
 
-#[cfg(feature = "test")]
+#[cfg(any(feature = "test", test))]
 pub(super) mod tests {
-  pub use super::log::tests::*;
+  use crate::Node;
+
+  use super::{Log, LogStorage, StableStorage};
+  use smol_str::SmolStr;
+  use std::net::SocketAddr;
+
+  pub async fn first_index<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
+    s: &S,
+  ) {
+    // Should get 0 index on empty log
+    assert!(s.first_index().await.unwrap().is_none());
+
+    // Set a mock raft log
+    let logs = vec![
+      Log::new(b"log1".to_vec()).set_index(1),
+      Log::new(b"log2".to_vec()).set_index(2),
+      Log::new(b"log3".to_vec()).set_index(3),
+    ];
+    s.store_logs(&logs).await.unwrap();
+
+    // Fetch the first Raft index
+    assert_eq!(s.first_index().await.unwrap().unwrap(), 1);
+  }
+
+  pub async fn last_index<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
+    s: &S,
+  ) {
+    // Should get 0 index on empty log
+    assert!(s.last_index().await.unwrap().is_none());
+
+    // Set a mock raft log
+    let logs = vec![
+      Log::new(b"log1".to_vec()).set_index(1),
+      Log::new(b"log2".to_vec()).set_index(2),
+      Log::new(b"log3".to_vec()).set_index(3),
+    ];
+    s.store_logs(&logs).await.unwrap();
+
+    // Fetch the first Raft index
+    assert_eq!(s.last_index().await.unwrap().unwrap(), 3);
+  }
+
+  pub async fn get_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(s: &S) {
+    // Should get 0 index on empty log
+    assert!(s.get_log(1).await.unwrap().is_none());
+
+    // Set a mock raft log
+    let logs = vec![
+      Log::new(b"log1".to_vec()).set_index(1),
+      Log::new(b"log2".to_vec()).set_index(2),
+      Log::new(b"log3".to_vec()).set_index(3),
+    ];
+    let log2 = logs[1].clone();
+    s.store_logs(&logs).await.unwrap();
+
+    assert_eq!(s.get_log(2).await.unwrap().unwrap(), log2);
+  }
+
+  pub async fn store_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(s: &S) {
+    assert!(s.get_log(1).await.unwrap().is_none());
+
+    // Set a mock raft log
+    let log = Log::new(b"log1".to_vec()).set_index(1);
+    s.store_log(&log).await.unwrap();
+
+    // Fetch the first Raft index
+    assert_eq!(s.get_log(1).await.unwrap().unwrap(), log);
+  }
+
+  pub async fn store_logs<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
+    s: &S,
+  ) {
+    // Set a mock raft log
+    let logs = vec![
+      Log::new(b"log1".to_vec()).set_index(1),
+      Log::new(b"log2".to_vec()).set_index(2),
+    ];
+    s.store_logs(&logs).await.unwrap();
+
+    assert_eq!(s.get_log(1).await.unwrap().unwrap(), logs[0]);
+    assert_eq!(s.get_log(2).await.unwrap().unwrap(), logs[1]);
+    assert!(s.get_log(3).await.unwrap().is_none());
+  }
+
+  pub async fn remove_range<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
+    s: &S,
+  ) {
+    // Set a mock raft log
+    let logs = vec![
+      Log::new(b"log1".to_vec()).set_index(1),
+      Log::new(b"log2".to_vec()).set_index(2),
+      Log::new(b"log3".to_vec()).set_index(3),
+    ];
+    s.store_logs(&logs).await.unwrap();
+
+    s.remove_range(1..=2).await.unwrap();
+
+    assert!(s.get_log(1).await.unwrap().is_none());
+    assert!(s.get_log(2).await.unwrap().is_none());
+    assert_eq!(s.get_log(3).await.unwrap().unwrap(), logs[2]);
+  }
+
+  pub async fn current_term<S: StableStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
+    assert!(s.current_term().await.unwrap().is_none());
+    s.store_current_term(1).await.unwrap();
+    assert_eq!(s.current_term().await.unwrap().unwrap(), 1);
+  }
+
+  pub async fn last_vote_term<S: StableStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
+    assert!(s.last_vote_term().await.unwrap().is_none());
+    s.store_last_vote_term(1).await.unwrap();
+    assert_eq!(s.last_vote_term().await.unwrap().unwrap(), 1);
+  }
+
+  pub async fn last_vote_candidate<S: StableStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
+    assert!(s.last_vote_candidate().await.unwrap().is_none());
+    s.store_last_vote_candidate(Node::new(
+      SmolStr::new("node1"),
+      SocketAddr::from(([127, 0, 0, 1], 8080)),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+      s.last_vote_candidate().await.unwrap().unwrap(),
+      Node::new(
+        SmolStr::new("node1"),
+        SocketAddr::from(([127, 0, 0, 1], 8080))
+      )
+    );
+  }
+
+  #[cfg(all(feature = "test", feature = "metrics"))]
+  pub async fn oldest_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
+    store: &S,
+  ) {
+    use crate::storage::{LogKind, LogStorageExt};
+
+    struct TestCase {
+      name: &'static str,
+      logs: Vec<Log<SmolStr, SocketAddr, Vec<u8>>>,
+      want_idx: u64,
+      want_err: bool,
+    }
+
+    let cases = vec![
+      TestCase {
+        name: "empty logs",
+        logs: Vec::new(),
+        want_idx: 0,
+        want_err: true,
+      },
+      TestCase {
+        name: "simple case",
+        logs: vec![
+          Log::crate_new(1, 1234, LogKind::Noop),
+          Log::crate_new(1, 1235, LogKind::Noop),
+          Log::crate_new(2, 1236, LogKind::Noop),
+        ],
+        want_idx: 1234,
+        want_err: false,
+      },
+    ];
+
+    for case in cases {
+      store
+        .store_logs(&case.logs)
+        .await
+        .expect("expected store logs not to fail");
+
+      let got = store.oldest_log().await;
+      if case.want_err && got.is_ok() {
+        panic!("{}: wanted error got ok", case.name);
+      }
+
+      if !case.want_err && got.is_err() {
+        panic!("{}: wanted no error but got err", case.name);
+      }
+
+      if let Ok(Some(got)) = got {
+        assert_eq!(
+          got.index, case.want_idx,
+          "{}: got index {}, want {}",
+          case.name, got.index, case.want_idx
+        );
+      }
+    }
+  }
 }
