@@ -281,35 +281,26 @@ where
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   ) {
-    // TODO: defer metrics.MeasureSince([]string{"raft", "rpc", "appendEntries"}, time.Now())
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
 
-    macro_rules! respond {
-      ($tx:ident.send($resp:ident)) => {
-        if $tx.send(Response::append_entries($resp)).is_err() {
-          tracing::error!(
-            target = "ruraft.follower",
-            err = "channel closed",
-            "failed to respond to append entries request"
-          );
-        }
-      };
-    }
-
-    let protocol_version = self.options.protocol_version;
+    #[cfg(feature = "metrics")]
+    scopeguard::defer!(metrics::histogram!(
+      "ruraft.rpc.append_entries",
+      start.elapsed().as_millis() as f64
+    ));
 
     // Setup a response
-    let mut resp = AppendEntriesResponse::new(
-      protocol_version,
-      self.transport.local_id().clone(),
-      self.transport.local_addr().clone(),
-    )
-    .with_term(self.current_term())
-    .with_last_log(self.last_index());
-
+    let mut resp = AppendEntriesResponse {
+      header: self.transport.header(),
+      term: self.current_term(),
+      last_log: self.last_index(),
+      success: false,
+      no_retry_backoff: false,
+    };
     // Ignore an older term
     if req.term < self.current_term() {
-      respond!(tx.send(resp));
-      return;
+      return respond_append_entries_request::<T>(resp, tx).await;
     }
 
     // Increase the term if we see a newer one, also transition to follower
@@ -342,15 +333,13 @@ where
           Ok(Some(prev_log)) => prev_log.term,
           Ok(None) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%Error::<F, S, T>::log_not_found(req.prev_log_entry), "previous log entry not found");
-            resp.no_retry_backoff = true;
-            respond!(tx.send(resp));
-            return;
+            resp.no_retry_backoff = true; 
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", previous_index = %req.prev_log_entry, last_index = %last.index, err=%e, "failed to get previous log");
-            resp.no_retry_backoff = true;
-            respond!(tx.send(resp));
-            return;
+            resp.no_retry_backoff = true; 
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
         }
       };
@@ -362,11 +351,9 @@ where
           prev_log_term,
           req.prev_log_term
         );
-
         resp.no_retry_backoff = true;
 
-        respond!(tx.send(resp));
-        return;
+        return respond_append_entries_request::<T>(resp, tx).await;
       }
     }
 
@@ -397,8 +384,7 @@ where
               if let Err(e) = ls.remove_range(ent_idx..=last_log.index).await {
                 tracing::warn!(target = "ruraft.follower", from=%ent_idx, to=%last_log.index, err=%e, "failed to clear log suffix");
                 resp.no_retry_backoff = true;
-                respond!(tx.send(resp));
-                return;
+                return respond_append_entries_request::<T>(resp, tx).await;
               }
               if ent_idx <= self.memberships.latest().0 {
                 self
@@ -412,13 +398,11 @@ where
           }
           Ok(None) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%Error::<F, S, T>::log_not_found(ent_idx), "failed to get log entry");
-            respond!(tx.send(resp));
-            return;
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
           Err(e) => {
             tracing::warn!(target = "ruraft.follower", index=%ent_idx, err=%e, "failed to get log entry");
-            respond!(tx.send(resp));
-            return;
+            return respond_append_entries_request::<T>(resp, tx).await;
           }
         }
       }
@@ -427,8 +411,9 @@ where
         // Append the new entries
         if let Err(e) = ls.store_logs(&req.entries[pos..]).await {
           tracing::error!(target = "ruraft.follower", err=%e, "failed to append to logs");
-          respond!(tx.send(resp));
-          return;
+          // TODO: leaving r.getLastLog() in the wrong
+				  // state if there was a truncation above
+          return respond_append_entries_request::<T>(resp, tx).await;
         }
 
         let last = req.entries.last().unwrap();
@@ -437,7 +422,6 @@ where
         // Handle any new membership changes
         for entry in req.entries.drain(pos..) {
           if entry.is_membership() {
-            //TODO: handle membership changes
             self.process_membership_log(entry);
           }
         }
@@ -476,7 +460,7 @@ where
     // Everything went well, set success
     resp.success = true;
     self.update_last_contact();
-    respond!(tx.send(resp));
+    respond_append_entries_request::<T>(resp, tx).await;
   }
 
   /// Takes a log entry and updates the latest
@@ -501,7 +485,7 @@ where
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: VoteRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) {
-    macro_rules! respond {
+    macro_rules! return_and_respond {
       ($this:ident.$tx:ident($resp:ident)) => {{
         if $tx.send(Response::vote($resp)).is_err() {
           tracing::error!(
@@ -517,7 +501,7 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::gauge!(
+    scopeguard::defer!(metrics::histogram!(
       "ruraft.rpc.vote_request",
       start.elapsed().as_millis() as f64
     ));
@@ -537,17 +521,17 @@ where
     let latest = self.memberships.latest().1.clone();
     if !latest.is_empty() && latest.contains_id(candidate.id()) {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not in membership");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     if let Some(leader) = self.leader.load().as_ref() {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, leader=%leader, "rejecting vote request since we already have a leader");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Ignore an older term
     if req.term < self.current_term() {
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Increase the term if we see a newer one
@@ -566,7 +550,7 @@ where
     // More details about that in https://github.com/hashicorp/raft/pull/526
     if !latest.is_empty() && !latest.is_voter(candidate.id()) {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, "rejecting vote request since node is not a voter");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Check if we have voted yet
@@ -576,14 +560,14 @@ where
       Ok(None) => 0,
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.vote_request", candidate = %candidate, err=%e, "failed to get last vote term");
-        respond!(self.tx(resp))
+        return_and_respond!(self.tx(resp))
       }
     };
     let last_vote_cand = match stable.last_vote_candidate().await {
       Ok(v) => v,
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.vote_request", candidate = %candidate, err=%e, "failed to get last vote candidate");
-        respond!(self.tx(resp))
+        return_and_respond!(self.tx(resp))
       }
     };
     // Check if we've voted in this election before
@@ -598,7 +582,7 @@ where
           tracing::warn!(target = "ruraft.rpc.vote_request", candidate=%candidate, "duplicate vote request for candidate");
           resp.granted = true;
         }
-        respond!(self.tx(resp))
+        return_and_respond!(self.tx(resp))
       }
     }
 
@@ -606,23 +590,23 @@ where
     let last = self.last_entry();
     if last.term > req.last_log_term {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, last_term = last.term, last_candidate_term = req.last_log_term, "rejecting vote request since our last term is greater");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     if last.term == req.last_log_term && last.index > req.last_log_index {
       tracing::warn!(target = "ruraft.rpc.vote_request", candidate = %candidate, last_index = last.index, last_candidate_index = req.last_log_index, "rejecting vote request since our last index is greater");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     // Persist a vote for safety
     if let Err(e) = Self::persist_vote(stable, req.term, candidate).await {
       tracing::error!(target = "ruraft.rpc.vote_request", err=%e, "failed to persist vote");
-      respond!(self.tx(resp))
+      return_and_respond!(self.tx(resp))
     }
 
     resp.granted = true;
     self.update_last_contact();
-    respond!(self.tx(resp))
+    return_and_respond!(self.tx(resp))
   }
 
   /// Invoked when we get a InstallSnapshot RPC call.
@@ -635,36 +619,6 @@ where
     req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
     reader: T::RpcConnection,
   ) {
-    async fn respond<R: futures::AsyncRead + Unpin, I: nodecraft::Id, A: nodecraft::Address>(
-      reader: R,
-      resp: either::Either<InstallSnapshotResponse<I, A>, ErrorResponse<I, A>>,
-      tx: oneshot::Sender<Response<I, A>>,
-    ) {
-      // ensure we always consume all the snapshot data from the stream
-      let _ = futures::io::copy(reader, &mut ruraft_utils::io::Discard).await;
-
-      match resp {
-        either::Either::Left(resp) => {
-          if tx.send(Response::InstallSnapshot(resp)).is_err() {
-            tracing::error!(
-              target = "ruraft.rpc.install_snapshot",
-              err = "channel closed",
-              "failed to respond to install snapshot request"
-            );
-          }
-        }
-        either::Either::Right(resp) => {
-          if tx.send(Response::Error(resp)).is_err() {
-            tracing::error!(
-              target = "ruraft.rpc.install_snapshot",
-              err = "channel closed",
-              "failed to respond to install snapshot request"
-            );
-          }
-        }
-      }
-    }
-
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
@@ -689,6 +643,7 @@ where
         current_term = self.current_term(),
         "ignoring installSnapshot request with older term than current term"
       );
+      return;
     }
 
     // Increase the term if we see a newer one
@@ -724,12 +679,8 @@ where
           <S::Error as StorageError>::snapshot(e)
             .with_message(Cow::Borrowed("failed to create snapshot")),
         );
-        let resp = either::Either::Right(ErrorResponse {
-          header: self.transport.header(),
-          error: err.to_string(),
-        });
-        respond(reader, resp, tx).await;
-        return;
+
+        return respond_install_snapshot_request(&self.transport, reader, Err(err), tx).await;
       }
     };
 
@@ -753,13 +704,13 @@ where
 
         tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to copy snapshot");
 
-        let resp = either::Either::Right(ErrorResponse {
-          header: self.transport.header(),
-          error: Error::<F, S, T>::storage(<S::Error as StorageError>::io(e)).to_string(),
-        });
-
-        respond(counting_rpc_reader, resp, tx).await;
-        return;
+        return respond_install_snapshot_request(
+          &self.transport,
+          counting_rpc_reader,
+          Err(Error::<F, S, T>::storage(<S::Error as StorageError>::io(e))),
+          tx,
+        )
+        .await;
       }
     };
 
@@ -775,26 +726,30 @@ where
         err = "short read",
         "failed to copy whole snapshot"
       );
-      let resp = either::Either::Right(ErrorResponse {
-        header: self.transport.header(),
-        error: "short read".to_string(),
-      });
-      respond(counting_rpc_reader, resp, tx).await;
-      return;
+
+      return respond_install_snapshot_request(
+        &self.transport,
+        counting_rpc_reader,
+        Err("short read"),
+        tx,
+      )
+      .await;
     }
 
     // Finalize the snapshot
     if let Err(e) = sink.close().await {
       tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to finalize snapshot");
-      let resp = either::Either::Right(ErrorResponse {
-        header: self.transport.header(),
-        error: Error::<F, S, T>::storage(<S::Error as StorageError>::io(e)).to_string(),
-      });
-      respond(counting_rpc_reader, resp, tx).await;
-      return;
+
+      return respond_install_snapshot_request(
+        &self.transport,
+        counting_rpc_reader,
+        Err(Error::<F, S, T>::storage(<S::Error as StorageError>::io(e))),
+        tx,
+      )
+      .await;
     }
 
-    // TODO: Restore snapshot
+    // Restore snapshot
     let (restore_tx, restore_rx) = futures::channel::oneshot::channel();
     futures::select! {
       res = self.fsm_mutate_tx.send(FSMRequest::Restore {
@@ -804,21 +759,12 @@ where
       }).fuse() => {
         if let Err(e) = res {
           tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to send restore request to fsm");
-          let resp = either::Either::Right(ErrorResponse {
-            header: self.transport.header(),
-            error: e.to_string(),
-          });
-          respond(counting_rpc_reader, resp, tx).await;
-          return;
+
+          return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx).await;
         }
       },
       _ = self.shutdown_rx.recv().fuse() => {
-        let resp = either::Either::Right(ErrorResponse {
-          header: self.transport.header(),
-          error: Error::<F, S, T>::shutdown().to_string(),
-        });
-        respond(counting_rpc_reader, resp, tx).await;
-        return;
+        return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(Error::<F, S, T>::shutdown()), tx).await;
       }
     }
 
@@ -827,19 +773,13 @@ where
       Ok(Ok(())) => {}
       Ok(Err(e)) => {
         tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to restore snapshot");
-        let resp = either::Either::Right(ErrorResponse {
-          header: self.transport.header(),
-          error: e.to_string(),
-        });
-        return respond(counting_rpc_reader, resp, tx).await;
+        return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx)
+          .await;
       }
       Err(e) => {
         tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to receive restore response");
-        let resp = either::Either::Right(ErrorResponse {
-          header: self.transport.header(),
-          error: e.to_string(),
-        });
-        return respond(counting_rpc_reader, resp, tx).await;
+        return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx)
+          .await;
       }
     }
 
@@ -860,12 +800,13 @@ where
       if let Err(err) = remove_old_logs::<S>(self.storage.log_store()).await {
         tracing::error!(target = "ruraft.rpc.install_snapshot", err=%err, "failed to remove old logs");
 
-        let resp = either::Either::Right(ErrorResponse {
-          header: self.transport.header(),
-          error: err.to_string(),
-        });
-        respond(counting_rpc_reader, resp, tx).await;
-        return;
+        return respond_install_snapshot_request(
+          &self.transport,
+          counting_rpc_reader,
+          Err(err),
+          tx,
+        )
+        .await;
       }
     } else if let Err(e) = compact_logs::<S>(
       self.storage.log_store(),
@@ -879,12 +820,9 @@ where
     .await
     {
       tracing::error!(target = "ruraft.rpc.install_snapshot", err=%e, "failed to compact logs");
-      let resp = either::Either::Right(ErrorResponse {
-        header: self.transport.header(),
-        error: e.to_string(),
-      });
-      respond(counting_rpc_reader, resp, tx).await;
-      return;
+
+      return respond_install_snapshot_request(&self.transport, counting_rpc_reader, Err(e), tx)
+        .await;
     }
 
     tracing::info!(
@@ -892,7 +830,14 @@ where
       "successfully installed remote snapshot"
     );
     self.last_contact.update();
-    todo!()
+    resp.success = true;
+    respond_install_snapshot_request::<_, _, &str>(
+      &self.transport,
+      counting_rpc_reader,
+      Ok(resp),
+      tx,
+    )
+    .await;
   }
 
   /// What happens when a server receives a [`TimeoutNowRequest`].
@@ -1096,5 +1041,57 @@ pub(crate) type BatchCommit<F, E> = SmallVec<[CommitTuple<F, E>; INLINE]>;
 fn snapshot_version(proto: ProtocolVersion) -> SnapshotVersion {
   match proto {
     ProtocolVersion::V1 => SnapshotVersion::V1,
+  }
+}
+
+async fn respond_install_snapshot_request<
+  T: Transport,
+  R: futures::AsyncRead + Unpin,
+  E: ToString,
+>(
+  transport: &Arc<T>,
+  reader: R,
+  resp: Result<InstallSnapshotResponse<T::Id, <T::Resolver as AddressResolver>::Address>, E>,
+  tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+) {
+  // ensure we always consume all the snapshot data from the stream
+  let _ = futures::io::copy(reader, &mut ruraft_utils::io::Discard).await;
+
+  match resp {
+    Ok(resp) => {
+      if tx.send(Response::InstallSnapshot(resp)).is_err() {
+        tracing::error!(
+          target = "ruraft.rpc.install_snapshot",
+          err = "channel closed",
+          "failed to respond to install snapshot request"
+        );
+      }
+    }
+    Err(e) => {
+      let resp = ErrorResponse {
+        header: transport.header(),
+        error: e.to_string(),
+      };
+      if tx.send(Response::Error(resp)).is_err() {
+        tracing::error!(
+          target = "ruraft.rpc.install_snapshot",
+          err = "channel closed",
+          "failed to respond to install snapshot request"
+        );
+      }
+    }
+  }
+}
+
+async fn respond_append_entries_request<T: Transport>(
+  resp: AppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
+  tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
+) {
+  if tx.send(Response::AppendEntries(resp)).is_err() {
+    tracing::error!(
+      target = "ruraft.rpc.append_entries",
+      err = "channel closed",
+      "failed to respond to append entries request"
+    );
   }
 }
