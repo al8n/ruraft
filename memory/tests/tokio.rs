@@ -21,5 +21,6 @@ unit_tests!(
     memory_stable_storage_last_vote_candidate,
     memory_snapshot_storage_create,
     memory_snapshot_storage_open_snapshot_twice,
+    memory_transport_resolver_address_write_timeout
   )
 );

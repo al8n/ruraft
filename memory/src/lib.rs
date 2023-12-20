@@ -27,12 +27,38 @@ pub mod tests {
   use std::net::SocketAddr;
 
   use agnostic::Runtime;
+  use futures::Future;
   use ruraft_core::{membership::Membership, options::SnapshotVersion, tests::storage::*};
   use smol_str::SmolStr;
 
   use crate::{
-    log::MemoryLogStorage, snapshot::MemorySnapshotStorage, stable::MemoryStableStorage,
+    log::MemoryLogStorage,
+    snapshot::MemorySnapshotStorage,
+    stable::MemoryStableStorage,
+    transport::{MemoryAddress, MemoryAddressResolver},
   };
+
+  pub use super::transport::tests::*;
+
+  /// [`MemoryAddressResolver`] test
+  ///
+  /// - Description:
+  ///   - Test that the [`MemoryTransport`] [`MemoryAddress`] and [`MemoryAddressResolver`] can send and receive messages, and the timeout also works.
+  pub async fn memory_transport_resolver_address_write_timeout<R: Runtime>()
+  where
+    <R::Sleep as Future>::Output: Send + 'static,
+  {
+    let resolver = MemoryAddressResolver::<_, R>::new();
+    memory_transport_write_timeout(
+      SmolStr::from("id1"),
+      MemoryAddress::new(),
+      resolver,
+      SmolStr::from("id2"),
+      MemoryAddress::new(),
+      resolver,
+    )
+    .await
+  }
 
   /// [`MemoryLogStorage`] test
   ///

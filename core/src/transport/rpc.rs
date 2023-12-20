@@ -408,6 +408,12 @@ pub struct ErrorResponse<I, A> {
   error: String,
 }
 
+impl<I, A> From<ErrorResponse<I, A>> for String {
+  fn from(value: ErrorResponse<I, A>) -> Self {
+    value.error
+  }
+}
+
 impl<I, A> ErrorResponse<I, A> {
   /// Create a new ErrorResponse
   pub const fn new(header: Header<I, A>, error: String) -> Self {
@@ -432,212 +438,115 @@ impl<I, A> ErrorResponse<I, A> {
 //   }};
 // }
 
-/// Request to be sent to the Raft node.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum Request<I, A, D> {
-  AppendEntries(AppendEntriesRequest<I, A, D>),
-  Vote(VoteRequest<I, A>),
-  InstallSnapshot(InstallSnapshotRequest<I, A>),
-  TimeoutNow(TimeoutNowRequest<I, A>),
-  Heartbeat(HeartbeatRequest<I, A>),
-}
-
-impl<I, A, D> Request<I, A, D> {
-  /// Returns the tag of this request kind for encoding/decoding.
-  #[inline]
-  pub const fn tag(&self) -> u8 {
-    match self {
-      Self::AppendEntries(_) => 0,
-      Self::Vote(_) => 1,
-      Self::InstallSnapshot(_) => 2,
-      Self::TimeoutNow(_) => 3,
-      Self::Heartbeat(_) => 4,
+macro_rules! enum_wrapper {
+  (
+    $(#[$outer:meta])*
+    $vis:vis enum $name:ident $(<$($generic:tt),+>)? {
+      $(
+        $(#[$variant_meta:meta])*
+        $variant:ident($variant_ty: ty) = $variant_tag:literal => $variant_snake_case: ident
+      ), +$(,)?
     }
-  }
-}
-
-impl<I, A, D> From<AppendEntriesRequest<I, A, D>> for Request<I, A, D> {
-  fn from(req: AppendEntriesRequest<I, A, D>) -> Self {
-    Self::AppendEntries(req)
-  }
-}
-
-impl<I, A, D> From<VoteRequest<I, A>> for Request<I, A, D> {
-  fn from(req: VoteRequest<I, A>) -> Self {
-    Self::Vote(req)
-  }
-}
-
-impl<I, A, D> From<InstallSnapshotRequest<I, A>> for Request<I, A, D> {
-  fn from(req: InstallSnapshotRequest<I, A>) -> Self {
-    Self::InstallSnapshot(req)
-  }
-}
-
-impl<I, A, D> From<TimeoutNowRequest<I, A>> for Request<I, A, D> {
-  fn from(req: TimeoutNowRequest<I, A>) -> Self {
-    Self::TimeoutNow(req)
-  }
-}
-
-impl<I, A, D> From<HeartbeatRequest<I, A>> for Request<I, A, D> {
-  fn from(req: HeartbeatRequest<I, A>) -> Self {
-    Self::Heartbeat(req)
-  }
-}
-
-impl<I, A, D> Request<I, A, D> {
-  pub const fn append_entries(req: AppendEntriesRequest<I, A, D>) -> Self {
-    Self::AppendEntries(req)
-  }
-
-  pub const fn vote(req: VoteRequest<I, A>) -> Self {
-    Self::Vote(req)
-  }
-
-  pub const fn install_snapshot(req: InstallSnapshotRequest<I, A>) -> Self {
-    Self::InstallSnapshot(req)
-  }
-
-  pub const fn timeout_now(req: TimeoutNowRequest<I, A>) -> Self {
-    Self::TimeoutNow(req)
-  }
-
-  pub const fn heartbeat(req: HeartbeatRequest<I, A>) -> Self {
-    Self::Heartbeat(req)
-  }
-
-  /// Returns the header of the request
-  pub const fn header(&self) -> &Header<I, A> {
-    match self {
-      Self::AppendEntries(req) => req.header(),
-      Self::Vote(req) => req.header(),
-      Self::InstallSnapshot(req) => req.header(),
-      Self::TimeoutNow(req) => req.header(),
-      Self::Heartbeat(req) => req.header(),
+  ) => {
+    $(#[$outer])*
+    $vis enum $name $(< $($generic),+ >)? {
+      $(
+        $(#[$variant_meta])*
+        $variant($variant_ty),
+      )*
     }
-  }
 
-  /// Returns the protocol version of the request.
-  #[inline]
-  pub const fn protocol_version(&self) -> ProtocolVersion {
-    self.header().protocol_version
-  }
-}
+    impl $(< $($generic),+ >)? $name $(< $($generic),+ >)? {
+      const fn type_name(&self) -> &'static str {
+        match self {
+          $(
+            Self::$variant(_) => stringify!($variant_ty),
+          )*
+        }
+      }
 
-/// Response from the Raft node
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum Response<I, A> {
-  AppendEntries(AppendEntriesResponse<I, A>),
-  Vote(VoteResponse<I, A>),
-  InstallSnapshot(InstallSnapshotResponse<I, A>),
-  TimeoutNow(TimeoutNowResponse<I, A>),
-  Heartbeat(HeartbeatResponse<I, A>),
-  Error(ErrorResponse<I, A>),
-}
+      /// Returns the tag of this request kind for encoding/decoding.
+      #[inline]
+      pub const fn tag(&self) -> u8 {
+        match self {
+          $(
+            Self::$variant(_) => $variant_tag,
+          )*
+        }
+      }
 
-impl<I, A> Response<I, A> {
-  /// Returns the tag of this request kind for encoding/decoding.
-  #[inline]
-  pub const fn tag(&self) -> u8 {
-    match self {
-      Self::AppendEntries(_) => 0,
-      Self::Vote(_) => 1,
-      Self::InstallSnapshot(_) => 2,
-      Self::TimeoutNow(_) => 3,
-      Self::Heartbeat(_) => 4,
-      Self::Error(_) => 255,
+      /// Returns the variant name
+      #[inline]
+      pub const fn description(&self) -> &'static str {
+        match self {
+          $(
+            Self::$variant(_) => stringify!($variant),
+          )*
+        }
+      }
+
+      /// Returns the header of the request
+      pub const fn header(&self) -> &Header<I, A> {
+        match self {
+          $(
+            Self::$variant(req) => req.header(),
+          )*
+        }
+      }
+
+      /// Returns the protocol version of the request.
+      #[inline]
+      pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.header().protocol_version
+      }
+
+      $(
+        paste::paste! {
+          #[doc = concat!("Returns the contained [`", stringify!($variant_ty), "`] request, consuming the self value. Panics if the value is not [`", stringify!($variant_ty), "`].")]
+          $vis fn [< unwrap_ $variant_snake_case>] (self) -> $variant_ty {
+            if let Self::$variant(val) = self {
+              val
+            } else {
+              panic!(concat!("expect ", stringify!($variant), ", buf got {}"), self.type_name())
+            }
+          }
+        }
+
+        #[doc = concat!("Construct a [`", stringify!($name), "`] from [`", stringify!($variant_ty), "`].")]
+        pub const fn $variant_snake_case(val: $variant_ty) -> Self {
+          Self::$variant(val)
+        }
+      )*
     }
-  }
-
-  #[inline]
-  pub const fn description(&self) -> &'static str {
-    match self {
-      Self::AppendEntries(_) => "AppendEntries",
-      Self::Vote(_) => "Vote",
-      Self::InstallSnapshot(_) => "InstallSnapshot",
-      Self::TimeoutNow(_) => "TimeoutNow",
-      Self::Heartbeat(_) => "Heartbeat",
-      Self::Error(_) => "Error",
-    }
-  }
+  };
 }
 
-impl<I, A> From<AppendEntriesResponse<I, A>> for Response<I, A> {
-  fn from(resp: AppendEntriesResponse<I, A>) -> Self {
-    Self::AppendEntries(resp)
+enum_wrapper!(
+  /// Request to be sent to the Raft node.
+  #[derive(Debug, Clone)]
+  #[non_exhaustive]
+  pub enum Request<I, A, D> {
+    AppendEntries(AppendEntriesRequest<I, A, D>) = 0 => append_entries,
+    Vote(VoteRequest<I, A>) = 1 => vote,
+    InstallSnapshot(InstallSnapshotRequest<I, A>) = 2 => install_snapshot,
+    TimeoutNow(TimeoutNowRequest<I, A>) = 3 => timeout_now,
+    Heartbeat(HeartbeatRequest<I, A>) = 4 => heartbeat,
   }
-}
+);
 
-impl<I, A> From<VoteResponse<I, A>> for Response<I, A> {
-  fn from(resp: VoteResponse<I, A>) -> Self {
-    Self::Vote(resp)
+enum_wrapper!(
+  /// Response from the Raft node
+  #[derive(Debug, Clone)]
+  #[non_exhaustive]
+  pub enum Response<I, A> {
+    AppendEntries(AppendEntriesResponse<I, A>) = 0 => append_entries,
+    Vote(VoteResponse<I, A>) = 1 => vote,
+    InstallSnapshot(InstallSnapshotResponse<I, A>) = 2 => install_snapshot,
+    TimeoutNow(TimeoutNowResponse<I, A>) = 3 => timeout_now,
+    Heartbeat(HeartbeatResponse<I, A>) = 4 => heartbeat,
+    Error(ErrorResponse<I, A>) = 255 => error,
   }
-}
-
-impl<I, A> From<InstallSnapshotResponse<I, A>> for Response<I, A> {
-  fn from(resp: InstallSnapshotResponse<I, A>) -> Self {
-    Self::InstallSnapshot(resp)
-  }
-}
-
-impl<I, A> From<TimeoutNowResponse<I, A>> for Response<I, A> {
-  fn from(resp: TimeoutNowResponse<I, A>) -> Self {
-    Self::TimeoutNow(resp)
-  }
-}
-
-impl<I, A> From<HeartbeatResponse<I, A>> for Response<I, A> {
-  fn from(resp: HeartbeatResponse<I, A>) -> Self {
-    Self::Heartbeat(resp)
-  }
-}
-
-impl<I, A> From<ErrorResponse<I, A>> for Response<I, A> {
-  fn from(resp: ErrorResponse<I, A>) -> Self {
-    Self::Error(resp)
-  }
-}
-
-impl<I, A> Response<I, A> {
-  pub const fn append_entries(resp: AppendEntriesResponse<I, A>) -> Self {
-    Self::AppendEntries(resp)
-  }
-
-  pub const fn vote(resp: VoteResponse<I, A>) -> Self {
-    Self::Vote(resp)
-  }
-
-  pub const fn install_snapshot(resp: InstallSnapshotResponse<I, A>) -> Self {
-    Self::InstallSnapshot(resp)
-  }
-
-  pub const fn timeout_now(resp: TimeoutNowResponse<I, A>) -> Self {
-    Self::TimeoutNow(resp)
-  }
-
-  pub const fn heartbeat(resp: HeartbeatResponse<I, A>) -> Self {
-    Self::Heartbeat(resp)
-  }
-
-  pub const fn error(resp: ErrorResponse<I, A>) -> Self {
-    Self::Error(resp)
-  }
-
-  /// Returns the header of the response.
-  pub const fn header(&self) -> &Header<I, A> {
-    match self {
-      Self::AppendEntries(res) => res.header(),
-      Self::Vote(res) => res.header(),
-      Self::InstallSnapshot(res) => res.header(),
-      Self::TimeoutNow(res) => res.header(),
-      Self::Heartbeat(res) => res.header(),
-      Self::Error(res) => res.header(),
-    }
-  }
-}
+);
 
 /// Used to send a response back to the remote.
 pub struct RpcResponseSender<I, A>(oneshot::Sender<Response<I, A>>);

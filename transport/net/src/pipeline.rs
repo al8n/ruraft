@@ -190,12 +190,12 @@ where
     futures::select! {
       rst = self.inprogress_tx.send(ev).fuse() => {
         if rst.is_err() {
-          return Err(Error::PipelingClosed);
+          return Err(Error::PipelineShutdown);
         }
 
         Ok(())
       },
-      _ = self.shutdown_rx.recv().fuse() => Err(Error::PipelingClosed),
+      _ = self.shutdown_rx.recv().fuse() => Err(Error::PipelineShutdown),
     }
   }
 
