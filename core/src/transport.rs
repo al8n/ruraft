@@ -1,4 +1,4 @@
-use std::{future::Future, net::SocketAddr};
+use std::future::Future;
 
 use agnostic::Runtime;
 use futures::{AsyncRead, Stream};
@@ -99,7 +99,7 @@ pub trait Wire: Send + Sync + 'static {
   /// # Returns
   /// * `Result` - Returns the decoded `Request` or an error if the decoding process encounters issues.
   fn decode_request(
-    reader: impl AsyncRead + Unpin,
+    reader: impl AsyncRead + Send + Unpin,
   ) -> impl Future<Output = Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error>> + Send;
 
   /// Decodes a [`Response`] instance from a provided asynchronous reader.
@@ -110,7 +110,7 @@ pub trait Wire: Send + Sync + 'static {
   /// # Returns
   /// * `Result` - Returns the decoded `Response` or an error if the decoding process encounters issues.
   fn decode_response(
-    reader: impl AsyncRead + Unpin,
+    reader: impl AsyncRead + Send + Unpin,
   ) -> impl Future<Output = Result<Response<Self::Id, Self::Address>, Self::Error>> + Send;
 }
 
@@ -191,11 +191,14 @@ pub trait Transport: Send + Sync + 'static {
     Self::SnapshotInstaller,
   >;
 
+  /// Provides the local unique identifier, helping in distinguishing this node from its peers.
+  fn local_id(&self) -> &Self::Id;
+
   /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
 
-  /// Provides the local unique identifier, helping in distinguishing this node from its peers.
-  fn local_id(&self) -> &Self::Id;
+  /// Provides the concrete network address for peers in the Raft cluster to communicate with.
+  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress;
 
   /// Provides the protocol version used by the transport.
   fn version(&self) -> ProtocolVersion;
@@ -217,9 +220,6 @@ pub trait Transport: Send + Sync + 'static {
       self.local_addr().clone(),
     )
   }
-
-  /// Provides the concrete network address for peers in the Raft cluster to communicate with.
-  fn advertise_addr(&self) -> SocketAddr;
 
   /// Provides access to the node's address resolver.
   fn resolver(&self) -> &Self::Resolver;
@@ -260,7 +260,7 @@ pub trait Transport: Send + Sync + 'static {
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    source: impl AsyncRead + Send,
+    source: impl AsyncRead + Send + Unpin,
   ) -> impl Future<
     Output = Result<
       InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,

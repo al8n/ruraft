@@ -10,7 +10,7 @@ metadata.workspace = true
 
 [features]
 default = []
-io = ["futures-io", "pin-project-lite"]
+io = ["futures-io", "pin-project"]
 serde = ["dep:serde", "humantime-serde"]
 
 [dependencies]
@@ -18,7 +18,9 @@ atomic = "0.6"
 bytemuck = { version = "1", features = ["derive"] }
 
 futures-io = { version = "0.3", optional = true }
-pin-project-lite = { version = "0.2", optional = true }
+pin-project = { workspace = true, optional = true }
+
+rand = "0.8"
 
 serde = { workspace = true,  optional = true }
 humantime-serde = { workspace = true, optional = true }

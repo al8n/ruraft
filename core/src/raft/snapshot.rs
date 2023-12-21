@@ -110,7 +110,7 @@ where
       loop {
         futures::select! {
           // unwrap safe here, because snapshot_interval cannot be zero.
-          _ = R::sleep(crate::utils::random_timeout(self.snapshot_interval()).unwrap()).fuse() => {
+          _ = R::sleep(ruraft_utils::random_timeout(self.snapshot_interval()).unwrap()).fuse() => {
             // Check if we should snapshot
             if !self.should_snapshot().await {
               continue;

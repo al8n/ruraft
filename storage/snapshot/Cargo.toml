@@ -1,5 +1,5 @@
 [package]
-name = "snapshot"
+name = "ruraft-snapshot"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -8,6 +8,28 @@ license.workspace = true
 metadata.workspace = true
 rust-version.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+test = ["tempfile", "scopeguard", "smol_str", "ruraft-core/test"]
+serde = ["dep:serde"]
 
 [dependencies]
+agnostic = { workspace = true }
+crc32fast = "1.3"
+futures = { workspace = true }
+once_cell = "1.18"
+ruraft-core = { path = "../../core" }
+ruraft-utils = { path = "../../utils", features = ["io"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+viewit = { workspace = true }
+
+serde = { workspace = true, optional = true }
+
+# test features related dependencies
+tempfile = { version = "3", optional = true }
+scopeguard = { workspace = true, optional = true }
+smol_str = { version = "0.2", optional = true }
+
+[dev-dependencies]
+agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
+tokio = { version = "1.32", features = ["full"] }

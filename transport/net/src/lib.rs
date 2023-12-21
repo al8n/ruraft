@@ -97,7 +97,7 @@ pub enum Error<I: Id, A: AddressResolver, W: Wire> {
 
   /// Error signifying that the append pipeline has been closed.
   #[error("append pipeline closed")]
-  PipelingClosed,
+  PipelineShutdown,
 
   /// Error indicating a failure to forward the request to the raft system.
   #[error("failed to forward request to raft")]
@@ -321,7 +321,7 @@ impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
   I: Id + Send + Sync + 'static,
   <I as Transformable>::Error: Send + Sync + 'static,
-  A: AddressResolver,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
   A::Address: Send + Sync + 'static,
   <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
@@ -405,7 +405,7 @@ impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
 where
   I: Id + Send + Sync + 'static,
   <I as Transformable>::Error: Send + Sync + 'static,
-  A: AddressResolver,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
   A::Address: Send + Sync + 'static,
   <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
@@ -451,11 +451,11 @@ where
     self.protocol_version
   }
 
-  fn advertise_addr(&self) -> SocketAddr {
-    self.advertise_addr
+  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
+    &self.advertise_addr
   }
 
-  fn resolver(&self) -> &<Self as ruraft_core::transport::Transport>::Resolver {
+  fn resolver(&self) -> &Self::Resolver {
     &self.resolver
   }
 
@@ -566,7 +566,7 @@ where
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    source: impl AsyncRead + Send,
+    source: impl AsyncRead + Send + Unpin,
   ) -> Result<
     InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
@@ -673,7 +673,7 @@ impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
   I: Id + Send + Sync + 'static,
   <I as Transformable>::Error: Send + Sync + 'static,
-  A: AddressResolver,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
   A::Address: Send + Sync + 'static,
   <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,

@@ -3,7 +3,7 @@ use std::{sync::atomic::Ordering, time::Duration};
 use futures::StreamExt;
 
 use super::*;
-use crate::utils::random_timeout;
+use ruraft_utils::random_timeout;
 
 impl<F, S, T, SC, R> RaftRunner<F, S, T, SC, R>
 where

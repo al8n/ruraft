@@ -16,8 +16,8 @@ use ruraft_core::{
   options::SnapshotVersion,
   storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
   transport::{Address, Id, Transformable},
-  utils::{checksumable::ChecksumableWriter, make_dir_all},
 };
+use ruraft_utils::{io::ChecksumableWriter, make_dir_all};
 
 const TEST_PATH: &str = "perm_test";
 const SNAPSHOT_PATH: &str = "snapshots";
@@ -99,6 +99,7 @@ pub struct FileSnapshotStorageOptions {
 }
 
 impl FileSnapshotStorageOptions {
+  /// Create a new `FileSnapshotStorageOptions`.
   pub fn new<P: AsRef<Path>>(base: P, retain: usize) -> Self {
     Self {
       base: base.as_ref().to_path_buf(),
@@ -412,6 +413,7 @@ struct FileSnapshotMeta<I, A> {
   crc: u64,
 }
 
+/// The [`SnapshotSource`] implementor for [`FileSnapshotStorage`].
 pub struct FileSnapshotSource<I, A, R> {
   meta: FileSnapshotMeta<I, A>,
   file: BufReader<File>,
@@ -447,6 +449,7 @@ where
   }
 }
 
+/// The [`SnapshotSink`] implementor for [`FileSnapshotStorage`].
 pub struct FileSnapshotSink<I, A, R> {
   store: FileSnapshotStorage<I, A, R>,
   dir: PathBuf,
@@ -706,8 +709,11 @@ where
   }
 }
 
+/// Exports unit tests to let users test [`FileSnapshotStorage`] implementation if they want to
+/// use their own [`agnostic::Runtime`] implementation.
 #[cfg(feature = "test")]
-pub(crate) mod tests {
+#[cfg_attr(docsrs, doc(cfg(feature = "test")))]
+pub mod tests {
   use std::net::SocketAddr;
 
   use futures::{AsyncReadExt, AsyncWriteExt};
@@ -719,7 +725,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot and missing the parent dir
-  pub async fn test_file_snapshot_storage_create_snapshot_missing_parent_dir<R: Runtime>() {
+  pub async fn file_snapshot_storage_create_snapshot_missing_parent_dir<R: Runtime>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -739,7 +745,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot
-  pub async fn test_file_snapshot_storage_create_snapshot<R: Runtime>() {
+  pub async fn file_snapshot_storage_create_snapshot<R: Runtime>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -795,7 +801,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot and cancel it
-  pub async fn test_file_snapshot_storage_cancel_snapshot<R: Runtime>() {
+  pub async fn file_snapshot_storage_cancel_snapshot<R: Runtime>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -821,7 +827,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - create snapshot and retention
-  pub async fn test_file_snapshot_storage_retention<R: Runtime>() {
+  pub async fn file_snapshot_storage_retention<R: Runtime>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -855,7 +861,7 @@ pub(crate) mod tests {
   /// Description:
   /// - bad perm
   #[cfg(unix)]
-  pub async fn test_file_snapshot_storage_bad_perm<R: Runtime>() {
+  pub async fn file_snapshot_storage_bad_perm<R: Runtime>() {
     use std::os::unix::fs::PermissionsExt;
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
@@ -883,7 +889,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - missing parent dir
-  pub async fn test_file_snapshot_storage_missing_parent_dir<R: Runtime>() {
+  pub async fn file_snapshot_storage_missing_parent_dir<R: Runtime>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -900,7 +906,7 @@ pub(crate) mod tests {
   ///
   /// Description:
   /// - ordering
-  pub async fn test_file_snapshot_storage_ordering<R: Runtime>() {
+  pub async fn file_snapshot_storage_ordering<R: Runtime>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();

@@ -6,13 +6,16 @@
 
 pub mod transport;
 
-pub mod storage;
-
 mod api;
 pub use api::*;
 
 #[cfg(any(feature = "test", test))]
 pub mod tests {
-  pub use super::storage::tests::*;
   pub use ruraft_core::tests::*;
+  pub use ruraft_memory::tests::*;
+}
+
+/// Re-exports [`ruraft-memory`](ruraft_memory) crate.
+pub mod memory {
+  pub use ruraft_memory::*;
 }
