@@ -87,18 +87,18 @@ impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
 impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]
-  pub fn id(&self) -> &I {
+  pub const fn id(&self) -> &I {
     &self.id
   }
 
   /// Returns the address of the leader.
   #[inline]
-  pub fn addr(&self) -> &A {
+  pub const fn addr(&self) -> &A {
     &self.addr
   }
 
   #[inline]
-  pub fn new(id: I, addr: A) -> Self {
+  pub const fn new(id: I, addr: A) -> Self {
     Self { id, addr }
   }
 }
