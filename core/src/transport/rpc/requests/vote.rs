@@ -92,4 +92,14 @@ impl<I, A> VoteRequest<I, A> {
   }
 }
 
-impl<I: CheapClone, A: CheapClone> CheapClone for VoteRequest<I, A> {}
+impl<I: CheapClone, A: CheapClone> CheapClone for VoteRequest<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self {
+      header: self.header.cheap_clone(),
+      term: self.term,
+      last_log_index: self.last_log_index,
+      last_log_term: self.last_log_term,
+      leadership_transfer: self.leadership_transfer,
+    }
+  }
+}

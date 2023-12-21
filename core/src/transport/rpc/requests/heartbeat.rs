@@ -52,4 +52,11 @@ impl<I, A> HeartbeatRequest<I, A> {
   }
 }
 
-impl<I: CheapClone, A: CheapClone> CheapClone for HeartbeatRequest<I, A> {}
+impl<I: CheapClone, A: CheapClone> CheapClone for HeartbeatRequest<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self {
+      header: self.header.cheap_clone(),
+      term: self.term,
+    }
+  }
+}

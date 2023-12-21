@@ -119,4 +119,10 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
       leader_commit: 0,
     }
   }
+
+  /// Returns a mutable reference of the log entries.
+  #[inline]
+  pub fn entries_mut(&mut self) -> &mut Vec<Log<I, A, D>> {
+    &mut self.entries
+  }
 }

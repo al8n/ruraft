@@ -44,4 +44,10 @@ impl<I, A> TimeoutNowRequest<I, A> {
   }
 }
 
-impl<I: CheapClone, A: CheapClone> CheapClone for TimeoutNowRequest<I, A> {}
+impl<I: CheapClone, A: CheapClone> CheapClone for TimeoutNowRequest<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self {
+      header: self.header.cheap_clone(),
+    }
+  }
+}

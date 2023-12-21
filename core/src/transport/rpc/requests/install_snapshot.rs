@@ -144,4 +144,17 @@ impl<I, A> InstallSnapshotRequest<I, A> {
   }
 }
 
-impl<I: CheapClone, A: CheapClone> CheapClone for InstallSnapshotRequest<I, A> {}
+impl<I: CheapClone, A: CheapClone> CheapClone for InstallSnapshotRequest<I, A> {
+  fn cheap_clone(&self) -> Self {
+    Self {
+      header: self.header.cheap_clone(),
+      term: self.term,
+      snapshot_version: self.snapshot_version,
+      last_log_index: self.last_log_index,
+      last_log_term: self.last_log_term,
+      membership: self.membership.cheap_clone(),
+      membership_index: self.membership_index,
+      size: self.size,
+    }
+  }
+}

@@ -1,8 +1,7 @@
 use std::{
   future::Future,
   pin::Pin,
-  task::{Context, Poll},
-  time::Instant,
+  task::{Context, Poll}, 
 };
 
 use futures::{channel::oneshot, Stream};
@@ -61,7 +60,7 @@ impl<I: CheapClone, A: CheapClone> CheapClone for Header<I, A> {
 impl<I, A> Header<I, A> {
   /// Create a new [`Header`] with the given `id` and `addr`.
   #[inline]
-  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
       protocol_version: version,
       from: Node::new(id, addr),
@@ -70,7 +69,7 @@ impl<I, A> Header<I, A> {
 
   /// Create a new [`Header`] with the given [`ProtocolVersion`] and [`Node`].
   #[inline]
-  pub fn from_node(version: ProtocolVersion, node: Node<I, A>) -> Self {
+  pub const fn from_node(version: ProtocolVersion, node: Node<I, A>) -> Self {
     Self {
       protocol_version: version,
       from: node,
@@ -79,13 +78,13 @@ impl<I, A> Header<I, A> {
 
   /// Returns the address of the header.
   #[inline]
-  pub fn addr(&self) -> &A {
+  pub const fn addr(&self) -> &A {
     self.from.addr()
   }
 
   /// Returns the id of the header.
   #[inline]
-  pub fn id(&self) -> &I {
+  pub const fn id(&self) -> &I {
     self.from.id()
   }
 }

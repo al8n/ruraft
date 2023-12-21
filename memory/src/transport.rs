@@ -3,7 +3,7 @@
 use std::{
   collections::HashMap,
   sync::Arc,
-  time::{Duration, Instant},
+  time::{Duration, SystemTime},
 };
 
 use agnostic::Runtime;
@@ -171,7 +171,7 @@ struct PipelineInflight<I, A> {
   num_entries: usize,
 
   /// The time that the original request was started
-  start: Instant,
+  start: SystemTime,
   handle: RpcHandle<I, A>,
 }
 
@@ -413,7 +413,7 @@ where
         term,
         highest_log_index,
         num_entries,
-        start: Instant::now(),
+        start: SystemTime::now(),
       }).fuse() => {
         if rst.is_err() {
           return Err(Error::PipelineShutdown);

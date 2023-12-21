@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use super::{stream::Connection, *};
 
 struct Event {
@@ -11,7 +13,7 @@ struct Event {
   num_entries: usize,
 
   /// The time that the original request was started
-  start: Instant,
+  start: SystemTime,
 }
 
 pub struct NetAppendEntriesPipeline<I, A, D, S, W>
@@ -167,7 +169,7 @@ where
     &mut self,
     req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
   ) -> Result<(), Self::Error> {
-    let start = Instant::now();
+    let start = SystemTime::now();
     let ev = Event {
       term: req.term,
       num_entries: req.entries().len(),
