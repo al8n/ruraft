@@ -1,0 +1,22 @@
+[package]
+name = "ruraft-wire"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+metadata.workspace = true
+
+[features]
+
+serde = ["dep:serde", "ruraft-core/serde"]
+
+[dependencies]
+bytes = { workspace = true }
+futures-util = { version = "0.3", features = ["io"] }
+ruraft-core = { path = "../core" }
+thiserror = { workspace = true }
+
+
+serde = { workspace = true, optional = true }

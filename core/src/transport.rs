@@ -2,9 +2,9 @@ use std::future::Future;
 
 use agnostic::Runtime;
 use futures::{AsyncRead, Stream};
+use nodecraft::CheapClone;
 
 mod rpc;
-use nodecraft::CheapClone;
 pub use rpc::*;
 
 mod error;

@@ -11,7 +11,8 @@ members = [
   "transport/grpc",
   "transport/quinn",
   "transport/s2n",
-  "utils"
+  "utils",
+  "wire",
 ]
 resolver = "2"
 
