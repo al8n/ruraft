@@ -22,6 +22,35 @@ pub enum ProtocolVersion {
   V1 = 1,
 }
 
+
+#[derive(Debug)]
+pub struct UnknownProtocolVersion(u8);
+
+impl UnknownProtocolVersion {
+  #[inline]
+  pub const fn version(&self) -> u8 {
+    self.0
+  }
+}
+
+impl core::fmt::Display for UnknownProtocolVersion {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "unknown snapshot version {}", self.0)
+  }
+}
+
+impl TryFrom<u8> for ProtocolVersion {
+  type Error = UnknownProtocolVersion;
+
+  #[inline]
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match value {
+      1 => Ok(ProtocolVersion::V1),
+      val => Err(UnknownProtocolVersion(val)),
+    }
+  }
+}
+
 /// The version of snapshots that this server can understand.
 /// Currently, it is always assumed that the server generates the latest version,
 /// though this may be changed in the future to include a configurable version.

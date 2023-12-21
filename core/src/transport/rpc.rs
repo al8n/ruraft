@@ -1,103 +1,20 @@
 use std::{
   future::Future,
   pin::Pin,
-  task::{Context, Poll}, 
+  task::{Context, Poll},
 };
 
 use futures::{channel::oneshot, Stream};
-use nodecraft::CheapClone;
+use nodecraft::{CheapClone, Transformable};
 
 use crate::{
   membership::Membership,
-  options::{ProtocolVersion, SnapshotVersion},
+  options::{ProtocolVersion, SnapshotVersion, UnknownProtocolVersion},
   storage::Log,
   Node,
 };
 
 pub use async_channel::{RecvError, TryRecvError};
-
-/// A common sub-structure used to pass along protocol version and
-/// other information about the cluster.
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  getters(vis_all = "pub"),
-  setters(vis_all = "pub")
-)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Header<I, A> {
-  /// The protocol version of the request or response
-  #[viewit(
-    getter(
-      const,
-      attrs(doc = "Get the protocol version of the request or response"),
-    ),
-    setter(attrs(doc = "Set the protocol version of the request or response"),)
-  )]
-  protocol_version: ProtocolVersion,
-
-  /// The id of the node sending the RPC Request or Response
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Get the node of the request or response"),
-    ),
-    setter(attrs(doc = "Set the node of the request or response"),)
-  )]
-  from: Node<I, A>,
-}
-
-impl<I: CheapClone, A: CheapClone> CheapClone for Header<I, A> {
-  fn cheap_clone(&self) -> Self {
-    Self {
-      protocol_version: self.protocol_version,
-      from: self.from.cheap_clone(),
-    }
-  }
-}
-
-impl<I, A> Header<I, A> {
-  /// Create a new [`Header`] with the given `id` and `addr`.
-  #[inline]
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
-    Self {
-      protocol_version: version,
-      from: Node::new(id, addr),
-    }
-  }
-
-  /// Create a new [`Header`] with the given [`ProtocolVersion`] and [`Node`].
-  #[inline]
-  pub const fn from_node(version: ProtocolVersion, node: Node<I, A>) -> Self {
-    Self {
-      protocol_version: version,
-      from: node,
-    }
-  }
-
-  /// Returns the address of the header.
-  #[inline]
-  pub const fn addr(&self) -> &A {
-    self.from.addr()
-  }
-
-  /// Returns the id of the header.
-  #[inline]
-  pub const fn id(&self) -> &I {
-    self.from.id()
-  }
-}
-
-impl<I, A> From<(ProtocolVersion, Node<I, A>)> for Header<I, A> {
-  #[inline]
-  fn from((version, from): (ProtocolVersion, Node<I, A>)) -> Self {
-    Self {
-      protocol_version: version,
-      from,
-    }
-  }
-}
 
 // macro_rules! encode {
 //   (v1::$ty:ident { $expr: expr }) => {{
@@ -283,7 +200,7 @@ macro_rules! enum_wrapper {
     $vis:vis enum $name:ident $(<$($generic:tt),+>)? {
       $(
         $(#[$variant_meta:meta])*
-        $variant:ident($variant_ty: ty) = $variant_tag:literal => $variant_snake_case: ident
+        $variant:ident($variant_ty: ident $(<$($variant_generic:tt),+>)?) = $variant_tag:literal => $variant_snake_case: ident
       ), +$(,)?
     }
   ) => {
@@ -291,7 +208,7 @@ macro_rules! enum_wrapper {
     $vis enum $name $(< $($generic),+ >)? {
       $(
         $(#[$variant_meta])*
-        $variant($variant_ty),
+        $variant($variant_ty $(< $($variant_generic),+ >)?),
       )*
     }
 
@@ -342,7 +259,7 @@ macro_rules! enum_wrapper {
       $(
         paste::paste! {
           #[doc = concat!("Returns the contained [`", stringify!($variant_ty), "`] request, consuming the self value. Panics if the value is not [`", stringify!($variant_ty), "`].")]
-          $vis fn [< unwrap_ $variant_snake_case>] (self) -> $variant_ty {
+          $vis fn [< unwrap_ $variant_snake_case>] (self) -> $variant_ty $(< $($variant_generic),+ >)? {
             if let Self::$variant(val) = self {
               val
             } else {
@@ -352,14 +269,52 @@ macro_rules! enum_wrapper {
         }
 
         #[doc = concat!("Construct a [`", stringify!($name), "`] from [`", stringify!($variant_ty), "`].")]
-        pub const fn $variant_snake_case(val: $variant_ty) -> Self {
+        pub const fn $variant_snake_case(val: $variant_ty $(< $($variant_generic),+ >)?) -> Self {
           Self::$variant(val)
         }
       )*
     }
+
+    $(
+      impl $(< $($variant_generic),+ >)? $variant_ty $(< $($variant_generic),+ >)? {
+        /// The type tag for encoding/decoding.
+        pub const TAG: u8 = $variant_tag;
+      }
+    )*
   };
 }
 
+#[derive(thiserror::Error)]
+pub enum TransformError<I: Transformable, A: Transformable> {
+  #[error("encode buffer too small")]
+  EncodeBufferTooSmall,
+  #[error("decode buffer too small")]
+  DecodeBufferTooSmall,
+  #[error("unknown protocol version: {0}")]
+  UnknownProtocolVersion(u8),
+  #[error("id: {0}")]
+  Id(I::Error),
+  #[error("addr: {0}")]
+  Addr(A::Error),
+}
+
+impl<I: Transformable, A: Transformable> From<UnknownProtocolVersion> for TransformError<I, A> {
+  fn from(version: UnknownProtocolVersion) -> Self {
+    Self::UnknownProtocolVersion(version.version())
+  }
+}
+
+impl<I: Transformable, A: Transformable> core::fmt::Debug for TransformError<I, A> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    core::fmt::Display::fmt(self, f)
+  }
+}
+
+const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
+const MAX_INLINED_BYTES: usize = 256;
+
+mod header;
+pub use header::*;
 mod requests;
 pub use requests::*;
 mod responses;

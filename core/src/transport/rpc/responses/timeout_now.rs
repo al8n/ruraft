@@ -13,7 +13,7 @@ pub struct TimeoutNowResponse<I, A> {
   header: Header<I, A>,
 }
 
-impl<I, A> TimeoutNowResponse<I, A> { 
+impl<I, A> TimeoutNowResponse<I, A> {
   /// Create a new [`TimeoutNowResponse`] with the given `id` and `addr` and `version`.
   #[inline]
   pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
@@ -33,9 +33,7 @@ impl<I, A> TimeoutNowResponse<I, A> {
   /// Create a new [`TimeoutNowResponse`] with the given header.
   #[inline]
   pub const fn from_header(header: Header<I, A>) -> Self {
-    Self {
-      header,
-    }
+    Self { header }
   }
 }
 

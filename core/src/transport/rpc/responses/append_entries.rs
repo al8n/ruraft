@@ -24,9 +24,12 @@ pub struct AppendEntriesResponse<I, A> {
 
   /// A hint to help accelerate rebuilding slow nodes
   #[viewit(
-    getter(const, attrs(doc = "Get a hint to help accelerate rebuilding slow nodes"),),
+    getter(
+      const,
+      attrs(doc = "Get a hint to help accelerate rebuilding slow nodes"),
+    ),
     setter(attrs(doc = "Set a hint to help accelerate rebuilding slow nodes"),)
-  )] 
+  )]
   last_log: u64,
 
   /// We may not succeed if we have a conflicting entry
@@ -39,7 +42,10 @@ pub struct AppendEntriesResponse<I, A> {
   /// There are scenarios where this request didn't succeed
   /// but there's no need to wait/back-off the next attempt.
   #[viewit(
-    getter(const, attrs(doc = "Get if there's no need to wait/back-off the next attempt"),),
+    getter(
+      const,
+      attrs(doc = "Get if there's no need to wait/back-off the next attempt"),
+    ),
     setter(attrs(doc = "Set if there's no need to wait/back-off the next attempt"),)
   )]
   no_retry_backoff: bool,
@@ -101,36 +107,69 @@ impl<I: CheapClone, A: CheapClone> CheapClone for AppendEntriesResponse<I, A> {}
 pub struct PipelineAppendEntriesResponse<I, A> {
   /// The term of the request
   #[viewit(
-    getter(const, attrs(doc = "Get the term of the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."),),
-    setter(attrs(doc = "Set the term which comes from the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."),)
+    getter(
+      const,
+      attrs(
+        doc = "Get the term of the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."
+      ),
+    ),
+    setter(attrs(
+      doc = "Set the term which comes from the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."
+    ),)
   )]
   term: u64,
 
   /// The highest log index of the [`AppendEntriesRequest`]'s entries
   #[viewit(
-    getter(const, attrs(doc = "Get the highest log index of the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."),),
-    setter(attrs(doc = "Set the highest log index which comes from the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."),)
+    getter(
+      const,
+      attrs(
+        doc = "Get the highest log index of the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."
+      ),
+    ),
+    setter(attrs(
+      doc = "Set the highest log index which comes from the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."
+    ),)
   )]
   highest_log_index: Option<u64>,
 
   /// The number of entries in the [`AppendEntriesRequest`]'s
   #[viewit(
-    getter(const, attrs(doc = "Get the number of entries of the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."),),
-    setter(attrs(doc = "Set the number of entries which comes from the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."),)
+    getter(
+      const,
+      attrs(
+        doc = "Get the number of entries of the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."
+      ),
+    ),
+    setter(attrs(
+      doc = "Set the number of entries which comes from the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest)."
+    ),)
   )]
   num_entries: usize,
 
   /// The time that the original request was started
   #[cfg_attr(feature = "serde", serde(with = "serde_millis"))]
   #[viewit(
-    getter(const, attrs(doc = "Get the time that the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest) was started."),),
-    setter(attrs(doc = "Set the time that the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest) was started."),)
+    getter(
+      const,
+      attrs(
+        doc = "Get the time that the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest) was started."
+      ),
+    ),
+    setter(attrs(
+      doc = "Set the time that the original [`AppendEntriesRequest`](crate::transport::AppendEntriesRequest) was started."
+    ),)
   )]
   start: SystemTime,
 
   /// The response of the [`AppendEntriesRequest`]
   #[viewit(
-    getter(const, style = "ref", rename = "response", attrs(doc = "Get the [`AppendEntriesResponse`].")),
+    getter(
+      const,
+      style = "ref",
+      rename = "response",
+      attrs(doc = "Get the [`AppendEntriesResponse`].")
+    ),
     setter(attrs(doc = "Set the [`AppendEntriesResponse`]."),)
   )]
   resp: AppendEntriesResponse<I, A>,
