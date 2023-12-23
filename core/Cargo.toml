@@ -23,6 +23,7 @@ async-lock = { workspace = true }
 async-channel = { workspace = true }
 async-broadcast = "0.6"
 atomic = "0.6"
+atomic-time = "0.1"
 bytes = { workspace = true, features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-skiplist = "0.1"
@@ -36,7 +37,6 @@ parking_lot = { version = "0.12", features = ["send_guard"] }
 pin-project = { workspace = true }
 paste = "1"
 rand = "0.8"
-rmp-serde = "1.1"
 scopeguard = "1.1"
 smol_str = { version = "0.2", features = ["serde"] }
 smallvec = "1.11"

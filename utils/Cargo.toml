@@ -9,14 +9,13 @@ rust-version.workspace = true
 metadata.workspace = true
 
 [features]
-default = []
-io = ["futures-io", "pin-project"]
+default = ["std"]
+std = []
+io = ["futures-io", "pin-project", "std"]
 serde = ["dep:serde", "humantime-serde"]
 
 [dependencies]
-atomic = "0.6"
 bytemuck = { version = "1", features = ["derive"] }
-
 futures-io = { version = "0.3", optional = true }
 pin-project = { workspace = true, optional = true }
 

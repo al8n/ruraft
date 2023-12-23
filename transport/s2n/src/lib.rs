@@ -16,7 +16,7 @@ use quic::{
   stream::{ReceiveStream, SendStream},
 };
 use ruraft_net::{stream::*, NetTransport};
-use ruraft_utils::atomic_duration::AtomicDuration;
+use ruraft_utils::duration::AtomicDuration;
 pub use s2n_quic as quic;
 pub use s2n_quic::{Client, Server};
 

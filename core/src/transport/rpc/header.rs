@@ -1,6 +1,6 @@
 use std::io;
 
-use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, AsyncReadExt};
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::utils::invalid_data;
 
@@ -101,7 +101,7 @@ where
   A: Transformable + Send + Sync + 'static,
   A::Error: Send + Sync + 'static,
 {
-  type Error = TransformError<I, A>;
+  type Error = TransformError;
 
   fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
     let encoded_len = self.encoded_len();
@@ -118,13 +118,13 @@ where
     self
       .id()
       .encode(&mut dst[offset..offset + id_encoded_len])
-      .map_err(TransformError::Id)?;
+      .map_err(TransformError::encode)?;
     offset += id_encoded_len;
     let addr_encoded_len = self.addr().encoded_len();
     self
       .addr()
       .encode(&mut dst[offset..offset + addr_encoded_len])
-      .map_err(TransformError::Addr)
+      .map_err(TransformError::encode)
   }
 
   fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -178,11 +178,11 @@ where
     }
 
     let mut offset = MESSAGE_SIZE_LEN;
-    let version = ProtocolVersion::try_from(src[offset])?;
+    let version = ProtocolVersion::try_from(src[offset]).map_err(Self::Error::decode)?;
     offset += 1;
-    let (id_len, id) = I::decode(&src[offset..]).map_err(TransformError::Id)?;
+    let (id_len, id) = I::decode(&src[offset..]).map_err(Self::Error::decode)?;
     offset += id_len;
-    let (addr_len, addr) = A::decode(&src[offset..]).map_err(TransformError::Addr)?;
+    let (addr_len, addr) = A::decode(&src[offset..]).map_err(Self::Error::decode)?;
     offset += addr_len;
     Ok((
       offset,
@@ -200,7 +200,7 @@ where
     let mut buf = [0u8; MESSAGE_SIZE_LEN];
     reader.read_exact(&mut buf)?;
     let msg_len = u32::from_be_bytes(buf) as usize;
-    
+
     let remaining = msg_len - MESSAGE_SIZE_LEN;
     if remaining <= MAX_INLINED_BYTES {
       let mut buf = [0u8; MAX_INLINED_BYTES];
@@ -236,5 +236,3 @@ where
     }
   }
 }
-
-

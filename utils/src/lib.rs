@@ -1,10 +1,25 @@
-pub mod atomic_duration;
+//! Utilities for [`ruraft`](https://crates.io/crates/ruraft).
+#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
+#![deny(missing_docs, warnings)]
+#![forbid(unsafe_code)]
+
+/// Pod duration
+pub mod duration;
+
+/// Useful I/O utilities
+#[cfg(feature = "io")]
+#[cfg_attr(docsrs, doc(cfg(feature = "io")))]
 pub mod io;
 
-use std::{cmp, fs::DirBuilder, path::Path, time::Duration};
+use core::time::Duration;
+#[cfg(feature = "std")]
+use std::{cmp, fs::DirBuilder, path::Path};
 
 /// Like [`std::fs::create_dir_all`] but with a mode
-#[cfg(unix)]
+#[cfg(all(unix, feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(all(unix, feature = "std"))))]
 pub fn make_dir_all<P: AsRef<Path>>(path: &P, mode: u32) -> std::io::Result<()> {
   use std::os::unix::fs::DirBuilderExt;
 
@@ -57,6 +72,8 @@ pub fn capped_exponential_backoff(
 
 /// Returns a unix timestamp in milliseconds.
 #[inline]
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub fn now_timestamp() -> u64 {
   std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
@@ -73,12 +90,35 @@ pub const fn encoded_len_varint(value: u64) -> usize {
   ((((value | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as usize
 }
 
+/// Encoding varint error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EncodeVarintError {
+  /// The buffer did not have enough space to encode the value.
+  BufferTooSmall,
+}
+
+impl core::fmt::Display for EncodeVarintError {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    match self {
+      Self::BufferTooSmall => write!(
+        f,
+        "the buffer did not have enough space to encode the value"
+      ),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for EncodeVarintError {}
+
 /// Encodes an integer value into LEB128 variable length format, and writes it to the buffer.
-/// The buffer must have enough remaining space (maximum 10 bytes).
 #[inline]
-pub fn encode_varint(mut value: u64, buf: &mut [u8]) {
+pub fn encode_varint(mut value: u64, buf: &mut [u8]) -> Result<usize, EncodeVarintError> {
   let mut i = 0usize;
   loop {
+    if i >= buf.len() {
+      return Err(EncodeVarintError::BufferTooSmall);
+    }
     if value < 0x80 {
       buf[i] = value as u8;
       break;
@@ -88,7 +128,32 @@ pub fn encode_varint(mut value: u64, buf: &mut [u8]) {
     }
     i += 1;
   }
+  Ok(i)
 }
+
+/// Decoding varint error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DecodeVarintError {
+  /// The buffer did not contain a valid LEB128 encoding.
+  InvalidEncoding,
+  /// The buffer did not contain enough bytes to decode a value.
+  BufferTooSmall,
+}
+
+impl core::fmt::Display for DecodeVarintError {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    match self {
+      Self::InvalidEncoding => write!(f, "the buffer did not contain a valid LEB128 encoding"),
+      Self::BufferTooSmall => write!(
+        f,
+        "the buffer did not contain enough bytes to decode a value"
+      ),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DecodeVarintError {}
 
 /// Decodes a value from LEB128 variable length format.
 ///
@@ -98,9 +163,11 @@ pub fn encode_varint(mut value: u64, buf: &mut [u8]) {
 ///
 /// # Returns
 ///
-/// * `Option<u64>` - Returns the decoded value as `u64` if successful.
-///   Returns `None` if the buffer did not contain a valid LEB128 encoding.
-pub const fn decode_varint(buf: &[u8]) -> Option<u64> {
+/// * Returns the bytes readed and the decoded value as `u64` if successful.
+///
+/// * Returns [`DecodeVarintError`] if the buffer did not contain a valid LEB128 encoding
+/// or the decode buffer did not contain enough bytes to decode a value.
+pub const fn decode_varint(buf: &[u8]) -> Result<(usize, u64), DecodeVarintError> {
   let mut result: u64 = 0;
   let mut shift = 0;
 
@@ -108,7 +175,11 @@ pub const fn decode_varint(buf: &[u8]) -> Option<u64> {
   loop {
     if i == 10 {
       // It's not a valid LEB128 encoding if it exceeds 10 bytes for u64.
-      return None;
+      return Err(DecodeVarintError::InvalidEncoding);
+    }
+
+    if i >= buf.len() {
+      return Err(DecodeVarintError::BufferTooSmall);
     }
 
     let value = (buf[i] & 0x7F) as u64;
@@ -116,7 +187,7 @@ pub const fn decode_varint(buf: &[u8]) -> Option<u64> {
 
     // If the high-order bit is not set, this byte is the end of the encoding.
     if buf[i] & 0x80 == 0 {
-      return Some(result);
+      return Ok((i, result));
     }
 
     shift += 7;

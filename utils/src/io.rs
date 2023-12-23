@@ -79,20 +79,85 @@ impl<R: AsyncRead> AsyncRead for LimitedReader<R> {
   }
 }
 
+/// A reader that calculates a checksum while reading data.
+///
+/// This struct wraps another reader and a hasher, and it updates the hasher
+/// with the data read from the inner reader. It allows for calculating a checksum
+/// while reading data without needing a separate pass over the data.
+///
+/// # Type Parameters
+///
+/// * `R`: The type of the inner reader.
+/// * `H`: The type of the hasher used for calculating the checksum.
 pub struct ChecksumableReader<R: Read, H: Hasher> {
   reader: R,
   hasher: H,
 }
 
 impl<R: Read, H: Hasher> ChecksumableReader<R, H> {
+  /// Creates a new `ChecksumableReader` with the given reader and hasher.
+  ///
+  /// # Arguments
+  ///
+  /// * `reader`: The reader from which to read data.
+  /// * `hasher`: The hasher used to compute the checksum of the read data.
+  ///
+  /// # Returns
+  ///
+  /// A new `ChecksumableReader`.
   pub fn new(reader: R, hasher: H) -> Self {
     Self { reader, hasher }
   }
 
+  /// Consumes the `ChecksumableReader` and returns the inner reader.
+  ///
+  /// This method can be used when you're done with the checksum calculation
+  /// and want to access the underlying reader directly.
+  ///
+  /// # Returns
+  ///
+  /// The inner reader.
   pub fn into_inner(self) -> R {
     self.reader
   }
 
+  /// Returns a reference to the inner reader.
+  ///
+  /// This method provides read-only access to the inner reader.
+  ///
+  /// # Returns
+  ///
+  /// A reference to the inner reader.
+  pub fn inner(&self) -> &R {
+    &self.reader
+  }
+
+  /// Returns a mutable reference to the inner reader.
+  ///
+  /// This method provides mutable access to the inner reader, allowing
+  /// for operations that may change its state.
+  ///
+  /// > **However, it's important to note
+  /// that if you read data directly to the inner reader using this mutable
+  /// reference, those reads will not be accounted for in the checksum
+  /// calculation. To ensure the checksum remains accurate, all reads
+  /// should be performed through the `ChecksumableReader`.**
+  ///
+  /// # Returns
+  ///
+  /// A mutable reference to the inner reader.
+  pub fn inner_mut(&mut self) -> &mut R {
+    &mut self.reader
+  }
+
+  /// Returns the current checksum.
+  ///
+  /// This method returns the checksum calculated from the data that has been
+  /// read so far. It does not consume the `ChecksumableReader`.
+  ///
+  /// # Returns
+  ///
+  /// The current checksum as a `u64`.
   pub fn checksum(&self) -> u64 {
     self.hasher.finish()
   }
@@ -106,28 +171,85 @@ impl<R: Read, H: Hasher> Read for ChecksumableReader<R, H> {
   }
 }
 
+/// A writer that calculates a checksum while writing data.
+///
+/// This struct wraps another writer and a hasher, and it updates the hasher
+/// with the data written to the inner writer. It allows for calculating a checksum
+/// while writing data without needing a separate pass over the data.
+///
+/// # Type Parameters
+///
+/// * `W`: The type of the inner writer.
+/// * `H`: The type of the hasher used for calculating the checksum.
 pub struct ChecksumableWriter<W: Write, H: Hasher> {
   writer: W,
   hasher: H,
 }
 
 impl<W: Write, H: Hasher> ChecksumableWriter<W, H> {
+  /// Creates a new `ChecksumableWriter` with the given writer and hasher.
+  ///
+  /// # Arguments
+  ///
+  /// * `writer`: The writer to which data will be written.
+  /// * `hasher`: The hasher used to compute the checksum of the written data.
+  ///
+  /// # Returns
+  ///
+  /// A new `ChecksumableWriter`.
   pub fn new(writer: W, hasher: H) -> Self {
     Self { writer, hasher }
   }
 
+  /// Consumes the `ChecksumableWriter` and returns the inner writer.
+  ///
+  /// This method can be used when you're done with the checksum calculation
+  /// and want to access the underlying writer directly.
+  ///
+  /// # Returns
+  ///
+  /// The inner writer.
   pub fn into_inner(self) -> W {
     self.writer
   }
 
+  /// Returns a reference to the inner writer.
+  ///
+  /// This method provides read-only access to the inner writer.
+  ///
+  /// # Returns
+  ///
+  /// A reference to the inner writer.
   pub fn inner(&self) -> &W {
     &self.writer
   }
 
+  /// Returns a mutable reference to the inner writer.
+  ///
+  /// This method provides mutable access to the inner writer, allowing
+  /// for operations that may change its state.
+  ///
+  /// > **However, it's important to note
+  /// that if you write data directly to the inner writer using this mutable
+  /// reference, those writes will not be accounted for in the checksum
+  /// calculation. To ensure the checksum remains accurate, all writes
+  /// should be performed through the `ChecksumableWriter`.**
+  ///
+  /// # Returns
+  ///
+  /// A mutable reference to the inner writer.
   pub fn inner_mut(&mut self) -> &mut W {
     &mut self.writer
   }
 
+  /// Returns the current checksum.
+  ///
+  /// This method returns the checksum calculated from the data that has been
+  /// read so far. It does not consume the `ChecksumableWriter`.
+  ///
+  /// # Returns
+  ///
+  /// The current checksum as a `u64`.
   pub fn checksum(&self) -> u64 {
     self.hasher.finish()
   }
@@ -144,6 +266,16 @@ impl<W: Write, H: Hasher> Write for ChecksumableWriter<W, H> {
   }
 }
 
+/// An async reader that calculates a checksum while reading data.
+///
+/// This struct wraps another async reader and a hasher, and it updates the hasher
+/// with the data read from the inner reader. It allows for calculating a checksum
+/// asynchronously while reading data without needing a separate pass over the data.
+///
+/// # Type Parameters
+///
+/// * `R`: The type of the inner async reader.
+/// * `H`: The type of the hasher used for calculating the checksum.
 #[pin_project::pin_project]
 pub struct AsyncChecksumableReader<R: AsyncRead, H: Hasher> {
   #[pin]
@@ -152,14 +284,69 @@ pub struct AsyncChecksumableReader<R: AsyncRead, H: Hasher> {
 }
 
 impl<R: AsyncRead, H: Hasher> AsyncChecksumableReader<R, H> {
+  /// Creates a new `AsyncChecksumableReader` with the given async reader and hasher.
+  ///
+  /// # Arguments
+  ///
+  /// * `reader`: The async reader from which to read data.
+  /// * `hasher`: The hasher used to compute the checksum of the read data.
+  ///
+  /// # Returns
+  ///
+  /// A new `AsyncChecksumableReader`.
   pub fn new(reader: R, hasher: H) -> Self {
     Self { reader, hasher }
   }
 
+  /// Consumes the `AsyncChecksumableReader` and returns the inner async reader.
+  ///
+  /// This method can be used when you're done with the checksum calculation
+  /// and want to access the underlying async reader directly.
+  ///
+  /// # Returns
+  ///
+  /// The inner async reader.
   pub fn into_inner(self) -> R {
     self.reader
   }
 
+  /// Returns a reference to the inner reader.
+  ///
+  /// This method provides read-only access to the inner reader.
+  ///
+  /// # Returns
+  ///
+  /// A reference to the inner reader.
+  pub fn inner(&self) -> &R {
+    &self.reader
+  }
+
+  /// Returns a mutable reference to the inner reader.
+  ///
+  /// This method provides mutable access to the inner reader, allowing
+  /// for operations that may change its state.
+  ///
+  /// > **However, it's important to note
+  /// that if you read data directly to the inner reader using this mutable
+  /// reference, those reads will not be accounted for in the checksum
+  /// calculation. To ensure the checksum remains accurate, all reads
+  /// should be performed through the `AsyncChecksumableReader`.**
+  ///
+  /// # Returns
+  ///
+  /// A mutable reference to the inner reader.
+  pub fn inner_mut(&mut self) -> &mut R {
+    &mut self.reader
+  }
+
+  /// Returns the current checksum.
+  ///
+  /// This method returns the checksum calculated from the data that has been
+  /// read so far. It does not consume the `AsyncChecksumableReader`.
+  ///
+  /// # Returns
+  ///
+  /// The current checksum as a `u64`.
   pub fn checksum(&self) -> u64 {
     self.hasher.finish()
   }
@@ -183,6 +370,16 @@ impl<R: AsyncRead, H: Hasher> AsyncRead for AsyncChecksumableReader<R, H> {
   }
 }
 
+/// An async writer that calculates a checksum while writing data.
+///
+/// This struct wraps another async writer and a hasher, and it updates the hasher
+/// with the data written to the inner writer. It allows for calculating a checksum
+/// asynchronously while writing data without needing a separate pass over the data.
+///
+/// # Type Parameters
+///
+/// * `W`: The type of the inner async writer.
+/// * `H`: The type of the hasher used for calculating the checksum.
 #[pin_project::pin_project]
 pub struct AsyncChecksumableWriter<W: AsyncWrite, H: Hasher> {
   #[pin]
@@ -191,14 +388,69 @@ pub struct AsyncChecksumableWriter<W: AsyncWrite, H: Hasher> {
 }
 
 impl<W: AsyncWrite, H: Hasher> AsyncChecksumableWriter<W, H> {
+  /// Creates a new `AsyncChecksumableWriter` with the given async writer and hasher.
+  ///
+  /// # Arguments
+  ///
+  /// * `writer`: The async writer to which data will be written.
+  /// * `hasher`: The hasher used to compute the checksum of the written data.
+  ///
+  /// # Returns
+  ///
+  /// A new `AsyncChecksumableWriter`.
   pub fn new(writer: W, hasher: H) -> Self {
     Self { writer, hasher }
   }
 
+  /// Consumes the `AsyncChecksumableWriter` and returns the inner async writer.
+  ///
+  /// This method can be used when you're done with the checksum calculation
+  /// and want to access the underlying async writer directly.
+  ///
+  /// # Returns
+  ///
+  /// The inner async writer.
   pub fn into_inner(self) -> W {
     self.writer
   }
 
+  /// Returns a reference to the inner writer.
+  ///
+  /// This method provides read-only access to the inner writer.
+  ///
+  /// # Returns
+  ///
+  /// A reference to the inner writer.
+  pub fn inner(&self) -> &W {
+    &self.writer
+  }
+
+  /// Returns a mutable reference to the inner writer.
+  ///
+  /// This method provides mutable access to the inner writer, allowing
+  /// for operations that may change its state.
+  ///
+  /// > **However, it's important to note
+  /// that if you write data directly to the inner writer using this mutable
+  /// reference, those writes will not be accounted for in the checksum
+  /// calculation. To ensure the checksum remains accurate, all writes
+  /// should be performed through the `AsyncChecksumableWriter`.**
+  ///
+  /// # Returns
+  ///
+  /// A mutable reference to the inner writer.
+  pub fn inner_mut(&mut self) -> &mut W {
+    &mut self.writer
+  }
+
+  /// Returns the current checksum.
+  ///
+  /// This method returns the checksum calculated from the data that has been
+  /// read so far. It does not consume the `AsyncChecksumableWriter`.
+  ///
+  /// # Returns
+  ///
+  /// The current checksum as a `u64`.
   pub fn checksum(&self) -> u64 {
     self.hasher.finish()
   }

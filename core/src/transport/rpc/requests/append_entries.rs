@@ -1,3 +1,11 @@
+use std::io;
+
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use nodecraft::{Address, Id};
+use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
+
+use crate::{utils::invalid_data, Data};
+
 use super::*;
 
 /// The command used to append entries to the
@@ -124,5 +132,208 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
   #[inline]
   pub fn entries_mut(&mut self) -> &mut Vec<Log<I, A, D>> {
     &mut self.entries
+  }
+}
+
+// Encode
+//
+// --------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// | len (4 bytes) | header (variable) | term (uvarint) | prev_log_entry (uvarint) | prev_log_term (uvarint) | leader_commit (uvarint) | num_logs | log1 | log2 | ... |
+// --------------------------------------------------------------------------------------------------------------------------------------------------------------------
+impl<I, A, D> Transformable for AppendEntriesRequest<I, A, D>
+where
+  I: Id + Send + Sync + 'static,
+  I::Error: Send + Sync + 'static,
+  A: Address + Send + Sync + 'static,
+  A::Error: Send + Sync + 'static,
+  D: Data,
+  D::Error: Send + Sync + 'static,
+{
+  type Error = TransformError;
+
+  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+    let encoded_len = self.encoded_len();
+    if dst.len() < encoded_len {
+      return Err(TransformError::EncodeBufferTooSmall);
+    }
+
+    let mut offset = 0;
+    dst[..MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    offset += MESSAGE_SIZE_LEN;
+
+    let header_encoded_len = self.header.encoded_len();
+    self.header.encode(&mut dst[offset..])?;
+    offset += header_encoded_len;
+
+    offset += encode_varint(self.term, &mut dst[offset..])?;
+    offset += encode_varint(self.prev_log_entry, &mut dst[offset..])?;
+    offset += encode_varint(self.prev_log_term, &mut dst[offset..])?;
+    offset += encode_varint(self.leader_commit, &mut dst[offset..])?;
+    let num_entries = self.entries.len() as u32;
+    dst[offset..offset + core::mem::size_of::<u32>()].copy_from_slice(&num_entries.to_be_bytes());
+    offset += core::mem::size_of::<u32>();
+
+    for entry in &self.entries {
+      let encoded_log_len = entry.encoded_len();
+      entry
+        .encode(&mut dst[offset..])
+        .map_err(Self::Error::encode)?;
+      offset += encoded_log_len;
+    }
+
+    Ok(())
+  }
+
+  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+    let encoded_len = self.encoded_len();
+    if encoded_len <= MAX_INLINED_BYTES {
+      let mut buf = [0u8; MAX_INLINED_BYTES];
+      self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf[..encoded_len])
+    } else {
+      let mut buf = vec![0u8; encoded_len];
+      self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf)
+    }
+  }
+
+  async fn encode_to_async_writer<W: AsyncWrite + Send + Unpin>(
+    &self,
+    writer: &mut W,
+  ) -> io::Result<()>
+  where
+    Self::Error: Send + Sync + 'static,
+  {
+    let encoded_len = self.encoded_len();
+    if encoded_len <= MAX_INLINED_BYTES {
+      let mut buf = [0u8; MAX_INLINED_BYTES];
+      self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf[..encoded_len]).await
+    } else {
+      let mut buf = vec![0u8; encoded_len];
+      self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf).await
+    }
+  }
+
+  fn encoded_len(&self) -> usize {
+    MESSAGE_SIZE_LEN
+      + self.header.encoded_len()
+      + 1
+      + encoded_len_varint(self.term)
+      + encoded_len_varint(self.prev_log_entry)
+      + encoded_len_varint(self.prev_log_term)
+      + encoded_len_varint(self.leader_commit)
+      + core::mem::size_of::<u32>()
+      + { self.entries.iter().map(|e| e.encoded_len()).sum::<usize>() }
+  }
+
+  fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
+  where
+    Self: Sized,
+  {
+    let src_len = src.len();
+    if src_len < MESSAGE_SIZE_LEN {
+      return Err(TransformError::DecodeBufferTooSmall);
+    }
+
+    let mut offset = 0;
+    let encoded_len =
+      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
+    if encoded_len > src_len - MESSAGE_SIZE_LEN {
+      return Err(TransformError::DecodeBufferTooSmall);
+    }
+
+    offset += MESSAGE_SIZE_LEN;
+
+    let (header_size, header) = <Header<I, A> as Transformable>::decode(&src[offset..])?;
+    offset += header_size;
+
+    let (readed, term) = decode_varint(&src[offset..])?;
+    offset += readed;
+
+    let (readed, prev_log_entry) = decode_varint(&src[offset..])?;
+    offset += readed;
+
+    let (readed, prev_log_term) = decode_varint(&src[offset..])?;
+    offset += readed;
+
+    let (readed, leader_commit) = decode_varint(&src[offset..])?;
+    offset += readed;
+
+    let num_entrires = {
+      let mut buf = [0u8; core::mem::size_of::<u32>()];
+      buf.copy_from_slice(&src[offset..offset + core::mem::size_of::<u32>()]);
+      offset += core::mem::size_of::<u32>();
+      u32::from_be_bytes(buf) as usize
+    };
+
+    let mut entries = Vec::with_capacity(num_entrires);
+
+    for _ in 0..num_entrires {
+      let (readed, entry) =
+        <Log<I, A, D> as Transformable>::decode(&src[offset..]).map_err(Self::Error::decode)?;
+      offset += readed;
+      entries.push(entry);
+    }
+
+    Ok((
+      offset,
+      Self {
+        header,
+        term,
+        prev_log_entry,
+        prev_log_term,
+        entries,
+        leader_commit,
+      },
+    ))
+  }
+
+  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
+  where
+    Self: Sized,
+  {
+    let mut len = [0u8; MESSAGE_SIZE_LEN];
+    reader.read_exact(&mut len)?;
+    let msg_len = u32::from_be_bytes(len) as usize;
+
+    if msg_len <= MAX_INLINED_BYTES {
+      let mut buf = [0u8; MAX_INLINED_BYTES];
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..msg_len])?;
+      Self::decode(&buf).map_err(invalid_data)
+    } else {
+      let mut buf = vec![0u8; msg_len];
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..])?;
+      Self::decode(&buf).map_err(invalid_data)
+    }
+  }
+
+  async fn decode_from_async_reader<R: AsyncRead + Send + Unpin>(
+    reader: &mut R,
+  ) -> io::Result<(usize, Self)>
+  where
+    Self: Sized,
+    Self::Error: Send + Sync + 'static,
+  {
+    let mut len = [0u8; MESSAGE_SIZE_LEN];
+    reader.read_exact(&mut len).await?;
+    let msg_len = u32::from_be_bytes(len) as usize;
+
+    if msg_len <= MAX_INLINED_BYTES {
+      let mut buf = [0u8; MAX_INLINED_BYTES];
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader
+        .read_exact(&mut buf[MESSAGE_SIZE_LEN..msg_len])
+        .await?;
+      Self::decode(&buf).map_err(invalid_data)
+    } else {
+      let mut buf = vec![0u8; msg_len];
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..]).await?;
+      Self::decode(&buf).map_err(invalid_data)
+    }
   }
 }

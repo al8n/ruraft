@@ -5,11 +5,12 @@ use std::{
 };
 
 use futures::{channel::oneshot, Stream};
-use nodecraft::{CheapClone, Transformable};
+use nodecraft::{Address, CheapClone, Id, Transformable};
+use ruraft_utils::{DecodeVarintError, EncodeVarintError};
 
 use crate::{
   membership::Membership,
-  options::{ProtocolVersion, SnapshotVersion, UnknownProtocolVersion},
+  options::{ProtocolVersion, SnapshotVersion, UnknownProtocolVersion, UnknownSnapshotVersion},
   storage::Log,
   Node,
 };
@@ -285,28 +286,60 @@ macro_rules! enum_wrapper {
 }
 
 #[derive(thiserror::Error)]
-pub enum TransformError<I: Transformable, A: Transformable> {
+pub enum TransformError {
   #[error("encode buffer too small")]
   EncodeBufferTooSmall,
   #[error("decode buffer too small")]
   DecodeBufferTooSmall,
-  #[error("unknown protocol version: {0}")]
-  UnknownProtocolVersion(u8),
-  #[error("id: {0}")]
-  Id(I::Error),
-  #[error("addr: {0}")]
-  Addr(A::Error),
+  #[error("encode error: {0}")]
+  Encode(Box<dyn std::error::Error + Send + Sync + 'static>),
+  #[error("decode error: {0}")]
+  Decode(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
-impl<I: Transformable, A: Transformable> From<UnknownProtocolVersion> for TransformError<I, A> {
+impl From<UnknownProtocolVersion> for TransformError {
   fn from(version: UnknownProtocolVersion) -> Self {
-    Self::UnknownProtocolVersion(version.version())
+    Self::decode(version)
   }
 }
 
-impl<I: Transformable, A: Transformable> core::fmt::Debug for TransformError<I, A> {
+impl From<UnknownSnapshotVersion> for TransformError {
+  fn from(version: UnknownSnapshotVersion) -> Self {
+    Self::decode(version)
+  }
+}
+
+impl From<EncodeVarintError> for TransformError {
+  fn from(err: EncodeVarintError) -> Self {
+    Self::Encode(Box::new(err))
+  }
+}
+
+impl From<DecodeVarintError> for TransformError {
+  fn from(err: DecodeVarintError) -> Self {
+    Self::Decode(Box::new(err))
+  }
+}
+
+impl core::fmt::Debug for TransformError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     core::fmt::Display::fmt(self, f)
+  }
+}
+
+impl TransformError {
+  pub fn encode<E>(err: E) -> Self
+  where
+    E: std::error::Error + Send + Sync + 'static,
+  {
+    Self::Encode(Box::new(err))
+  }
+
+  pub fn decode<E>(err: E) -> Self
+  where
+    E: std::error::Error + Send + Sync + 'static,
+  {
+    Self::Decode(Box::new(err))
   }
 }
 
