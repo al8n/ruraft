@@ -4,5 +4,10 @@
 #![deny(missing_docs, warnings)]
 #![forbid(unsafe_code)]
 
-mod plain;
-pub use plain::*;
+/// MsgPack based [`Wire`](ruraft_core::transport::Wire) implementation.
+#[cfg(feature = "rmp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rmp")))]
+pub mod rmp;
+
+mod lpe;
+pub use lpe::*;

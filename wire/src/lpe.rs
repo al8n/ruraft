@@ -2,12 +2,9 @@ use std::{io, marker::PhantomData};
 
 use bytes::Bytes;
 use futures_util::{AsyncRead, AsyncReadExt};
-use ruraft_core::{
-  transport::*,
-  Data,
-};
+use ruraft_core::{transport::*, Data};
 
-/// The error kind of [`PlainWire`].
+/// The error kind of [`LpeWire`].
 pub enum ErrorKind {
   /// Unknown RPC tag
   UnknownRpc(u8),
@@ -41,7 +38,7 @@ impl core::fmt::Display for ErrorKind {
   }
 }
 
-/// The error type of [`PlainWire`].
+/// The error type of [`LpeWire`].
 pub struct Error {
   kind: ErrorKind,
 }
@@ -80,9 +77,7 @@ impl Error {
   /// Creates a new [`Error`].
   #[inline]
   pub const fn new(kind: ErrorKind) -> Self {
-    Self {
-      kind,
-    }
+    Self { kind }
   }
 
   /// Returns the kind of the error.
@@ -109,30 +104,30 @@ impl WireError for Error {
   }
 }
 
+/// A length-prefix-encoding [`Wire`] implementation that aims for high-performance.
+#[repr(transparent)]
+pub struct LpeWire<I, A, D>(PhantomData<(I, A, D)>);
 
-/// A [`Wire`] implementor that aims for high-performance.
-pub struct PlainWire<I, A, D>(PhantomData<(I, A, D)>);
-
-impl<I, A, D> PlainWire<I, A, D> {
-  /// Creates a new [`PlainWire`].
+impl<I, A, D> LpeWire<I, A, D> {
+  /// Creates a new [`LpeWire`].
   pub const fn new() -> Self {
     Self(PhantomData)
   }
 }
 
-impl<I, A, D> Default for PlainWire<I, A, D> {
+impl<I, A, D> Default for LpeWire<I, A, D> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, A, D> Clone for PlainWire<I, A, D> {
+impl<I, A, D> Clone for LpeWire<I, A, D> {
   fn clone(&self) -> Self {
     *self
   }
 }
 
-impl<I, A, D> Copy for PlainWire<I, A, D> {}
+impl<I, A, D> Copy for LpeWire<I, A, D> {}
 
 const MAX_INLINED_BYTES: usize = 256;
 const MESSAGE_LEN_SIZE: usize = core::mem::size_of::<u32>();
@@ -154,20 +149,20 @@ macro_rules! decode {
       buf[..MESSAGE_LEN_SIZE].copy_from_slice(&$buf[1..]);
       $reader.read_exact(&mut buf[MESSAGE_LEN_SIZE..$len]).await?;
       paste::paste! {
-        [< $variant $kind >]::decode(&buf).map(|(_, val)| $kind::$variant(val)).map_err(Into::into) 
+        [< $variant $kind >]::decode(&buf).map(|(_, val)| $kind::$variant(val)).map_err(Into::into)
       }
     } else {
       let mut buf = vec![0u8; $len];
       buf[..MESSAGE_LEN_SIZE].copy_from_slice(&$buf[1..]);
       $reader.read_exact(&mut buf[MESSAGE_LEN_SIZE..]).await?;
       paste::paste! {
-        [< $variant $kind >]::decode(&buf).map(|(_, val)| $kind::$variant(val)).map_err(Into::into) 
+        [< $variant $kind >]::decode(&buf).map(|(_, val)| $kind::$variant(val)).map_err(Into::into)
       }
     }
   }};
 }
 
-impl<I, A, D> Wire for PlainWire<I, A, D>
+impl<I, A, D> Wire for LpeWire<I, A, D>
 where
   I: Id + Send + Sync + 'static,
   I::Error: Send + Sync + 'static,
@@ -221,9 +216,13 @@ where
     let tag = tag_and_len[0];
     let len = u32::from_be_bytes(tag_and_len[1..].try_into().unwrap()) as usize;
     match tag {
-      AppendEntriesRequest::<I, A, D>::TAG => decode!(Request::AppendEntries(reader, tag_and_len, len)),
+      AppendEntriesRequest::<I, A, D>::TAG => {
+        decode!(Request::AppendEntries(reader, tag_and_len, len))
+      }
       VoteRequest::<I, A>::TAG => decode!(Request::Vote(reader, tag_and_len, len)),
-      InstallSnapshotRequest::<I, A>::TAG => decode!(Request::InstallSnapshot(reader, tag_and_len, len)),
+      InstallSnapshotRequest::<I, A>::TAG => {
+        decode!(Request::InstallSnapshot(reader, tag_and_len, len))
+      }
       TimeoutNowRequest::<I, A>::TAG => decode!(Request::TimeoutNow(reader, tag_and_len, len)),
       HeartbeatRequest::<I, A>::TAG => decode!(Request::Heartbeat(reader, tag_and_len, len)),
       tag => Err(Error::new(ErrorKind::UnknownRpc(tag))),
@@ -238,13 +237,17 @@ where
     let tag = tag_and_len[0];
     let len = u32::from_be_bytes(tag_and_len[1..].try_into().unwrap()) as usize;
     match tag {
-      AppendEntriesResponse::<I, A>::TAG => decode!(Response::AppendEntries(reader, tag_and_len, len)),
+      AppendEntriesResponse::<I, A>::TAG => {
+        decode!(Response::AppendEntries(reader, tag_and_len, len))
+      }
       VoteResponse::<I, A>::TAG => decode!(Response::Vote(reader, tag_and_len, len)),
-      InstallSnapshotResponse::<I, A>::TAG => decode!(Response::InstallSnapshot(reader, tag_and_len, len)),
+      InstallSnapshotResponse::<I, A>::TAG => {
+        decode!(Response::InstallSnapshot(reader, tag_and_len, len))
+      }
       TimeoutNowResponse::<I, A>::TAG => decode!(Response::TimeoutNow(reader, tag_and_len, len)),
       HeartbeatResponse::<I, A>::TAG => decode!(Response::Heartbeat(reader, tag_and_len, len)),
-      ErrorResponse::<I, A>::TAG => decode!(Response::Error(reader, tag_and_len, len)), 
+      ErrorResponse::<I, A>::TAG => decode!(Response::Error(reader, tag_and_len, len)),
       tag => Err(Error::new(ErrorKind::UnknownRpc(tag))),
-    } 
+    }
   }
 }

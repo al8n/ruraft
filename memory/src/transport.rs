@@ -908,14 +908,13 @@ pub(super) mod tests {
 
   struct NoopWireError;
 
-  impl WireError for NoopWireError
-  {
+  impl WireError for NoopWireError {
     fn custom<T>(_msg: T) -> Self
     where
       T: core::fmt::Display,
     {
       unreachable!()
-    } 
+    }
   }
 
   impl core::fmt::Display for NoopWireError {

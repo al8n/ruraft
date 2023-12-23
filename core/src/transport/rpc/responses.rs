@@ -21,6 +21,8 @@ pub use error::*;
 enum_wrapper!(
   /// Response from the Raft node
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+  #[cfg_attr(feature = "serde", serde(untagged))]
   #[non_exhaustive]
   pub enum Response<I, A> {
     AppendEntries(AppendEntriesResponse<I, A>) = 0 => append_entries,
