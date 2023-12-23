@@ -15,6 +15,7 @@ serde = ["dep:serde", "ruraft-core/serde"]
 [dependencies]
 bytes = { workspace = true }
 futures-util = { version = "0.3", features = ["io"] }
+paste = "1"
 ruraft-core = { path = "../core" }
 thiserror = { workspace = true }
 

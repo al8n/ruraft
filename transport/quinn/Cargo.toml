@@ -11,6 +11,7 @@ description = "QUIC (quinn) transport layer implementation for ruraft"
 
 [dependencies]
 agnostic = { workspace = true, features = ["quinn"] }
+atomic-time = "0.1"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pin-project = { workspace = true }

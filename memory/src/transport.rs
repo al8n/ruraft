@@ -906,47 +906,31 @@ pub(super) mod tests {
 
   use super::*;
 
-  struct NoopWireError<I, A, D>(PhantomData<(I, A, D)>);
+  struct NoopWireError;
 
-  impl<I: Id, A: Address, D: Data> WireError for NoopWireError<I, A, D>
-  where
-    I: Id + Send + Sync + 'static,
-    <I as Transformable>::Error: Send + Sync + 'static,
-    A: Send + Sync + 'static,
-    <A as Transformable>::Error: Send + Sync + 'static,
+  impl WireError for NoopWireError
   {
-    type Id = I;
-    type Address = A;
-
-    fn address(_err: <Self::Address as Transformable>::Error) -> Self {
-      unreachable!()
-    }
-
     fn custom<T>(_msg: T) -> Self
     where
       T: core::fmt::Display,
     {
       unreachable!()
-    }
-
-    fn id(_err: <Self::Id as Transformable>::Error) -> Self {
-      unreachable!()
-    }
+    } 
   }
 
-  impl<I, A, D> core::fmt::Display for NoopWireError<I, A, D> {
+  impl core::fmt::Display for NoopWireError {
     fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
       unreachable!()
     }
   }
 
-  impl<I, A, D> core::fmt::Debug for NoopWireError<I, A, D> {
+  impl core::fmt::Debug for NoopWireError {
     fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
       unreachable!()
     }
   }
 
-  impl<I, A, D> std::error::Error for NoopWireError<I, A, D> {}
+  impl std::error::Error for NoopWireError {}
 
   struct NoopWire<I, A, D>(PhantomData<(I, A, D)>);
 
@@ -959,7 +943,7 @@ pub(super) mod tests {
     <A as Transformable>::Error: Send + Sync + 'static,
     D: Data,
   {
-    type Error = NoopWireError<I, A, D>;
+    type Error = NoopWireError;
 
     type Id = I;
 

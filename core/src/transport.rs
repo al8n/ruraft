@@ -19,23 +19,23 @@ use crate::{options::ProtocolVersion, Data, HeartbeatHandler, Node};
 /// `WireError` provides a standard interface to wrap and differentiate between
 /// errors related to node identifiers (`Id`), node addresses (`Address`), and custom error messages.
 pub trait WireError: std::error::Error + Send + Sync + 'static {
-  /// Represents the unique identifier for nodes.
-  type Id: Id;
+  // /// Represents the unique identifier for nodes.
+  // type Id: Id;
 
-  /// Represents the network address associated with nodes.
-  type Address: Address;
+  // /// Represents the network address associated with nodes.
+  // type Address: Address;
 
-  /// Constructs an error instance from an `Id` transformation error.
-  ///
-  /// # Parameters
-  /// * `err` - The error arising from the transformation of a node identifier.
-  fn id(err: <Self::Id as Transformable>::Error) -> Self;
+  // /// Constructs an error instance from an `Id` transformation error.
+  // ///
+  // /// # Parameters
+  // /// * `err` - The error arising from the transformation of a node identifier.
+  // fn id(err: <Self::Id as Transformable>::Error) -> Self;
 
-  /// Constructs an error instance from an `Address` transformation error.
-  ///
-  /// # Parameters
-  /// * `err` - The error arising from the transformation of a node address.
-  fn address(err: <Self::Address as Transformable>::Error) -> Self;
+  // /// Constructs an error instance from an `Address` transformation error.
+  // ///
+  // /// # Parameters
+  // /// * `err` - The error arising from the transformation of a node address.
+  // fn address(err: <Self::Address as Transformable>::Error) -> Self;
 
   /// Constructs a custom error instance from a provided message.
   ///
@@ -56,7 +56,8 @@ pub trait Wire: Send + Sync + 'static {
   ///
   /// This associated type provides detailed error categorization,
   /// including transformations of the `Id` and `Address` types.
-  type Error: WireError<Id = Self::Id, Address = Self::Address>;
+  // type Error: WireError<Id = Self::Id, Address = Self::Address>;
+  type Error: WireError;
 
   /// Represents the unique identifier associated with nodes.
   type Id: Id;

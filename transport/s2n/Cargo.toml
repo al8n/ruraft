@@ -12,6 +12,7 @@ description = "QUIC (s2n-quic) transport layer implementation for ruraft"
 [dependencies]
 arc-swap = "1.6"
 agnostic = { workspace = true, features = ["net"] }
+atomic-time = "0.1"
 bytes = { workspace = true }
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }

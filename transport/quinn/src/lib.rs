@@ -12,7 +12,7 @@ use futures::{AsyncRead, AsyncWrite, Future};
 use nodecraft::resolver::AddressResolver;
 use quinn::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, ServerConfig};
 use ruraft_net::{stream::*, NetTransport};
-use ruraft_utils::duration::AtomicDuration;
+use atomic_time::AtomicDuration;
 
 /// Quinn transport
 pub type QuinnTransport<I, A, D, W> =

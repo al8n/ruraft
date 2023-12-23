@@ -285,14 +285,19 @@ macro_rules! enum_wrapper {
   };
 }
 
+/// Transform error
 #[derive(thiserror::Error)]
 pub enum TransformError {
+  /// Encode buffer too small
   #[error("encode buffer too small")]
   EncodeBufferTooSmall,
+  /// Decode buffer too small
   #[error("decode buffer too small")]
   DecodeBufferTooSmall,
+  /// Encode error
   #[error("encode error: {0}")]
   Encode(Box<dyn std::error::Error + Send + Sync + 'static>),
+  /// Decode error
   #[error("decode error: {0}")]
   Decode(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
