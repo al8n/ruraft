@@ -351,9 +351,47 @@ impl TransformError {
 const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
 const MAX_INLINED_BYTES: usize = 256;
 
+#[cfg(test)]
+macro_rules! test_transformable_roundtrip {
+  ($ty: ty { $init: expr }) => {{
+    use crate::transport::rpc::TestTransformable;
+
+    <$ty>::test_transformable(|| $init).await;
+  }};
+}
+
 mod header;
 pub use header::*;
 mod requests;
 pub use requests::*;
 mod responses;
 pub use responses::*;
+
+#[cfg(test)]
+trait TestTransformable: Transformable + Eq + core::fmt::Debug + Sized {
+  async fn test_transformable(init: impl FnOnce() -> Self)
+  where
+    <Self as Transformable>::Error: core::fmt::Debug + Send + Sync + 'static,
+  {
+    let val = init();
+    let mut buf = std::vec![0; val.encoded_len()];
+    val.encode(&mut buf).unwrap();
+    let (_, decoded) = Self::decode(&buf).unwrap();
+    assert_eq!(val, decoded);
+
+    let mut buf = std::vec::Vec::new();
+    val.encode_to_writer(&mut buf).unwrap();
+    let (_, decoded) = Self::decode_from_reader(&mut buf.as_slice()).unwrap();
+    assert_eq!(decoded, val);
+
+    let mut buf = std::vec::Vec::new();
+    val.encode_to_async_writer(&mut buf).await.unwrap();
+    let (_, decoded) = Self::decode_from_async_reader(&mut buf.as_slice())
+      .await
+      .unwrap();
+    assert_eq!(decoded, val);
+  }
+}
+
+#[cfg(test)]
+impl<T: Transformable + Eq + core::fmt::Debug + Sized> TestTransformable for T {}

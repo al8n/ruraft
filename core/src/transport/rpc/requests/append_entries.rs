@@ -81,6 +81,21 @@ pub struct AppendEntriesRequest<I, A, D> {
   leader_commit: u64,
 }
 
+impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq
+  for AppendEntriesRequest<I, A, D>
+{
+  fn eq(&self, other: &Self) -> bool {
+    self.header == other.header
+      && self.term == other.term
+      && self.prev_log_entry == other.prev_log_entry
+      && self.prev_log_term == other.prev_log_term
+      && self.entries == other.entries
+      && self.leader_commit == other.leader_commit
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for AppendEntriesRequest<I, A, D> {}
+
 impl<I, A, D> AppendEntriesRequest<I, A, D> {
   /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
   /// are set to their default values.
@@ -219,7 +234,6 @@ where
   fn encoded_len(&self) -> usize {
     MESSAGE_SIZE_LEN
       + self.header.encoded_len()
-      + 1
       + encoded_len_varint(self.term)
       + encoded_len_varint(self.prev_log_entry)
       + encoded_len_varint(self.prev_log_term)
@@ -240,7 +254,7 @@ where
     let mut offset = 0;
     let encoded_len =
       u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
-    if encoded_len > src_len - MESSAGE_SIZE_LEN {
+    if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
 
@@ -335,5 +349,81 @@ where
       reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..]).await?;
       Self::decode(&buf).map_err(invalid_data)
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::storage::LogKind;
+
+  use super::*;
+  use smol_str::SmolStr;
+  use std::{net::SocketAddr, sync::Arc};
+
+  type TestRequest = AppendEntriesRequest<SmolStr, SocketAddr, Vec<u8>>;
+
+  #[tokio::test]
+  async fn test_encode_decode_small_request_round_trip() {
+    test_transformable_roundtrip!(TestRequest {
+      TestRequest {
+        header: Header {
+          protocol_version: ProtocolVersion::V1,
+          from: Node::new("node1".into(), "127.0.0.1:8080".parse().unwrap()),
+        },
+        term: 1,
+        prev_log_entry: 2,
+        prev_log_term: 2,
+        entries: vec![
+          Log::crate_new(3, 2, LogKind::Noop),
+          Log::crate_new(4, 2, LogKind::Barrier),
+          Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        ],
+        leader_commit: 3,
+      }
+    }); 
+  }
+
+  #[tokio::test]
+  async fn test_encode_decode_round_trip() {
+    test_transformable_roundtrip!(TestRequest {
+      TestRequest {
+        header: Header {
+          protocol_version: ProtocolVersion::V1,
+          from: Node::new("node1".into(), "127.0.0.1:8080".parse().unwrap()),
+        },
+        term: 1,
+        prev_log_entry: 2,
+        prev_log_term: 2,
+        entries: vec![
+          Log::crate_new(3, 2, LogKind::Noop),
+          Log::crate_new(4, 2, LogKind::Barrier),
+          Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+          Log::crate_new(6, 2, LogKind::Noop),
+          Log::crate_new(7, 2, LogKind::Barrier),
+          Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+          Log::crate_new(9, 2, LogKind::Noop),
+          Log::crate_new(10, 2, LogKind::Barrier),
+          {
+            let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+            l.appended_at = Some(std::time::SystemTime::now());
+            l
+          },
+          Log::crate_new(3, 2, LogKind::Noop),
+          Log::crate_new(4, 2, LogKind::Barrier),
+          Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+          Log::crate_new(6, 2, LogKind::Noop),
+          Log::crate_new(7, 2, LogKind::Barrier),
+          Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+          Log::crate_new(9, 2, LogKind::Noop),
+          Log::crate_new(10, 2, LogKind::Barrier),
+          {
+            let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+            l.appended_at = Some(std::time::SystemTime::now());
+            l
+          },
+        ],
+        leader_commit: 3,
+      }
+    }); 
   }
 }

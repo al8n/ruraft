@@ -113,22 +113,20 @@ impl std::error::Error for EncodeVarintError {}
 
 /// Encodes an integer value into LEB128 variable length format, and writes it to the buffer.
 #[inline]
-pub fn encode_varint(mut value: u64, buf: &mut [u8]) -> Result<usize, EncodeVarintError> {
-  let mut i = 0usize;
-  loop {
+pub fn encode_varint(mut x: u64, buf: &mut [u8]) -> Result<usize, EncodeVarintError> {
+  let mut i = 0;
+
+  while x >= 0x80 {
     if i >= buf.len() {
       return Err(EncodeVarintError::BufferTooSmall);
     }
-    if value < 0x80 {
-      buf[i] = value as u8;
-      break;
-    } else {
-      buf[i] = ((value & 0x7F) | 0x80) as u8;
-      value >>= 7;
-    }
+
+    buf[i] = (x as u8) | 0x80;
+    x >>= 7;
     i += 1;
   }
-  Ok(i)
+  buf[i] = x as u8;
+  Ok(i + 1)
 }
 
 /// Decoding varint error.
@@ -168,9 +166,7 @@ impl std::error::Error for DecodeVarintError {}
 /// * Returns [`DecodeVarintError`] if the buffer did not contain a valid LEB128 encoding
 /// or the decode buffer did not contain enough bytes to decode a value.
 pub const fn decode_varint(buf: &[u8]) -> Result<(usize, u64), DecodeVarintError> {
-  let mut result: u64 = 0;
-  let mut shift = 0;
-
+  let (mut x, mut s) = (0, 0);
   let mut i = 0usize;
   loop {
     if i == 10 {
@@ -182,15 +178,15 @@ pub const fn decode_varint(buf: &[u8]) -> Result<(usize, u64), DecodeVarintError
       return Err(DecodeVarintError::BufferTooSmall);
     }
 
-    let value = (buf[i] & 0x7F) as u64;
-    result |= value << shift;
-
-    // If the high-order bit is not set, this byte is the end of the encoding.
-    if buf[i] & 0x80 == 0 {
-      return Ok((i, result));
+    let b = buf[i];
+    if b < 0x80 {
+      if i == 10 - 1 && b > 1 {
+        return Err(DecodeVarintError::InvalidEncoding);
+      }
+      return Ok((i + 1, x | (b as u64) << s));
     }
-
-    shift += 7;
+    x |= ((b & 0x7f) as u64) << s;
+    s += 7;
     i += 1;
   }
 }
