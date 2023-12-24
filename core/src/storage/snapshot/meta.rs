@@ -82,6 +82,20 @@ pub struct SnapshotMeta<I, A> {
   membership: Membership<I, A>,
 }
 
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for SnapshotMeta<I, A> {
+  fn eq(&self, other: &Self) -> bool {
+    self.version == other.version
+      && self.term == other.term
+      && self.index == other.index
+      && self.timestamp == other.timestamp
+      && self.size == other.size
+      && self.membership_index == other.membership_index
+      && self.membership == other.membership
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> Eq for SnapshotMeta<I, A> {}
+
 const META_FIXED_FIELDS_SIZE: usize = mem::size_of::<SnapshotVersion>() + 5 * mem::size_of::<u64>();
 
 impl<I, A> SnapshotMeta<I, A> {
@@ -327,5 +341,39 @@ where
         membership,
       },
     ))
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::net::SocketAddr;
+
+  use super::*;
+
+  #[tokio::test]
+  async fn test_snapshot_meta_transformable_roundtrip() {
+    test_transformable_roundtrip!(SnapshotMeta::<smol_str::SmolStr, SocketAddr> {
+      SnapshotMeta {
+        version: SnapshotVersion::V1,
+        term: 1,
+        index: 10,
+        timestamp: 1000,
+        size: 100,
+        membership_index: 1,
+        membership: Membership::__sample_membership(),
+      }
+    });
+
+    test_transformable_roundtrip!(SnapshotMeta::<smol_str::SmolStr, SocketAddr> {
+      SnapshotMeta {
+        version: SnapshotVersion::V1,
+        term: 1,
+        index: 10,
+        timestamp: 1000,
+        size: 100,
+        membership_index: 1,
+        membership: Membership::__large_membership(),
+      }
+    });
   }
 }

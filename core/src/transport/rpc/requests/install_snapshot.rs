@@ -93,6 +93,21 @@ pub struct InstallSnapshotRequest<I, A> {
   size: u64,
 }
 
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for InstallSnapshotRequest<I, A> {
+  fn eq(&self, other: &Self) -> bool {
+    self.header == other.header
+      && self.term == other.term
+      && self.snapshot_version == other.snapshot_version
+      && self.last_log_index == other.last_log_index
+      && self.last_log_term == other.last_log_term
+      && self.membership == other.membership
+      && self.membership_index == other.membership_index
+      && self.size == other.size
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: Eq> Eq for InstallSnapshotRequest<I, A> {}
+
 impl<I, A> InstallSnapshotRequest<I, A> {
   /// Create a new [`InstallSnapshotRequest`] with the given `version`, `id`, `addr` and `membership`. Other fields
   /// are set to their default values.
@@ -262,7 +277,7 @@ where
     let mut offset = 0;
     let encoded_len =
       u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
-    if encoded_len > src_len - MESSAGE_SIZE_LEN {
+    if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
     offset += MESSAGE_SIZE_LEN;
@@ -346,3 +361,37 @@ where
     }
   }
 }
+
+#[cfg(any(feature = "test", test))]
+impl InstallSnapshotRequest<smol_str::SmolStr, std::net::SocketAddr> {
+  #[doc(hidden)]
+  pub fn __large() -> Self {
+    Self {
+      header: Header::__large(),
+      term: 1,
+      snapshot_version: SnapshotVersion::V1,
+      last_log_index: 1,
+      last_log_term: 2,
+      membership: Membership::__large_membership(),
+      membership_index: 1,
+      size: 100,
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn __small() -> Self {
+    Self {
+      header: Header::__small(),
+      term: 1,
+      snapshot_version: SnapshotVersion::V1,
+      last_log_index: 1,
+      last_log_term: 2,
+      membership: Membership::__single_server(),
+      membership_index: 1,
+      size: 100,
+    }
+  }
+}
+
+#[cfg(test)]
+unit_test_transformable_roundtrip!(InstallSnapshotRequest <smol_str::SmolStr, std::net::SocketAddr> => install_snapshot_request);

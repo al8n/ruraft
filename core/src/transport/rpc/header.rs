@@ -173,7 +173,7 @@ where
     }
 
     let msg_len = u32::from_be_bytes(src[..MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
-    if src_len - MESSAGE_SIZE_LEN < msg_len {
+    if msg_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
 
@@ -197,18 +197,19 @@ where
   where
     Self: Sized,
   {
-    let mut buf = [0u8; MESSAGE_SIZE_LEN];
-    reader.read_exact(&mut buf)?;
-    let msg_len = u32::from_be_bytes(buf) as usize;
+    let mut len = [0u8; MESSAGE_SIZE_LEN];
+    reader.read_exact(&mut len)?;
+    let msg_len = u32::from_be_bytes(len) as usize;
 
-    let remaining = msg_len - MESSAGE_SIZE_LEN;
-    if remaining <= MAX_INLINED_BYTES {
+    if msg_len <= MAX_INLINED_BYTES {
       let mut buf = [0u8; MAX_INLINED_BYTES];
-      reader.read_exact(&mut buf[..remaining])?;
-      Self::decode(&buf[..remaining]).map_err(invalid_data)
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..msg_len])?;
+      Self::decode(&buf).map_err(invalid_data)
     } else {
-      let mut buf = vec![0u8; remaining];
-      reader.read_exact(&mut buf)?;
+      let mut buf = vec![0u8; msg_len];
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..])?;
       Self::decode(&buf).map_err(invalid_data)
     }
   }
@@ -220,19 +221,44 @@ where
     Self: Sized,
     Self::Error: Send + Sync + 'static,
   {
-    let mut buf = [0u8; MESSAGE_SIZE_LEN];
-    reader.read_exact(&mut buf).await?;
-    let msg_len = u32::from_be_bytes(buf) as usize;
+    let mut len = [0u8; MESSAGE_SIZE_LEN];
+    reader.read_exact(&mut len).await?;
+    let msg_len = u32::from_be_bytes(len) as usize;
 
-    let remaining = msg_len - MESSAGE_SIZE_LEN;
-    if remaining <= MAX_INLINED_BYTES {
+    if msg_len <= MAX_INLINED_BYTES {
       let mut buf = [0u8; MAX_INLINED_BYTES];
-      reader.read_exact(&mut buf[..remaining]).await?;
-      Self::decode(&buf[..remaining]).map_err(invalid_data)
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader
+        .read_exact(&mut buf[MESSAGE_SIZE_LEN..msg_len])
+        .await?;
+      Self::decode(&buf).map_err(invalid_data)
     } else {
-      let mut buf = vec![0u8; remaining];
-      reader.read_exact(&mut buf).await?;
+      let mut buf = vec![0u8; msg_len];
+      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
+      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..]).await?;
       Self::decode(&buf).map_err(invalid_data)
     }
   }
 }
+
+#[cfg(any(feature = "test", test))]
+impl Header<smol_str::SmolStr, std::net::SocketAddr> {
+  #[doc(hidden)]
+  pub fn __large() -> Self {
+    Self {
+      protocol_version: ProtocolVersion::V1,
+      from: Node::new("1".repeat(500).into(), "127.0.0.1:8080".parse().unwrap()),
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn __small() -> Self {
+    Self {
+      protocol_version: ProtocolVersion::V1,
+      from: Node::new("test".into(), "127.0.0.1:8080".parse().unwrap()),
+    }
+  }
+}
+
+#[cfg(test)]
+unit_test_transformable_roundtrip!(Header <smol_str::SmolStr, std::net::SocketAddr> => header);

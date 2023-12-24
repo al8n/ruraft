@@ -352,78 +352,69 @@ where
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use crate::storage::LogKind;
+#[cfg(any(feature = "test", test))]
+impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
+  #[doc(hidden)]
+  pub fn __large() -> Self {
+    use crate::storage::LogKind;
+    use std::sync::Arc;
 
-  use super::*;
-  use smol_str::SmolStr;
-  use std::{net::SocketAddr, sync::Arc};
-
-  type TestRequest = AppendEntriesRequest<SmolStr, SocketAddr, Vec<u8>>;
-
-  #[tokio::test]
-  async fn test_encode_decode_small_request_round_trip() {
-    test_transformable_roundtrip!(TestRequest {
-      TestRequest {
-        header: Header {
-          protocol_version: ProtocolVersion::V1,
-          from: Node::new("node1".into(), "127.0.0.1:8080".parse().unwrap()),
+    Self {
+      header: Header::__large(),
+      term: 1,
+      prev_log_entry: 2,
+      prev_log_term: 2,
+      entries: vec![
+        Log::crate_new(3, 2, LogKind::Noop),
+        Log::crate_new(4, 2, LogKind::Barrier),
+        Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::crate_new(6, 2, LogKind::Noop),
+        Log::crate_new(7, 2, LogKind::Barrier),
+        Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::crate_new(9, 2, LogKind::Noop),
+        Log::crate_new(10, 2, LogKind::Barrier),
+        {
+          let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+          l.appended_at = Some(std::time::SystemTime::now());
+          l
         },
-        term: 1,
-        prev_log_entry: 2,
-        prev_log_term: 2,
-        entries: vec![
-          Log::crate_new(3, 2, LogKind::Noop),
-          Log::crate_new(4, 2, LogKind::Barrier),
-          Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-        ],
-        leader_commit: 3,
-      }
-    });
+        Log::crate_new(3, 2, LogKind::Noop),
+        Log::crate_new(4, 2, LogKind::Barrier),
+        Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::crate_new(6, 2, LogKind::Noop),
+        Log::crate_new(7, 2, LogKind::Barrier),
+        Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::crate_new(9, 2, LogKind::Noop),
+        Log::crate_new(10, 2, LogKind::Barrier),
+        {
+          let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+          l.appended_at = Some(std::time::SystemTime::now());
+          l
+        },
+      ],
+      leader_commit: 3,
+    }
   }
 
-  #[tokio::test]
-  async fn test_encode_decode_round_trip() {
-    test_transformable_roundtrip!(TestRequest {
-      TestRequest {
-        header: Header {
-          protocol_version: ProtocolVersion::V1,
-          from: Node::new("node1".into(), "127.0.0.1:8080".parse().unwrap()),
-        },
-        term: 1,
-        prev_log_entry: 2,
-        prev_log_term: 2,
-        entries: vec![
-          Log::crate_new(3, 2, LogKind::Noop),
-          Log::crate_new(4, 2, LogKind::Barrier),
-          Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-          Log::crate_new(6, 2, LogKind::Noop),
-          Log::crate_new(7, 2, LogKind::Barrier),
-          Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-          Log::crate_new(9, 2, LogKind::Noop),
-          Log::crate_new(10, 2, LogKind::Barrier),
-          {
-            let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
-            l.appended_at = Some(std::time::SystemTime::now());
-            l
-          },
-          Log::crate_new(3, 2, LogKind::Noop),
-          Log::crate_new(4, 2, LogKind::Barrier),
-          Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-          Log::crate_new(6, 2, LogKind::Noop),
-          Log::crate_new(7, 2, LogKind::Barrier),
-          Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-          Log::crate_new(9, 2, LogKind::Noop),
-          Log::crate_new(10, 2, LogKind::Barrier),
-          {
-            let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
-            l.appended_at = Some(std::time::SystemTime::now());
-            l
-          },
-        ],
-        leader_commit: 3,
-      }
-    });
+  #[doc(hidden)]
+  pub fn __small() -> Self {
+    use crate::storage::LogKind;
+    use std::sync::Arc;
+
+    Self {
+      header: Header::__small(),
+      term: 1,
+      prev_log_entry: 2,
+      prev_log_term: 2,
+      entries: vec![
+        Log::crate_new(3, 2, LogKind::Noop),
+        Log::crate_new(4, 2, LogKind::Barrier),
+        Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+      ],
+      leader_commit: 3,
+    }
   }
 }
+
+#[cfg(test)]
+unit_test_transformable_roundtrip!(AppendEntriesRequest <smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> => append_entries_request);

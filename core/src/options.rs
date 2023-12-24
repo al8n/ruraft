@@ -34,7 +34,7 @@ impl UnknownProtocolVersion {
 
 impl core::fmt::Display for UnknownProtocolVersion {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "unknown snapshot version {}", self.0)
+    write!(f, "unknown protocol version {}", self.0)
   }
 }
 

@@ -124,7 +124,7 @@ where
     let mut offset = 0;
     let encoded_len =
       u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
-    if encoded_len > src_len - MESSAGE_SIZE_LEN {
+    if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
 
@@ -186,3 +186,25 @@ where
     }
   }
 }
+
+#[cfg(any(feature = "test", test))]
+impl HeartbeatResponse<smol_str::SmolStr, std::net::SocketAddr> {
+  #[doc(hidden)]
+  pub fn __large() -> Self {
+    Self {
+      header: Header::__large(),
+      success: false,
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn __small() -> Self {
+    Self {
+      header: Header::__small(),
+      success: true,
+    }
+  }
+}
+
+#[cfg(test)]
+unit_test_transformable_roundtrip!(HeartbeatResponse <smol_str::SmolStr, std::net::SocketAddr> => heartbeat_response);

@@ -198,10 +198,9 @@ where
 
     let mut offset = 0;
     let encoded_len = u32::from_be_bytes(src[..MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
-    if encoded_len > src_len - MESSAGE_SIZE_LEN {
+    if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
-
     offset += MESSAGE_SIZE_LEN;
 
     let (header_len, header) = Header::<I, A>::decode(&src[offset..])?;
@@ -276,3 +275,31 @@ where
     }
   }
 }
+
+#[cfg(any(feature = "test", test))]
+impl VoteRequest<smol_str::SmolStr, std::net::SocketAddr> {
+  #[doc(hidden)]
+  pub fn __large() -> Self {
+    Self {
+      header: Header::__large(),
+      term: 1,
+      last_log_index: 1,
+      last_log_term: 2,
+      leadership_transfer: false,
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn __small() -> Self {
+    Self {
+      header: Header::__small(),
+      term: 1,
+      last_log_index: 1,
+      last_log_term: 2,
+      leadership_transfer: true,
+    }
+  }
+}
+
+#[cfg(test)]
+unit_test_transformable_roundtrip!(VoteRequest <smol_str::SmolStr, std::net::SocketAddr> => vote_request);

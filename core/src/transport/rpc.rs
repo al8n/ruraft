@@ -351,6 +351,28 @@ impl TransformError {
 const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
 const MAX_INLINED_BYTES: usize = 256;
 
+#[cfg(test)]
+macro_rules! unit_test_transformable_roundtrip {
+  ($variant_ty:ident $(<$($generic:ty),+>)? => $variant_snake_case:ident) => {
+    paste::paste! {
+      #[tokio::test]
+      async fn [< test_ $variant_snake_case _transformable_roundtrip >]() {
+        test_transformable_roundtrip!(
+          $variant_ty $(<$($generic),+>)? {
+            $variant_ty::__small()
+          }
+        );
+
+        test_transformable_roundtrip!(
+          $variant_ty $(<$($generic),+>)? {
+            $variant_ty::__large()
+          }
+        );
+      }
+    }
+  };
+}
+
 mod header;
 pub use header::*;
 mod requests;

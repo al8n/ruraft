@@ -107,3 +107,23 @@ where
       .map(|(size, h)| (size, Self::from_header(h)))
   }
 }
+
+#[cfg(any(feature = "test", test))]
+impl TimeoutNowResponse<smol_str::SmolStr, std::net::SocketAddr> {
+  #[doc(hidden)]
+  pub fn __large() -> Self {
+    Self {
+      header: Header::__large(),
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn __small() -> Self {
+    Self {
+      header: Header::__small(),
+    }
+  }
+}
+
+#[cfg(test)]
+unit_test_transformable_roundtrip!(TimeoutNowResponse <smol_str::SmolStr, std::net::SocketAddr> => heart_response);
