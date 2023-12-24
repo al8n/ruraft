@@ -25,6 +25,7 @@ async-broadcast = "0.6"
 atomic = "0.6"
 atomic-time = "0.1"
 bytes = { workspace = true, features = ["serde"] }
+byteorder = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-skiplist = "0.1"
 either = "1.9"

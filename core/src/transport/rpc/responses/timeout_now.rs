@@ -1,7 +1,3 @@
-use std::io;
-
-use futures::{AsyncRead, AsyncWrite};
-
 use super::*;
 
 /// The response to [`TimeoutNowRequest`].
@@ -58,22 +54,8 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     <Header<I, A> as Transformable>::encode(&self.header, dst)
-  }
-
-  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-    <Header<I, A> as Transformable>::encode_to_writer(&self.header, writer)
-  }
-
-  async fn encode_to_async_writer<W: AsyncWrite + Send + Unpin>(
-    &self,
-    writer: &mut W,
-  ) -> io::Result<()>
-  where
-    Self::Error: Send + Sync + 'static,
-  {
-    <Header<I, A> as Transformable>::encode_to_async_writer(&self.header, writer).await
   }
 
   fn encoded_len(&self) -> usize {
@@ -85,27 +67,7 @@ where
     Self: Sized,
   {
     <Header<I, A> as Transformable>::decode(src).map(|(size, h)| (size, Self::from_header(h)))
-  }
-
-  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized,
-  {
-    <Header<I, A> as Transformable>::decode_from_reader(reader)
-      .map(|(size, h)| (size, Self::from_header(h)))
-  }
-
-  async fn decode_from_async_reader<R: AsyncRead + Send + Unpin>(
-    reader: &mut R,
-  ) -> io::Result<(usize, Self)>
-  where
-    Self: Sized,
-    Self::Error: Send + Sync + 'static,
-  {
-    <Header<I, A> as Transformable>::decode_from_async_reader(reader)
-      .await
-      .map(|(size, h)| (size, Self::from_header(h)))
-  }
+  } 
 }
 
 #[cfg(any(feature = "test", test))]

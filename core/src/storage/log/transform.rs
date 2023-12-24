@@ -165,7 +165,7 @@ where
 {
   type Error = LogTransformError<I, A, D>;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
 
     if dst.len() < encoded_len {
@@ -201,40 +201,6 @@ where
         m.encode(&mut dst[LOG_HEADER_SIZE..LOG_HEADER_SIZE + membership_encoded_len])
           .map_err(LogTransformError::Membership)
       }
-    }
-  }
-
-  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-    let encoded_len = self.encoded_len();
-    if encoded_len <= INLINED {
-      let mut buf = [0; INLINED];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..encoded_len])
-    } else {
-      let mut buf = vec![0; encoded_len];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..])
-    }
-  }
-
-  async fn encode_to_async_writer<W: AsyncWrite + Send + Unpin>(
-    &self,
-    writer: &mut W,
-  ) -> io::Result<()>
-  where
-    Self::Error: Send + Sync + 'static,
-  {
-    use futures::AsyncWriteExt;
-
-    let encoded_len = self.encoded_len();
-    if encoded_len <= INLINED {
-      let mut buf = [0; INLINED];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..encoded_len]).await
-    } else {
-      let mut buf = vec![0; encoded_len];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..]).await
     }
   }
 

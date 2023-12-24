@@ -3,7 +3,7 @@ use core::mem;
 use nodecraft::Transformable;
 
 use crate::{
-  membership::MembershipTransformError, options::UnknownSnapshotVersion, utils::invalid_data,
+  membership::MembershipTransformError, options::UnknownSnapshotVersion,
 };
 
 use super::*;
@@ -180,54 +180,6 @@ where
       .map_err(Into::into)
   }
 
-  fn encode_to_writer<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-    let mut buf = [0; META_FIXED_FIELDS_SIZE];
-    let mut offset = 0;
-    buf[offset] = self.version as u8;
-    offset += 1;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.term.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.index.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.timestamp.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.size.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.membership_index.to_be_bytes());
-    writer.write_all(&buf)?;
-    self.membership.encode_to_writer(writer).map_err(Into::into)
-  }
-
-  async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
-    &self,
-    writer: &mut W,
-  ) -> std::io::Result<()>
-  where
-    Self::Error: Send + Sync + 'static,
-  {
-    use futures::AsyncWriteExt;
-
-    let mut buf = [0; META_FIXED_FIELDS_SIZE];
-    let mut offset = 0;
-    buf[offset] = self.version as u8;
-    offset += 1;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.term.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.index.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.timestamp.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.size.to_be_bytes());
-    offset += U64_SIZE;
-    buf[offset..offset + U64_SIZE].copy_from_slice(&self.membership_index.to_be_bytes());
-    writer.write_all(&buf).await?;
-    self
-      .membership
-      .encode_to_async_writer(writer)
-      .await
-      .map_err(Into::into)
-  }
-
   fn encoded_len(&self) -> usize {
     META_FIXED_FIELDS_SIZE + self.membership.encoded_len()
   }
@@ -258,79 +210,6 @@ where
     offset += readed;
     Ok((
       offset,
-      Self {
-        version,
-        term,
-        index,
-        timestamp,
-        size,
-        membership_index,
-        membership,
-      },
-    ))
-  }
-
-  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized,
-  {
-    let mut buf = [0; META_FIXED_FIELDS_SIZE];
-    reader.read_exact(&mut buf)?;
-    let mut offset = 0;
-    let version = SnapshotVersion::try_from(buf[offset])
-      .map_err(|e| invalid_data(Self::Error::UnknownVersion(e)))?;
-    offset += 1;
-    let term = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let index = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let timestamp = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let size = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let membership_index = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    let (readed, membership) = Membership::decode_from_reader(reader)?;
-    Ok((
-      META_FIXED_FIELDS_SIZE + readed,
-      Self {
-        version,
-        term,
-        index,
-        timestamp,
-        size,
-        membership_index,
-        membership,
-      },
-    ))
-  }
-
-  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
-    reader: &mut R,
-  ) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized,
-    Self::Error: Send + Sync + 'static,
-  {
-    use futures::AsyncReadExt;
-
-    let mut buf = [0; META_FIXED_FIELDS_SIZE];
-    reader.read_exact(&mut buf).await?;
-    let mut offset = 0;
-    let version = SnapshotVersion::try_from(buf[offset])
-      .map_err(|e| invalid_data(Self::Error::UnknownVersion(e)))?;
-    offset += 1;
-    let term = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let index = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let timestamp = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let size = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let membership_index = u64::from_be_bytes(buf[offset..offset + U64_SIZE].try_into().unwrap());
-    let (readed, membership) = Membership::decode_from_async_reader(reader).await?;
-    Ok((
-      META_FIXED_FIELDS_SIZE + readed,
       Self {
         version,
         term,

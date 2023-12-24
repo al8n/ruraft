@@ -3,7 +3,7 @@ use std::io;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
-use crate::utils::invalid_data;
+use crate::{utils::invalid_data, MESSAGE_SIZE_LEN, MAX_INLINED_BYTES};
 
 use super::*;
 
@@ -99,49 +99,46 @@ where
       return Err(TransformError::EncodeBufferTooSmall);
     }
     let mut offset = 0;
-    dst[offset..offset + MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
-
-    let header_len = self.header.encoded_len();
-    self.header.encode(&mut dst[offset..])?;
-    offset += header_len;
-
+    offset += self.header.encode(&mut dst[offset..])?;
     dst[offset] = self.success as u8;
     offset += 1;
 
-    encode_varint(self.term, &mut dst[offset..])?;
-    Ok(())
+    offset += encode_varint(self.term, &mut dst[offset..])?;
+    debug_assert_eq!(offset, encoded_len, "expected bytes wrote ({}) not match actual bytes wrote ({})", encoded_len, offset);
+    Ok(offset)
   }
 
-  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<usize> {
     let encoded_len = self.encoded_len();
     if encoded_len <= MAX_INLINED_BYTES {
       let mut buf = [0u8; MAX_INLINED_BYTES];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..encoded_len])
+      let len = self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf[..encoded_len]).map(|_| len)
     } else {
       let mut buf = vec![0u8; encoded_len];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf)
+      let len = self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf).map(|_| len)
     }
   }
 
   async fn encode_to_async_writer<W: AsyncWrite + Send + Unpin>(
     &self,
     writer: &mut W,
-  ) -> io::Result<()>
+  ) -> io::Result<usize>
   where
     Self::Error: Send + Sync + 'static,
   {
     let encoded_len = self.encoded_len();
     if encoded_len <= MAX_INLINED_BYTES {
       let mut buf = [0u8; MAX_INLINED_BYTES];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..encoded_len]).await
+      let len = self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf[..encoded_len]).await.map(|_| len)
     } else {
       let mut buf = vec![0u8; encoded_len];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf).await
+      let len = self.encode(&mut buf).map_err(invalid_data)?;
+      writer.write_all(&buf).await.map(|_| len)
     }
   }
 

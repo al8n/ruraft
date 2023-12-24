@@ -4,6 +4,7 @@ use std::{
   task::{Context, Poll},
 };
 
+use byteorder::{ByteOrder, NetworkEndian};
 use futures::{channel::oneshot, Stream};
 use nodecraft::{Address, CheapClone, Id, Transformable};
 use ruraft_utils::{DecodeVarintError, EncodeVarintError};
@@ -347,9 +348,6 @@ impl TransformError {
     Self::Decode(Box::new(err))
   }
 }
-
-const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
-const MAX_INLINED_BYTES: usize = 256;
 
 #[cfg(test)]
 macro_rules! unit_test_transformable_roundtrip {

@@ -7,12 +7,13 @@ use std::{
 };
 
 use arc_swap::ArcSwapAny;
+use byteorder::{ByteOrder, NetworkEndian};
 use indexmap::IndexMap;
 use nodecraft::{CheapClone, Transformable};
 
 use crate::{
   transport::{Address, Id},
-  utils::invalid_data,
+  MESSAGE_SIZE_LEN,
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -490,8 +491,6 @@ impl<I: Display, A: Display> Display for Membership<I, A> {
   }
 }
 
-const U32_SIZE: usize = mem::size_of::<u32>();
-
 impl<I, A> Transformable for Membership<I, A>
 where
   I: Id + Send + Sync + 'static,
@@ -501,7 +500,7 @@ where
 {
   type Error = MembershipTransformError<I, A>;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let dst_len = dst.len();
     let encoded_len = self.encoded_len();
     if encoded_len > u32::MAX as usize {
@@ -518,132 +517,30 @@ where
     }
 
     let mut cur = 0;
-    dst[cur..cur + U32_SIZE].copy_from_slice(&(encoded_len as u32).to_be_bytes());
-    cur += U32_SIZE;
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
+    cur += MESSAGE_SIZE_LEN;
 
     let total_servers = total_servers as u32;
-    dst[cur..cur + U32_SIZE].copy_from_slice(&total_servers.to_be_bytes());
-    cur += U32_SIZE;
+    NetworkEndian::write_u32(&mut dst[cur..cur + MESSAGE_SIZE_LEN], total_servers);
+    cur += MESSAGE_SIZE_LEN;
 
     for (id, (addr, suffrage)) in self.servers.iter() {
-      let id_len = id.encoded_len();
-      let addr_len = addr.encoded_len();
-      if id_len > u32::MAX as usize {
-        return Err(Self::Error::IdTooLarge(id.clone()));
-      }
-
-      if addr_len > u32::MAX as usize {
-        return Err(Self::Error::AddressTooLarge(addr.clone()));
-      }
-      id.encode(dst[cur..cur + id_len].as_mut())
-        .map_err(Self::Error::Id)?;
-      cur += id_len;
-      addr
-        .encode(dst[cur..cur + addr_len].as_mut())
-        .map_err(Self::Error::Address)?;
-      cur += addr_len;
+      cur += id.encode(&mut dst[cur..]).map_err(Self::Error::Id)?;
+      cur += addr.encode(&mut dst[cur..]).map_err(Self::Error::Address)?;
       dst[cur] = *suffrage as u8;
       cur += ServerSuffrage::SIZE;
     }
-    Ok(())
-  }
-
-  /// Encodes the value into the given writer.
-  ///
-  /// # Note
-  /// The implementation of this method is not optimized, which means
-  /// if your writer is expensive (e.g. [`TcpStream`](std::net::TcpStream), [`File`](std::fs::File)),
-  /// it is better to use a [`BufWriter`](std::io::BufWriter)
-  /// to wrap your orginal writer to cut down the number of I/O times.
-  fn encode_to_writer<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-    let encoded_len = self.encoded_len();
-    if encoded_len > u32::MAX as usize {
-      return Err(invalid_data(Self::Error::TooLarge(encoded_len)));
-    }
-
-    let total_servers = self.servers.len();
-    if total_servers > u32::MAX as usize {
-      return Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        Self::Error::TooLarge(total_servers),
-      ));
-    }
-
-    let mut inlined = [0; U32_SIZE * 2];
-    inlined[..U32_SIZE].copy_from_slice(&(encoded_len as u32).to_be_bytes());
-    inlined[U32_SIZE..].copy_from_slice(&(total_servers as u32).to_be_bytes());
-    writer.write_all(&inlined)?;
-
-    for (id, (addr, suffrage)) in self.servers.iter() {
-      let id_len = id.encoded_len();
-      let addr_len = addr.encoded_len();
-      if id_len > u32::MAX as usize {
-        return Err(invalid_data(Self::Error::IdTooLarge(id.clone())));
-      }
-
-      if addr_len > u32::MAX as usize {
-        return Err(invalid_data(Self::Error::AddressTooLarge(addr.clone())));
-      }
-      id.encode_to_writer(writer)?;
-      addr.encode_to_writer(writer)?;
-      writer.write_all(&[*suffrage as u8])?;
-    }
-    Ok(())
-  }
-
-  /// Encodes the value into the given async writer.
-  ///
-  /// # Note
-  /// The implementation of this method is not optimized, which means
-  /// if your writer is expensive (e.g. `TcpStream`, `File`),
-  /// it is better to use a [`BufWriter`](futures::io::BufWriter)
-  /// to wrap your orginal writer to cut down the number of I/O times.
-  async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
-    &self,
-    writer: &mut W,
-  ) -> std::io::Result<()>
-  where
-    Self::Error: Send + Sync + 'static,
-  {
-    use futures::io::AsyncWriteExt;
-    let encoded_len = self.encoded_len();
-    if encoded_len > u32::MAX as usize {
-      return Err(invalid_data(Self::Error::TooLarge(encoded_len)));
-    }
-
-    let total_servers = self.servers.len();
-    if total_servers > u32::MAX as usize {
-      return Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        Self::Error::TooLarge(total_servers),
-      ));
-    }
-
-    let mut inlined = [0; U32_SIZE * 2];
-    inlined[..U32_SIZE].copy_from_slice(&(encoded_len as u32).to_be_bytes());
-    inlined[U32_SIZE..].copy_from_slice(&(total_servers as u32).to_be_bytes());
-    writer.write_all(&inlined).await?;
-
-    for (id, (addr, suffrage)) in self.servers.iter() {
-      let id_len = id.encoded_len();
-      let addr_len = addr.encoded_len();
-      if id_len > u32::MAX as usize {
-        return Err(invalid_data(Self::Error::IdTooLarge(id.clone())));
-      }
-
-      if addr_len > u32::MAX as usize {
-        return Err(invalid_data(Self::Error::AddressTooLarge(addr.clone())));
-      }
-      id.encode_to_async_writer(writer).await?;
-      addr.encode_to_async_writer(writer).await?;
-      writer.write_all(&[*suffrage as u8]).await?;
-    }
-    Ok(())
+    debug_assert_eq!(
+      cur, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, cur
+    );
+    Ok(cur)
   }
 
   fn encoded_len(&self) -> usize {
-    U32_SIZE // length of encoded bytes
-    + U32_SIZE // total servers
+    MESSAGE_SIZE_LEN // length of encoded bytes
+    + MESSAGE_SIZE_LEN // total servers
     + self.servers.iter().map(|(id, (addr, _))| {
       let id_len = id.encoded_len();
       let addr_len = addr.encoded_len();
@@ -656,18 +553,18 @@ where
     Self: Sized,
   {
     let mut cur = 0;
-    if src.len() < U32_SIZE * 2 {
+    if src.len() < MESSAGE_SIZE_LEN * 2 {
       return Err(Self::Error::Corrupted);
     }
     let len =
       u32::from_be_bytes(src[cur..cur + mem::size_of::<u32>()].try_into().unwrap()) as usize;
-    cur += U32_SIZE;
+    cur += MESSAGE_SIZE_LEN;
     if src.len() < len {
       return Err(Self::Error::Corrupted);
     }
     let total_servers =
       u32::from_be_bytes(src[cur..cur + mem::size_of::<u32>()].try_into().unwrap()) as usize;
-    cur += U32_SIZE;
+    cur += MESSAGE_SIZE_LEN;
 
     let mut voters = 0;
     let mut servers = IndexMap::with_capacity(total_servers);
@@ -683,107 +580,15 @@ where
       }
       servers.insert(id, (addr, suffrage));
     }
+    debug_assert_eq!(
+      cur, len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      len, cur
+    );
     MembershipBuilder { voters, servers }
       .build()
       .map(|m| (len, m))
       .map_err(Into::into)
-  }
-
-  /// Decodes the value from the given reader.
-  ///
-  /// # Note
-  /// The implementation of this method is not optimized, which means
-  /// if your reader is expensive (e.g. [`TcpStream`](std::net::TcpStream), [`File`](std::fs::File)),
-  /// it is better to use a [`BufReader`](std::io::BufReader)
-  /// to wrap your orginal reader to cut down the number of I/O times.
-  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized,
-  {
-    let mut inlined = [0; U32_SIZE * 2];
-    reader.read_exact(&mut inlined)?;
-    let len = u32::from_be_bytes(inlined[..U32_SIZE].try_into().unwrap()) as usize;
-    let total_servers = u32::from_be_bytes(inlined[U32_SIZE..].try_into().unwrap()) as usize;
-    let remaining: usize = len - (U32_SIZE * 2);
-    if remaining == 0 {
-      return Err(invalid_data(MembershipError::<I, A>::Empty));
-    }
-    let mut src = vec![0; remaining];
-    let mut cur = 0;
-    reader.read_exact(&mut src)?;
-    let mut servers = IndexMap::with_capacity(total_servers);
-    let mut voters = 0;
-    while servers.len() < total_servers {
-      let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
-      cur += readed;
-      let (readed, addr) =
-        A::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
-      cur += readed;
-      let suffrage: ServerSuffrage = src[cur]
-        .try_into()
-        .map_err(|e| invalid_data(Self::Error::UnknownServerSuffrage(e)))?;
-      cur += ServerSuffrage::SIZE;
-      if suffrage.is_voter() {
-        voters += 1;
-      }
-
-      servers.insert(id, (addr, suffrage));
-    }
-    MembershipBuilder { voters, servers }
-      .build()
-      .map(|m| (len, m))
-      .map_err(invalid_data)
-  }
-
-  /// Decodes the value from the given async reader.
-  ///
-  /// # Note
-  /// The implementation of this method is not optimized, which means
-  /// if your reader is expensive (e.g. `TcpStream`, `File`),
-  /// it is better to use a [`BufReader`](futures::io::BufReader)
-  /// to wrap your orginal reader to cut down the number of I/O times.
-  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
-    reader: &mut R,
-  ) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized,
-    Self::Error: Send + Sync + 'static,
-  {
-    use futures::AsyncReadExt;
-    let mut inlined = [0; U32_SIZE * 2];
-    reader.read_exact(&mut inlined).await?;
-    let len = u32::from_be_bytes(inlined[..U32_SIZE].try_into().unwrap()) as usize;
-    let total_servers = u32::from_be_bytes(inlined[U32_SIZE..].try_into().unwrap()) as usize;
-    let remaining: usize = len - (U32_SIZE * 2);
-    if remaining == 0 {
-      return Err(invalid_data(MembershipError::<I, A>::Empty));
-    }
-    let mut src = vec![0; remaining];
-    let mut cur = 0;
-    reader.read_exact(&mut src).await?;
-    let mut servers = IndexMap::with_capacity(total_servers);
-    let mut voters = 0;
-    while servers.len() < total_servers {
-      let (readed, id) = I::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Id(e)))?;
-      cur += readed;
-      let (readed, addr) =
-        A::decode(&src[cur..]).map_err(|e| invalid_data(Self::Error::Address(e)))?;
-      cur += readed;
-      let suffrage: ServerSuffrage = src[cur]
-        .try_into()
-        .map_err(|e| invalid_data(Self::Error::UnknownServerSuffrage(e)))?;
-      cur += ServerSuffrage::SIZE;
-
-      if suffrage.is_voter() {
-        voters += 1;
-      }
-
-      servers.insert(id, (addr, suffrage));
-    }
-    MembershipBuilder { voters, servers }
-      .build()
-      .map(|m| (len, m))
-      .map_err(invalid_data)
   }
 }
 

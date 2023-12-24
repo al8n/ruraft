@@ -1,9 +1,6 @@
-use std::io;
-
-use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
-use crate::utils::invalid_data;
+use crate::MESSAGE_SIZE_LEN;
 
 use super::*;
 
@@ -146,38 +143,6 @@ where
     Ok(())
   }
 
-  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
-    let encoded_len = self.encoded_len();
-    if encoded_len <= MAX_INLINED_BYTES {
-      let mut buf = [0u8; MAX_INLINED_BYTES];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..encoded_len])
-    } else {
-      let mut buf = vec![0u8; encoded_len];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf)
-    }
-  }
-
-  async fn encode_to_async_writer<W: AsyncWrite + Send + Unpin>(
-    &self,
-    writer: &mut W,
-  ) -> io::Result<()>
-  where
-    Self::Error: Send + Sync + 'static,
-  {
-    let encoded_len = self.encoded_len();
-    if encoded_len <= MAX_INLINED_BYTES {
-      let mut buf = [0u8; MAX_INLINED_BYTES];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf[..encoded_len]).await
-    } else {
-      let mut buf = vec![0u8; encoded_len];
-      self.encode(&mut buf).map_err(invalid_data)?;
-      writer.write_all(&buf).await
-    }
-  }
-
   fn encoded_len(&self) -> usize {
     MESSAGE_SIZE_LEN
       + 1
@@ -226,53 +191,6 @@ where
         leadership_transfer,
       },
     ))
-  }
-
-  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized,
-  {
-    let mut len = [0u8; MESSAGE_SIZE_LEN];
-    reader.read_exact(&mut len)?;
-    let msg_len = u32::from_be_bytes(len) as usize;
-
-    if msg_len <= MAX_INLINED_BYTES {
-      let mut buf = [0u8; MAX_INLINED_BYTES];
-      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
-      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..msg_len])?;
-      Self::decode(&buf).map_err(invalid_data)
-    } else {
-      let mut buf = vec![0u8; msg_len];
-      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
-      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..])?;
-      Self::decode(&buf).map_err(invalid_data)
-    }
-  }
-
-  async fn decode_from_async_reader<R: AsyncRead + Send + Unpin>(
-    reader: &mut R,
-  ) -> io::Result<(usize, Self)>
-  where
-    Self: Sized,
-    Self::Error: Send + Sync + 'static,
-  {
-    let mut len = [0u8; MESSAGE_SIZE_LEN];
-    reader.read_exact(&mut len).await?;
-    let msg_len = u32::from_be_bytes(len) as usize;
-
-    if msg_len <= MAX_INLINED_BYTES {
-      let mut buf = [0u8; MAX_INLINED_BYTES];
-      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
-      reader
-        .read_exact(&mut buf[MESSAGE_SIZE_LEN..msg_len])
-        .await?;
-      Self::decode(&buf).map_err(invalid_data)
-    } else {
-      let mut buf = vec![0u8; msg_len];
-      buf[..MESSAGE_SIZE_LEN].copy_from_slice(&len);
-      reader.read_exact(&mut buf[MESSAGE_SIZE_LEN..]).await?;
-      Self::decode(&buf).map_err(invalid_data)
-    }
   }
 }
 
