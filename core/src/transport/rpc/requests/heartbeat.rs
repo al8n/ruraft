@@ -2,7 +2,7 @@ use std::io;
 
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use nodecraft::Transformable;
-use ruraft_utils::{decode_varint, encode_varint};
+use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
 use crate::utils::invalid_data;
 
@@ -94,6 +94,7 @@ where
     offset += MESSAGE_SIZE_LEN;
 
     let header_len = self.header.encoded_len();
+    self.header.encode(&mut dst[offset..offset + header_len])?;
     offset += header_len;
     encode_varint(self.term, &mut dst[offset..])
       .map(|_| ())
@@ -133,7 +134,7 @@ where
   }
 
   fn encoded_len(&self) -> usize {
-    MESSAGE_SIZE_LEN + core::mem::size_of::<u64>() + self.header.encoded_len()
+    MESSAGE_SIZE_LEN + self.header.encoded_len() + encoded_len_varint(self.term)
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
