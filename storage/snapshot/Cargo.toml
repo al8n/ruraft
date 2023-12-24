@@ -10,7 +10,7 @@ rust-version.workspace = true
 
 [features]
 test = ["tempfile", "scopeguard", "smol_str", "ruraft-core/test"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "smol_str?/serde", "ruraft-core/serde"]
 
 [dependencies]
 agnostic = { workspace = true }

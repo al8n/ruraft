@@ -380,7 +380,7 @@ mod tests {
         ],
         leader_commit: 3,
       }
-    }); 
+    });
   }
 
   #[tokio::test]
@@ -424,6 +424,6 @@ mod tests {
         ],
         leader_commit: 3,
       }
-    }); 
+    });
   }
 }

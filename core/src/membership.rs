@@ -887,6 +887,30 @@ impl<I, A> Membership<I, A> {
   }
 }
 
+#[cfg(any(test, feature = "test"))]
+impl Membership<smol_str::SmolStr, std::net::SocketAddr> {
+  /// Only used for testing purposes
+  #[doc(hidden)]
+  #[cfg(any(test, feature = "test"))]
+  pub fn __single_server() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
+    single_server()
+  }
+
+  /// Only used for testing purposes
+  #[doc(hidden)]
+  #[cfg(any(test, feature = "test"))]
+  pub fn __large_membership() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
+    large_membership()
+  }
+
+  /// Only used for testing purposes
+  #[doc(hidden)]
+  #[cfg(any(test, feature = "test"))]
+  pub fn __sample_membership() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
+    sample_membership()
+  }
+}
+
 impl<I: Eq + Hash, A> Membership<I, A> {
   /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
   pub fn is_voter<Q>(&self, id: &Q) -> bool
@@ -1081,7 +1105,7 @@ impl<I: Display, A: Display> core::fmt::Display for MembershipError<I, A> {
 
 impl<I: Display + Debug, A: Display + Debug> std::error::Error for MembershipError<I, A> {}
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test"))]
 pub(crate) fn sample_membership() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
   let mut membership = MembershipBuilder::new();
   membership
@@ -1111,23 +1135,64 @@ pub(crate) fn sample_membership() -> Membership<smol_str::SmolStr, std::net::Soc
   membership.build().unwrap()
 }
 
+#[cfg(any(test, feature = "test"))]
+pub(crate) fn large_membership() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
+  let mut membership = MembershipBuilder::new();
+  membership
+    .insert(Server {
+      id: "id0".into(),
+      addr: "127.0.0.1:8080".parse().unwrap(),
+      suffrage: ServerSuffrage::Nonvoter,
+    })
+    .unwrap();
+
+  membership
+    .insert(Server {
+      id: "id1".into(),
+      addr: "127.0.0.1:8081".parse().unwrap(),
+      suffrage: ServerSuffrage::Voter,
+    })
+    .unwrap();
+
+  membership
+    .insert(Server {
+      id: "id2".into(),
+      addr: "[::1]:8082".parse().unwrap(),
+      suffrage: ServerSuffrage::Nonvoter,
+    })
+    .unwrap();
+
+  for i in 3..1000 {
+    membership
+      .insert(Server {
+        id: format!("id{}", i).into(),
+        addr: format!("[::1]:1{i}").parse().unwrap(),
+        suffrage: ServerSuffrage::Voter,
+      })
+      .unwrap();
+  }
+
+  membership.build().unwrap()
+}
+
+#[cfg(any(test, feature = "test"))]
+pub(crate) fn single_server() -> Membership<smol_str::SmolStr, std::net::SocketAddr> {
+  let mut membership = MembershipBuilder::new();
+  membership
+    .insert(Server {
+      id: "id1".into(),
+      addr: "127.0.0.1:8081".parse().unwrap(),
+      suffrage: ServerSuffrage::Voter,
+    })
+    .unwrap();
+  membership.build().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use smol_str::SmolStr;
   use std::net::SocketAddr;
-
-  fn single_server() -> Membership<SmolStr, SocketAddr> {
-    let mut membership = MembershipBuilder::new();
-    membership
-      .insert(Server {
-        id: "id1".into(),
-        addr: "127.0.0.1:8081".parse().unwrap(),
-        suffrage: ServerSuffrage::Voter,
-      })
-      .unwrap();
-    membership.build().unwrap()
-  }
 
   #[test]
   fn test_membership_is_voter() {
@@ -1220,10 +1285,17 @@ mod tests {
 
   #[test]
   fn test_membership_next_and_validate() {
-    let membership = MembershipBuilder::<SmolStr, SocketAddr>::default();
+    let membership = single_server();
     let command =
       MembershipChangeCommand::add_nonvoter("id1".into(), "127.0.0.1:8080".parse().unwrap(), 0);
-    let err = membership.build().unwrap().next(1, command).unwrap_err();
+    let err = membership.next(1, command).unwrap_err();
     assert_eq!(err, MembershipError::EmptyVoter);
+  }
+
+  #[tokio::test]
+  async fn test_membership_transformable_roundtrip() {
+    test_transformable_roundtrip!(Membership < SmolStr, SocketAddr > { sample_membership() });
+    test_transformable_roundtrip!(Membership < SmolStr, SocketAddr > { single_server() });
+    test_transformable_roundtrip!(Membership < SmolStr, SocketAddr > { large_membership() });
   }
 }

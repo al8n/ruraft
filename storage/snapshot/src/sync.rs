@@ -10,6 +10,7 @@ use std::{
 };
 
 use agnostic::Runtime;
+use futures::AsyncWriteExt;
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
@@ -618,9 +619,7 @@ where
   }
 
   async fn close(mut self) -> io::Result<()> {
-    self.closed = true;
-
-    Ok(())
+    AsyncWriteExt::close(&mut self).await
   }
 }
 
@@ -656,8 +655,6 @@ where
     &self,
     writer: &mut W,
   ) -> std::io::Result<()> {
-    use futures::AsyncWriteExt;
-
     self.meta.encode_to_async_writer(writer).await?;
     writer.write_all(&self.crc.to_be_bytes()).await
   }
@@ -760,7 +757,7 @@ pub mod tests {
 
     // create a new sink
     let mut sink = snap
-      .create(SnapshotVersion::V1, 10, 3, Membership::__empty(), 2)
+      .create(SnapshotVersion::V1, 10, 3, Membership::__single_server(), 2)
       .await
       .unwrap();
 
@@ -840,7 +837,13 @@ pub mod tests {
 
     for i in 10..15 {
       let sink = storage
-        .create(SnapshotVersion::V1, i as u64, 3, Membership::__empty(), 0)
+        .create(
+          SnapshotVersion::V1,
+          i as u64,
+          3,
+          Membership::__large_membership(),
+          0,
+        )
         .await
         .unwrap();
       sink.close().await.unwrap();
@@ -918,13 +921,25 @@ pub mod tests {
         .unwrap();
 
     let sink = storage
-      .create(SnapshotVersion::V1, 130350, 5, Membership::__empty(), 0)
+      .create(
+        SnapshotVersion::V1,
+        130350,
+        5,
+        Membership::__sample_membership(),
+        0,
+      )
       .await
       .unwrap();
     sink.close().await.unwrap();
 
     let sink = storage
-      .create(SnapshotVersion::V1, 204917, 36, Membership::__empty(), 0)
+      .create(
+        SnapshotVersion::V1,
+        204917,
+        36,
+        Membership::__single_server(),
+        0,
+      )
       .await
       .unwrap();
     sink.close().await.unwrap();
