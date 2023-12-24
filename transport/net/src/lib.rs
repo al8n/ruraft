@@ -517,9 +517,11 @@ where
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::append_entries(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
-    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+    let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
-      .map_err(<Self::Error as TransportError>::wire)?;
+      .map_err(|e| {
+        <Self::Error as TransportError>::wire(<<Self::Wire as Wire>::Error as WireError>::io(e))
+      })?;
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::AppendEntries(resp) => {
@@ -546,9 +548,11 @@ where
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::vote(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
-    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+    let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
-      .map_err(<Self::Error as TransportError>::wire)?;
+      .map_err(|e| {
+        <Self::Error as TransportError>::wire(<<Self::Wire as Wire>::Error as WireError>::io(e))
+      })?;
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::Vote(resp) => {
@@ -582,9 +586,12 @@ where
     let mut w = BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, conn);
     futures::io::copy(source, &mut w).await?;
     let mut conn = BufReader::new(w.into_inner());
-    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+    let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
-      .map_err(<Self::Error as TransportError>::wire)?;
+      .map_err(|e| {
+        <Self::Error as TransportError>::wire(<<Self::Wire as Wire>::Error as WireError>::io(e))
+      })?;
+
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::InstallSnapshot(resp) => {
@@ -612,9 +619,11 @@ where
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::timeout_now(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
-    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+    let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
-      .map_err(<Self::Error as TransportError>::wire)?;
+      .map_err(|e| {
+        <Self::Error as TransportError>::wire(<<Self::Wire as Wire>::Error as WireError>::io(e))
+      })?;
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::TimeoutNow(resp) => {
@@ -642,9 +651,11 @@ where
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::heartbeat(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
-    let resp = <Self::Wire as Wire>::decode_response(&mut conn)
+    let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
-      .map_err(<Self::Error as TransportError>::wire)?;
+      .map_err(|e| {
+        <Self::Error as TransportError>::wire(<<Self::Wire as Wire>::Error as WireError>::io(e))
+      })?;
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::Heartbeat(resp) => {
@@ -722,9 +733,11 @@ where
       }
     };
 
-    let data = <<Self as Transport>::Wire as Wire>::encode_request(&req)
-      .map_err(<<Self as Transport>::Error as TransportError>::wire)?;
-    conn.write_all(data.as_ref()).await?;
+    <<Self as Transport>::Wire as Wire>::encode_request_to_writer(&req, &mut conn)
+      .await
+      .map_err(|e| {
+        <<Self as Transport>::Error as TransportError>::wire(<W as Wire>::Error::io(e))
+      })?;
     conn.flush().await?;
 
     Ok(conn)
@@ -877,9 +890,9 @@ where
     #[cfg(feature = "metrics")]
     let decode_start = Instant::now();
     // Get the request meta
-    let req = <W as Wire>::decode_request(&mut reader)
+    let req = <W as Wire>::decode_request_from_reader(&mut reader)
       .await
-      .map_err(Error::Wire)?;
+      .map_err(|e| Error::Wire(<<W as Wire>::Error as WireError>::io(e)))?;
     #[cfg(feature = "metrics")]
     {
       let decode_label = req.decode_label();
@@ -987,15 +1000,12 @@ where
       _ = shutdown_rx.recv().fuse() => return Err(Error::AlreadyShutdown),
     };
 
-    let resp = W::encode_response(&resp).map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to encode response");
-      Error::Wire(e)
-    })?;
-
-    writer.write_all(resp.as_ref()).await.map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
-      Error::IO(e)
-    })?;
+    W::encode_response_to_writer(&resp, &mut writer)
+      .await
+      .map_err(|e| {
+        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to send response");
+        Error::Wire(<W as Wire>::Error::io(e))
+      })?;
 
     writer.flush().await.map_err(|e| {
       tracing::error!(target = "ruraft.net.transport", err=%e, "failed to flush response");

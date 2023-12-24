@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use agnostic::Runtime;
-use futures::{AsyncRead, Stream};
+use futures::{AsyncRead, AsyncWrite, Stream};
 use nodecraft::CheapClone;
 
 mod rpc;
@@ -19,23 +19,8 @@ use crate::{options::ProtocolVersion, Data, HeartbeatHandler, Node};
 /// `WireError` provides a standard interface to wrap and differentiate between
 /// errors related to node identifiers (`Id`), node addresses (`Address`), and custom error messages.
 pub trait WireError: std::error::Error + Send + Sync + 'static {
-  // /// Represents the unique identifier for nodes.
-  // type Id: Id;
-
-  // /// Represents the network address associated with nodes.
-  // type Address: Address;
-
-  // /// Constructs an error instance from an `Id` transformation error.
-  // ///
-  // /// # Parameters
-  // /// * `err` - The error arising from the transformation of a node identifier.
-  // fn id(err: <Self::Id as Transformable>::Error) -> Self;
-
-  // /// Constructs an error instance from an `Address` transformation error.
-  // ///
-  // /// # Parameters
-  // /// * `err` - The error arising from the transformation of a node address.
-  // fn address(err: <Self::Address as Transformable>::Error) -> Self;
+  /// Creates a new error instance from an IO error.
+  fn io(err: std::io::Error) -> Self;
 
   /// Constructs a custom error instance from a provided message.
   ///
@@ -73,46 +58,42 @@ pub trait Wire: Send + Sync + 'static {
   type Bytes: AsRef<[u8]> + Send + Sync + 'static;
 
   /// Encodes a [`Request`] into its byte-array representation.
-  ///
-  /// # Parameters
-  /// * `req` - The `Request` instance to be encoded.
-  ///
-  /// # Returns
-  /// * `Result` - Returns the encoded byte array or an error if the encoding process fails.
   fn encode_request(
     req: &Request<Self::Id, Self::Address, Self::Data>,
   ) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes a [`Response`] into its byte-array representation.
-  ///
-  /// # Parameters
-  /// * `resp` - The `Response` instance to be encoded.
-  ///
-  /// # Returns
-  /// * `Result` - Returns the encoded byte array or an error if the encoding process fails.
   fn encode_response(resp: &Response<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
 
-  /// Decodes a [`Request`] instance from a provided asynchronous reader.
-  ///
-  /// # Parameters
-  /// * `reader` - The asynchronous reader source containing the byte data of the `Request`.
-  ///
-  /// # Returns
-  /// * `Result` - Returns the decoded `Request` or an error if the decoding process encounters issues.
+  /// Encodes a [`Request`] into its bytes representation to a writer.
+  fn encode_request_to_writer(
+    req: &Request<Self::Id, Self::Address, Self::Data>,
+    writer: impl AsyncWrite + Send + Unpin,
+  ) -> impl Future<Output = std::io::Result<()>> + Send;
+
+  /// Encodes a [`Response`] into its bytes representation to a writer.
+  fn encode_response_to_writer(
+    resp: &Response<Self::Id, Self::Address>,
+    writer: impl AsyncWrite + Send + Unpin,
+  ) -> impl Future<Output = std::io::Result<()>> + Send;
+
+  /// Decodes a [`Request`] instance from a provided source slice.
   fn decode_request(
+    src: &[u8],
+  ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error>;
+
+  /// Decodes a [`Response`] instance from a provided source slice.
+  fn decode_response(src: &[u8]) -> Result<Response<Self::Id, Self::Address>, Self::Error>;
+
+  /// Decodes a [`Request`] instance from a provided asynchronous reader.
+  fn decode_request_from_reader(
     reader: impl AsyncRead + Send + Unpin,
-  ) -> impl Future<Output = Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error>> + Send;
+  ) -> impl Future<Output = std::io::Result<Request<Self::Id, Self::Address, Self::Data>>> + Send;
 
   /// Decodes a [`Response`] instance from a provided asynchronous reader.
-  ///
-  /// # Parameters
-  /// * `reader` - The asynchronous reader source containing the byte data of the `Response`.
-  ///
-  /// # Returns
-  /// * `Result` - Returns the decoded `Response` or an error if the decoding process encounters issues.
-  fn decode_response(
+  fn decode_response_from_reader(
     reader: impl AsyncRead + Send + Unpin,
-  ) -> impl Future<Output = Result<Response<Self::Id, Self::Address>, Self::Error>> + Send;
+  ) -> impl Future<Output = std::io::Result<Response<Self::Id, Self::Address>>> + Send;
 }
 
 /// Provides utilities to pipeline [`AppendEntriesRequest`]s, aiming to

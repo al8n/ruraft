@@ -331,7 +331,7 @@ pub struct PipelineAppendEntriesResponse<I, A> {
   num_entries: usize,
 
   /// The time that the original request was started
-  #[cfg_attr(feature = "serde", serde(with = "serde_millis"))]
+  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_system_time"))]
   #[viewit(
     getter(
       const,

@@ -915,6 +915,10 @@ pub(super) mod tests {
     {
       unreachable!()
     }
+
+    fn io(_err: std::io::Error) -> Self {
+      unreachable!()
+    }
   }
 
   impl core::fmt::Display for NoopWireError {
@@ -964,16 +968,40 @@ pub(super) mod tests {
       unreachable!()
     }
 
-    async fn decode_request(
-      _reader: impl futures::AsyncRead + Unpin,
-    ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
+    async fn encode_request_to_writer(
+      _req: &Request<Self::Id, Self::Address, Self::Data>,
+      _writer: impl futures::prelude::AsyncWrite + Send + Unpin,
+    ) -> std::io::Result<()> {
       unreachable!()
     }
 
-    async fn decode_response(
-      _reader: impl futures::AsyncRead + Unpin,
-    ) -> Result<Response<Self::Id, Self::Address>, Self::Error> {
+    async fn encode_response_to_writer(
+      _resp: &Response<Self::Id, Self::Address>,
+      _writer: impl futures::prelude::AsyncWrite + Send + Unpin,
+    ) -> std::io::Result<()> {
       unreachable!()
+    }
+
+    fn decode_request(
+      _src: &[u8],
+    ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
+      todo!()
+    }
+
+    fn decode_response(_src: &[u8]) -> Result<Response<Self::Id, Self::Address>, Self::Error> {
+      todo!()
+    }
+
+    async fn decode_request_from_reader(
+      _reader: impl futures::prelude::AsyncRead + Send + Unpin,
+    ) -> std::io::Result<Request<Self::Id, Self::Address, Self::Data>> {
+      todo!()
+    }
+
+    async fn decode_response_from_reader(
+      _reader: impl futures::prelude::AsyncRead + Send + Unpin,
+    ) -> std::io::Result<Response<Self::Id, Self::Address>> {
+      todo!()
     }
   }
 

@@ -100,9 +100,9 @@ where
           // if we fail to receive a tx, it means
           // that the pipeline has been closed.
           if let Ok(ev) = ev {
-            let resp = W::decode_response(&mut conn)
+            let resp = W::decode_response_from_reader(&mut conn)
               .await
-              .map_err(Error::wire)
+              .map_err(|e| Error::wire(W::Error::io(e)))
               .and_then(|resp|
               {
                 match resp {
@@ -179,12 +179,14 @@ where
 
     // Send the RPC
     {
-      let data = W::encode_request(&Request::AppendEntries(req)).map_err(Error::wire)?;
+      W::encode_request_to_writer(&Request::AppendEntries(req), &mut self.conn)
+        .await
+        .map_err(|e| Error::wire(W::Error::io(e)))?;
       self
         .conn
-        .write_all(data.as_ref())
+        .flush()
         .await
-        .map_err(Error::io)?;
+        .map_err(|e| Error::wire(W::Error::io(e)))?;
     }
 
     // Hand-off for decoding, this can also cause back-pressure

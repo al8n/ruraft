@@ -18,6 +18,8 @@ pub use heartbeat::*;
 enum_wrapper!(
   /// Request to be sent to the Raft node.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+  #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", bound = "I: Id + serde::Serialize + for<'a> serde::Deserialize<'a>, A: Address + serde::Serialize + for<'a> serde::Deserialize<'a>, D: serde::Serialize + for<'a> serde::Deserialize<'a>"))]
   #[non_exhaustive]
   pub enum Request<I, A, D> {
     AppendEntries(AppendEntriesRequest<I, A, D>) = 0 => append_entries,
@@ -28,78 +30,17 @@ enum_wrapper!(
   }
 );
 
-// Copy the expanded code from the macro here, because handle serde bound is anonying to deal with in
-// a macro.
-#[cfg(feature = "serde")]
-const _: () = {
-  impl<I, A, D> serde::Serialize for Request<I, A, D>
-  where
-    I: serde::Serialize + Id + for<'a> serde::Deserialize<'a>,
-    A: serde::Serialize + Address + for<'a> serde::Deserialize<'a>,
-    D: serde::Serialize + for<'a> serde::Deserialize<'a>,
-  {
-    fn serialize<__S>(&self, __serializer: __S) -> Result<__S::Ok, __S::Error>
-    where
-      __S: serde::Serializer,
-    {
-      match *self {
-        Request::AppendEntries(ref __field0) => serde::Serialize::serialize(__field0, __serializer),
-        Request::Vote(ref __field0) => serde::Serialize::serialize(__field0, __serializer),
-        Request::InstallSnapshot(ref __field0) => {
-          serde::Serialize::serialize(__field0, __serializer)
-        }
-        Request::TimeoutNow(ref __field0) => serde::Serialize::serialize(__field0, __serializer),
-        Request::Heartbeat(ref __field0) => serde::Serialize::serialize(__field0, __serializer),
-      }
+impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Request<I, A, D> {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Self::AppendEntries(a), Self::AppendEntries(b)) => a == b,
+      (Self::Vote(a), Self::Vote(b)) => a == b,
+      (Self::InstallSnapshot(a), Self::InstallSnapshot(b)) => a == b,
+      (Self::TimeoutNow(a), Self::TimeoutNow(b)) => a == b,
+      (Self::Heartbeat(a), Self::Heartbeat(b)) => a == b,
+      _ => false,
     }
   }
-  impl<'de, I, A, D> serde::Deserialize<'de> for Request<I, A, D>
-  where
-    I: serde::Serialize + Id + for<'a> serde::Deserialize<'a>,
-    A: serde::Serialize + Address + for<'a> serde::Deserialize<'a>,
-    D: serde::Serialize + for<'a> serde::Deserialize<'a>,
-  {
-    fn deserialize<__D>(__deserializer: __D) -> Result<Self, __D::Error>
-    where
-      __D: serde::Deserializer<'de>,
-    {
-      let __content =
-        <serde::__private::de::Content as serde::Deserialize>::deserialize(__deserializer)?;
-      let __deserializer =
-        serde::__private::de::ContentRefDeserializer::<__D::Error>::new(&__content);
-      if let Ok(__ok) = Result::map(
-        <AppendEntriesRequest<I, A, D> as serde::Deserialize>::deserialize(__deserializer),
-        Request::AppendEntries,
-      ) {
-        return Ok(__ok);
-      }
-      if let Ok(__ok) = Result::map(
-        <VoteRequest<I, A> as serde::Deserialize>::deserialize(__deserializer),
-        Request::Vote,
-      ) {
-        return Ok(__ok);
-      }
-      if let Ok(__ok) = Result::map(
-        <InstallSnapshotRequest<I, A> as serde::Deserialize>::deserialize(__deserializer),
-        Request::InstallSnapshot,
-      ) {
-        return Ok(__ok);
-      }
-      if let Ok(__ok) = Result::map(
-        <TimeoutNowRequest<I, A> as serde::Deserialize>::deserialize(__deserializer),
-        Request::TimeoutNow,
-      ) {
-        return Ok(__ok);
-      }
-      if let Ok(__ok) = Result::map(
-        <HeartbeatRequest<I, A> as serde::Deserialize>::deserialize(__deserializer),
-        Request::Heartbeat,
-      ) {
-        return Ok(__ok);
-      }
-      Err(serde::de::Error::custom(
-        "data did not match any variant of untagged enum Request",
-      ))
-    }
-  }
-};
+}
+
+impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for Request<I, A, D> {}

@@ -116,7 +116,7 @@ impl<I, A> Server<I, A> {
 /// membership.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub(crate) enum MembershipChangeCommand<I, A> {
   /// Adds a server with [`ServerSuffrage`] of Voter.
   AddVoter {
