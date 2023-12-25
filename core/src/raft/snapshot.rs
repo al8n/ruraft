@@ -43,7 +43,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   R: Runtime,
@@ -100,7 +100,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   R: Runtime,

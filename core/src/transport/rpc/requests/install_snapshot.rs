@@ -185,10 +185,8 @@ impl<I: CheapClone, A: CheapClone> CheapClone for InstallSnapshotRequest<I, A> {
 // -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 impl<I, A> Transformable for InstallSnapshotRequest<I, A>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   type Error = TransformError;
 

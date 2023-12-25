@@ -55,9 +55,9 @@ pub struct BincodeWire<I, A, D>(PhantomData<(I, A, D)>);
 
 impl<I, A, D> Wire for BincodeWire<I, A, D>
 where
-  I: Id + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync + 'static,
-  A: Address + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync + 'static,
-  D: Data + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync + 'static,
+  I: Id + serde::Serialize + for<'a> serde::Deserialize<'a>,
+  A: Address + serde::Serialize + for<'a> serde::Deserialize<'a>,
+  D: Data + serde::Serialize + for<'a> serde::Deserialize<'a>,
 {
   type Error = Error;
 

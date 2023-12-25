@@ -1,10 +1,11 @@
 use std::{borrow::Cow, future::Future, sync::Arc};
 
 use futures::AsyncRead;
-use nodecraft::{Address, CheapClone, Id};
+use nodecraft::{Address, Id};
 
 use crate::{membership::Membership, storage::SnapshotSink, Data};
 
+/// Represents a snapshot of the finate state machine.
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
   type Error: std::error::Error;
@@ -44,22 +45,93 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
   fn index(&self) -> u64;
 }
 
+/// Logs can be handled by the finate state machine.
+#[derive(Debug)]
 pub enum FinateStateMachineLogKind<I, A, D> {
+  /// A normal log entry.
   Log(Arc<D>),
+  /// A membership change log entry.
   Membership(Membership<I, A>),
 }
 
+impl<I, A, D> Clone for FinateStateMachineLogKind<I, A, D> {
+  fn clone(&self) -> Self {
+    match self {
+      Self::Log(data) => Self::Log(data.clone()),
+      Self::Membership(membership) => Self::Membership(membership.clone()),
+    }
+  }
+}
+
+impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq
+  for FinateStateMachineLogKind<I, A, D>
+{
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Self::Log(data), Self::Log(other_data)) => data == other_data,
+      (Self::Membership(membership), Self::Membership(other_membership)) => {
+        membership == other_membership
+      }
+      _ => false,
+    }
+  }
+}
+
+impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for FinateStateMachineLogKind<I, A, D> {}
+
+/// A log entry that can be applied to the finate state machine.
+#[viewit::viewit(setters(prefix = "with"))]
 pub struct FinateStateMachineLog<I, A, D> {
-  pub index: u64,
-  pub term: u64,
-  pub kind: FinateStateMachineLogKind<I, A, D>,
+  /// The index of the log entry.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the index of the log entry."),),
+    setter(attrs(doc = "Sets the index of the log entry."),)
+  )]
+  index: u64,
+  /// The term of the log entry.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the term of the log entry."),),
+    setter(attrs(doc = "Sets the term of the log entry."),)
+  )]
+  term: u64,
+  /// The kind of the log entry.
+  #[viewit(
+    getter(
+      const,
+      style = "ref",
+      attrs(doc = "Returns the kind of the log entry."),
+    ),
+    setter(attrs(doc = "Sets the kind of the log entry."),)
+  )]
+  kind: FinateStateMachineLogKind<I, A, D>,
 }
 
 impl<I, A, D> FinateStateMachineLog<I, A, D> {
+  /// Creates a new log entry.
   pub fn new(term: u64, index: u64, kind: FinateStateMachineLogKind<I, A, D>) -> Self {
     Self { index, term, kind }
   }
 }
+
+impl<I, A, D> Clone for FinateStateMachineLog<I, A, D> {
+  fn clone(&self) -> Self {
+    Self {
+      index: self.index,
+      term: self.term,
+      kind: self.kind.clone(),
+    }
+  }
+}
+
+impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq
+  for FinateStateMachineLog<I, A, D>
+{
+  fn eq(&self, other: &Self) -> bool {
+    self.index == other.index && self.term == other.term && self.kind == other.kind
+  }
+}
+
+impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for FinateStateMachineLog<I, A, D> {}
 
 /// Implemented by clients to make use of the replicated log.
 pub trait FinateStateMachine: Send + Sync + 'static {
@@ -76,10 +148,10 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   type Response: FinateStateMachineResponse;
 
   /// The id type used to identify nodes.
-  type Id: Id + CheapClone + Send + Sync + 'static;
+  type Id: Id;
 
   /// The address type of node.
-  type Address: Address + CheapClone + Send + Sync + 'static;
+  type Address: Address;
 
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
   type Data: Data;

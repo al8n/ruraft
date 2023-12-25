@@ -61,10 +61,8 @@ impl<I, A, R> MemoryStableStorage<I, A, R> {
 
 impl<I: Id, A: Address, R: Runtime> StableStorage for MemoryStableStorage<I, A, R>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   /// The error type returned by the log storage.
   type Error = Infallible;

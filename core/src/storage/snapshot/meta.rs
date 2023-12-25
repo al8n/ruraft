@@ -8,16 +8,42 @@ use crate::{
 
 use super::*;
 
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  getters(vis_all = "pub"),
-  setters(vis_all = "pub", style = "ref")
-)]
+/// The id used to identify a snapshot.
+#[viewit::viewit(setters(prefix = "with"))]
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SnapshotId {
+  /// The index of the snapshot.
+  #[viewit(
+    getter(
+      const,
+      style = "move",
+      attrs(doc = "Returns the index when the snapshot was taken.")
+    ),
+    setter(attrs(doc = "Sets the index when the snapshot was taken."))
+  )]
   index: u64,
+
+  /// The term of the snapshot.
+  #[viewit(
+    getter(
+      const,
+      style = "move",
+      attrs(doc = "Returns the term when the snapshot was taken.")
+    ),
+    setter(attrs(doc = "Sets the term when the snapshot was taken."))
+  )]
   term: u64,
+
+  /// The timestamp of the snapshot.
+  #[viewit(
+    getter(
+      const,
+      style = "move",
+      attrs(doc = "Returns the timestamp when the snapshot was taken.")
+    ),
+    setter(attrs(doc = "Sets the timestamp when the snapshot was taken."))
+  )]
   timestamp: u64,
 }
 
@@ -28,6 +54,7 @@ impl core::fmt::Display for SnapshotId {
 }
 
 impl SnapshotId {
+  /// Create a snapshot id with the given index and term.
   #[inline]
   pub fn new(index: u64, term: u64) -> Self {
     let now = std::time::SystemTime::now()
@@ -60,19 +87,56 @@ pub struct SnapshotMeta<I, A> {
   /// The version number of the snapshot metadata. This does not cover
   /// the application's data in the snapshot, that should be versioned
   /// separately.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the version of the snapshot meta.")),
+    setter(attrs(doc = "Sets the version of the snapshot meta."))
+  )]
   version: SnapshotVersion,
   /// The term when the snapshot was taken.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the term when the snapshot was taken.")),
+    setter(attrs(doc = "Sets the term when the snapshot was taken."))
+  )]
   term: u64,
   /// The index when the snapshot was taken.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the index when the snapshot was taken.")),
+    setter(attrs(doc = "Sets the index when the snapshot was taken."))
+  )]
   index: u64,
   /// timestamp is opaque to the store, and is used for opening.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Returns the timestamp when the snapshot was taken.")
+    ),
+    setter(attrs(doc = "Sets the index when the snapshot was taken."))
+  )]
   timestamp: u64,
   /// The size of the snapshot, in bytes.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the size of the snapshot, in bytes.")),
+    setter(attrs(doc = "Sets the size of the snapshot, in bytes."))
+  )]
   size: u64,
-  /// The index of the membership that was taken
+  /// The index of the membership when the snapshot was taken
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Returns the index of the membership when the snapshot was taken.")
+    ),
+    setter(attrs(doc = "Sets the index of the membership when the snapshot was taken."))
+  )]
   membership_index: u64,
   /// Membership at the time of the snapshot.
-  #[viewit(getter(style = "ref", const))]
+  #[viewit(
+    getter(
+      style = "ref",
+      const,
+      attrs(doc = "Returns the membership at the time when the snapshot was taken.")
+    ),
+    setter(attrs(doc = "Sets the membership at the time when the snapshot was taken."))
+  )]
   #[cfg_attr(
     feature = "serde",
     serde(
@@ -126,32 +190,38 @@ impl<I, A> SnapshotMeta<I, A> {
   }
 }
 
+/// Errors that can occur when transforming a [`SnapshotMeta`](crate::storage::SnapshotMeta) to its bytes representation.
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotMetaTransformableError<I: Transformable, A: Transformable> {
+  /// Encode buffer too small.
   #[error(
     "encode buffer too small, use `Transformable::encoded_len()` to pre-allocate the required size"
   )]
   EncodeBufferTooSmall,
+  /// Membership transform error.
   #[error("{0}")]
   Membership(#[from] MembershipTransformError<I, A>),
+  /// Encode varint error.
   #[error("{0}")]
   EncodeVarint(#[from] ruraft_utils::EncodeVarintError),
+  /// Decode varint error.
   #[error("{0}")]
   DecodeVarint(#[from] ruraft_utils::DecodeVarintError),
+  /// Corrupted log bytes data, which cannot be decoded back anymore because of losing information.
   #[error("corrupted")]
   Corrupted,
+  /// Unknown snapshot version.
   #[error("{0}")]
   UnknownVersion(UnknownSnapshotVersion),
+  /// Custom error.
   #[error("{0}")]
   Custom(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl<I, A> Transformable for SnapshotMeta<I, A>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  <A as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   type Error = SnapshotMetaTransformableError<I, A>;
 

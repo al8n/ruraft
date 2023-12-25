@@ -72,8 +72,8 @@ impl<I, A, D, R> MemoryLogStorage<I, A, D, R> {
 impl<I, A, D, R> LogStorage for MemoryLogStorage<I, A, D, R>
 where
   D: Data,
-  I: Id + Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   /// The error type returned by the log storage.

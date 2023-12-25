@@ -176,12 +176,9 @@ macro_rules! decode_from_reader {
 
 impl<I, A, D> Wire for LpeWire<I, A, D>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
   D: Data,
-  D::Error: Send + Sync + 'static,
 {
   type Error = Error;
 

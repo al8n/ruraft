@@ -50,7 +50,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: super::Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
@@ -175,10 +175,7 @@ pub(super) struct Replication<F: FinateStateMachine, S: Storage, T: Transport> {
   last_contact: Contact,
 }
 
-impl<F: FinateStateMachine, S: Storage, T: Transport> Replication<F, S, T>
-where
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-{
+impl<F: FinateStateMachine, S: Storage, T: Transport> Replication<F, S, T> {
   /// Used to notify all the waiting verify futures
   /// if the follower believes we are still the leader.
   pub(super) async fn notify_all(notify: &Mutex<HashMap<u64, Verify<F, S, T>>>, leader: bool) {
@@ -276,7 +273,7 @@ pub(super) struct ReplicationRunner<F: FinateStateMachine, S: Storage, T: Transp
 impl<F: FinateStateMachine, S, T: Transport> ReplicationRunner<F, S, T>
 where
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   <<T::Runtime as Runtime>::Sleep as Future>::Output: Send,
 {
   fn spawn(
@@ -863,7 +860,7 @@ where
   F: FinateStateMachine,
   T: Transport,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   <<T::Runtime as Runtime>::Sleep as Future>::Output: Send,
   C: Stream<
       Item = Result<
@@ -955,10 +952,7 @@ struct HeartbeatRunner<F: FinateStateMachine, S: Storage, T: Transport> {
   stop_heartbeat_rx: async_channel::Receiver<()>,
 }
 
-impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T>
-where
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
-{
+impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
   async fn run(self) {
     let Self {
       current_term,

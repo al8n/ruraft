@@ -21,9 +21,7 @@ impl<A, R> MemoryAddressResolver<A, R> {
   }
 }
 
-impl<A: Address + Send + Sync + 'static, R: Runtime> AddressResolver
-  for MemoryAddressResolver<A, R>
-{
+impl<A: Address, R: Runtime> AddressResolver for MemoryAddressResolver<A, R> {
   type Address = A;
   type ResolvedAddress = A;
 

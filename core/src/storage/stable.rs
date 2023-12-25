@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use nodecraft::{Address, CheapClone, Id};
+use nodecraft::{Address, Id};
 
 use crate::Node;
 
@@ -13,9 +13,9 @@ pub trait StableStorage: Send + Sync + 'static {
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
   /// The id type used to identify node.
-  type Id: Id + CheapClone + Send + Sync + 'static;
+  type Id: Id;
   /// The address type of node.
-  type Address: Address + CheapClone + Send + Sync + 'static;
+  type Address: Address;
 
   /// Returns the current term. `Some(0)` or `None` means
   /// no term has been persisted yet.

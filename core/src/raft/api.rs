@@ -38,7 +38,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
@@ -638,7 +638,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
@@ -958,107 +958,50 @@ where
 /// The information about the current stats of the Raft node.
 #[viewit::viewit(vis_all = "", getters(vis_all = "pub"), setters(skip))]
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(bound = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize")
+)]
 pub struct RaftStats<I, A> {
+  #[viewit(getter(const, attrs(doc = "Returns the role of the raft.")))]
   role: Role,
+  #[viewit(getter(const, attrs(doc = "Returns the term of the raft.")))]
   term: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the last log index of the raft.")))]
   last_log_index: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the last log term of the raft.")))]
   last_log_term: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the committed index of the raft.")))]
   commit_index: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the applied index of the raft.")))]
   applied_index: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the number of pending fsm requests.")))]
   fsm_pending: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the last snapshot index of the raft.")))]
   last_snapshot_index: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the last snapshot term of the raft.")))]
   last_snapshot_term: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the protocol version of the raft.")))]
   protocol_version: ProtocolVersion,
+  #[viewit(getter(const, attrs(doc = "Returns the version of the snapshot.")))]
   snapshot_version: SnapshotVersion,
+  #[viewit(getter(const, attrs(doc = "Returns the last contact time of the raft.")))]
+  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant"))]
   last_contact: Option<Instant>,
-  #[viewit(getter(style = "ref", const,))]
+  #[viewit(getter(
+    style = "ref",
+    const,
+    attrs(doc = "Returns the latest membership in use by Raft.")
+  ))]
   latest_membership: Membership<I, A>,
+  #[viewit(getter(
+    const,
+    attrs(doc = "Returns the index of the latest membership in use by Raft.")
+  ))]
   latest_membership_index: u64,
+  #[viewit(getter(const, attrs(doc = "Returns the number of peers in the cluster.")))]
   num_peers: u64,
-}
-
-#[cfg(feature = "serde")]
-impl<I, A> serde::Serialize for RaftStats<I, A>
-where
-  I: Eq + core::hash::Hash + serde::Serialize,
-  A: serde::Serialize,
-{
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: serde::Serializer,
-  {
-    struct InstantSerdeHelper {
-      role: Role,
-      val: Option<Instant>,
-    }
-
-    fn serde_instant<S: serde::ser::Serializer>(
-      val: &InstantSerdeHelper,
-      serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-      if val.role == Role::Leader {
-        return humantime_serde::option::serialize(&Some(Duration::ZERO), serializer);
-      }
-
-      match val.val {
-        Some(val) => {
-          let val = val.elapsed();
-          humantime_serde::option::serialize(&Some(val), serializer)
-        }
-        None => serializer.serialize_none(),
-      }
-    }
-
-    #[derive(serde::Serialize)]
-    struct RaftStatsHelper<I, A> {
-      role: Role,
-      term: u64,
-      last_log_index: u64,
-      last_log_term: u64,
-      commit_index: u64,
-      applied_index: u64,
-      fsm_pending: u64,
-      last_snapshot_index: u64,
-      last_snapshot_term: u64,
-      protocol_version: ProtocolVersion,
-      snapshot_version: SnapshotVersion,
-      #[serde(serialize_with = "serde_instant")]
-      last_contact: InstantSerdeHelper,
-      #[serde(bound = "I: Eq + ::core::hash::Hash + serde::Serialize, A: serde::Serialize")]
-      latest_membership: Membership<I, A>,
-      latest_membership_index: u64,
-      num_peers: u64,
-    }
-
-    impl<I, A> From<&RaftStats<I, A>> for RaftStatsHelper<I, A> {
-      fn from(value: &RaftStats<I, A>) -> Self {
-        let instant = InstantSerdeHelper {
-          role: value.role,
-          val: value.last_contact,
-        };
-
-        Self {
-          role: value.role,
-          term: value.term,
-          last_log_index: value.last_log_index,
-          last_log_term: value.last_log_term,
-          commit_index: value.commit_index,
-          applied_index: value.applied_index,
-          fsm_pending: value.fsm_pending,
-          last_snapshot_index: value.last_snapshot_index,
-          last_snapshot_term: value.last_snapshot_term,
-          protocol_version: value.protocol_version,
-          snapshot_version: value.snapshot_version,
-          last_contact: instant,
-          latest_membership: value.latest_membership.clone(),
-          latest_membership_index: value.latest_membership_index,
-          num_peers: value.num_peers,
-        }
-      }
-    }
-
-    RaftStatsHelper::from(self).serialize(serializer)
-  }
 }
 
 /// The latest membership in use by Raft, the membership may not yet be committed.
@@ -1171,6 +1114,7 @@ macro_rules! resp {
     $name:ident<$ty: ty>
   ), + $(,)?) => {
     $(
+      $(#[$attr])*
       #[pin_project::pin_project]
       #[repr(transparent)]
       pub struct $name<F: FinateStateMachine, S: Storage, T: Transport>(

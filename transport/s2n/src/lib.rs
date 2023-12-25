@@ -1,3 +1,9 @@
+//! QUIC transport implementation (based on amazon's [`s2n`](https://crates.io/crates/s2n-quic)) for [`ruraft`](https://github.com/al8n/ruraft).
+#![deny(warnings, missing_docs)]
+#![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
+
 use std::{
   io,
   net::SocketAddr,
@@ -23,7 +29,7 @@ pub use s2n_quic::{Client, Server};
 /// [`s2n-quic`][s2n_quic] transport, which only support `tokio` async runtime.
 pub type S2nTransport<I, A, D, W> = NetTransport<I, A, D, S2n<<A as AddressResolver>::Runtime>, W>;
 
-/// [`s2n-quic`] stream layer implementation, which only support `tokio` async runtime.
+/// s2n stream layer implementation
 pub struct S2n<R> {
   server: Option<Server>,
   client: Client,
@@ -32,6 +38,7 @@ pub struct S2n<R> {
 }
 
 impl<R> S2n<R> {
+  /// Create a new `s2n`] stream layer.
   pub fn new(server_name: impl Into<String>, server: Server, client: Client) -> io::Result<Self> {
     Ok(Self {
       server_name: server_name.into(),
@@ -82,6 +89,7 @@ impl<R: Runtime> StreamLayer for S2n<R> {
   }
 }
 
+/// [`s2n-quic`] listener implementation, which only support `tokio` async runtime.
 pub struct S2nListener<R> {
   server: Server,
   _marker: std::marker::PhantomData<R>,
@@ -134,6 +142,7 @@ impl<R: Runtime> Listener for S2nListener<R> {
   }
 }
 
+/// S2n stream layer owned read half
 pub struct S2nStreamOwnedReadHalf<R> {
   stream: ReceiveStream,
   timeout: AtomicDuration,
@@ -181,6 +190,7 @@ impl<R: Runtime> AsyncRead for S2nStreamOwnedReadHalf<R> {
   }
 }
 
+/// S2n stream layer owned write half
 pub struct S2nStreamOwnedWriteHalf<R> {
   stream: SendStream,
   timeout: AtomicDuration,
@@ -237,6 +247,7 @@ impl<R: Runtime> AsyncWrite for S2nStreamOwnedWriteHalf<R> {
   }
 }
 
+/// S2n stream
 #[pin_project::pin_project]
 pub struct S2nStream<R> {
   #[pin]

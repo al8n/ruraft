@@ -58,8 +58,8 @@ pub struct HeartbeatHandler<I, A> {
 
 impl<I, A> HeartbeatHandler<I, A>
 where
-  I: Id + Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   /// Handle a heartbeat request in a fast-path manner.
   pub async fn handle_heartbeat(
@@ -106,7 +106,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -188,7 +188,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -215,7 +215,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,

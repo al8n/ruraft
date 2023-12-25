@@ -1,3 +1,9 @@
+//! QUIC transport implementation (based on [`quinn`](https://crates.io/crates/quinn)) for [`ruraft`](https://github.com/al8n/ruraft).
+#![deny(warnings, missing_docs)]
+#![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
+
 use std::{
   io,
   net::SocketAddr,
@@ -27,6 +33,7 @@ pub struct Quinn<R> {
 }
 
 impl<R: Runtime> Quinn<R> {
+  /// Create a new Quinn transport
   pub fn new(
     server_name: String,
     addr: SocketAddr,

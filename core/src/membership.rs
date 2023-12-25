@@ -16,6 +16,7 @@ use crate::{
   MESSAGE_SIZE_LEN,
 };
 
+/// The suffrage of a server.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
   feature = "serde",
@@ -24,7 +25,9 @@ use crate::{
 #[repr(u8)]
 #[non_exhaustive]
 pub enum ServerSuffrage {
+  /// The server can vote.
   Voter,
+  /// The server cannot vote.
   Nonvoter,
 }
 
@@ -77,15 +80,33 @@ impl ServerSuffrage {
   }
 }
 
+/// A server in the cluster.
 #[viewit::viewit]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Server<I, A> {
   /// A unique string identifying this server for all time.
+  #[viewit(
+    getter(const, style = "ref", attrs(doc = "Returns the id of the server.")),
+    setter(attrs(doc = "Sets the id of the server."))
+  )]
   id: I,
+
   /// The network address that a transport can contact.
+  #[viewit(
+    getter(
+      const,
+      style = "ref",
+      attrs(doc = "Returns the address of the server.")
+    ),
+    setter(attrs(doc = "Sets the address of the server."))
+  )]
   addr: A,
   /// Determines whether the server gets a vote.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the suffrage of the server.")),
+    setter(attrs(doc = "Sets the suffrage of the server."))
+  )]
   suffrage: ServerSuffrage,
 }
 
@@ -202,7 +223,9 @@ pub enum MembershipTransformError<I: Transformable, A: Transformable> {
   Id(I::Error),
   /// Returned when the encode or decode address fails.
   Address(A::Error),
+  /// Returned when the size of id is too large.
   IdTooLarge(I),
+  /// Returned when the size of address is too large.
   AddressTooLarge(A),
   /// Returned when the number of nodes is too large.
   TooLarge(usize),
@@ -261,6 +284,7 @@ impl<I: Display + Debug + Transformable, A: Display + Debug + Transformable> std
 {
 }
 
+/// The builder for [`Membership`].
 #[derive(Debug, Clone)]
 pub struct MembershipBuilder<I, A> {
   pub(crate) voters: usize,
@@ -493,10 +517,8 @@ impl<I: Display, A: Display> Display for Membership<I, A> {
 
 impl<I, A> Transformable for Membership<I, A>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  <A as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   type Error = MembershipTransformError<I, A>;
 
@@ -879,14 +901,24 @@ impl<I, A> Memberships<I, A> {
   }
 }
 
+/// Errors that can occur when building the cluster membership.
 #[derive(Debug, PartialEq, Eq)]
 pub enum MembershipError<I, A> {
+  /// The server address is already in the membership.
   DuplicateAddress(A),
+  /// The server id is already in the membership.
   DuplicateId(I),
-  EmptyServerId,
-  EmptyVoter,
-  AlreadyChanged { since: u64, latest: u64 },
+  /// The membership is empty.
   Empty,
+  /// The membership does not contain a voter.
+  EmptyVoter,
+  /// The membership has already changed.
+  AlreadyChanged {
+    /// The index of the membership change.
+    since: u64,
+    /// The latest index of the membership.
+    latest: u64,
+  },
 }
 
 impl<I: Display, A: Display> core::fmt::Display for MembershipError<I, A> {
@@ -896,7 +928,6 @@ impl<I: Display, A: Display> core::fmt::Display for MembershipError<I, A> {
         write!(f, "found duplicate server address {}", addr)
       }
       MembershipError::DuplicateId(id) => write!(f, "found duplicate server id {}", id),
-      MembershipError::EmptyServerId => write!(f, "server id cannot be empty"),
       MembershipError::EmptyVoter => write!(f, "no voter in the membership"),
       MembershipError::AlreadyChanged { since, latest } => write!(
         f,

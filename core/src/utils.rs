@@ -24,21 +24,23 @@ pub(crate) async fn override_notify_bool(
 }
 
 #[cfg(feature = "serde")]
+pub(crate) mod serde_instant {
+  use serde::Serializer;
+  use std::time::Instant;
+
+  pub fn serialize<S>(time: &Option<Instant>, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    humantime_serde::option::serialize(&time.map(|t| t.elapsed()), serializer)
+  }
+}
+
+#[cfg(feature = "serde")]
 pub(crate) mod serde_system_time {
+  use atomic_time::utils::{decode_duration, encode_duration};
   use serde::{Deserialize, Deserializer, Serializer};
-  use std::time::{Duration, SystemTime};
-
-  const fn encode_duration(duration: Duration) -> u128 {
-    let seconds = duration.as_secs() as u128;
-    let nanos = duration.subsec_nanos() as u128;
-    (seconds << 32) + nanos
-  }
-
-  const fn decode_duration(encoded: u128) -> Duration {
-    let seconds = (encoded >> 32) as u64;
-    let nanos = (encoded & 0xFFFFFFFF) as u32;
-    Duration::new(seconds, nanos)
-  }
+  use std::time::SystemTime;
 
   pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
   where
@@ -60,26 +62,7 @@ pub(crate) mod serde_system_time {
 
   pub mod option {
     use super::*;
-
-    const fn encode_option_duration(option_duration: Option<Duration>) -> u128 {
-      match option_duration {
-        Some(duration) => {
-          let seconds = duration.as_secs() as u128;
-          let nanos = duration.subsec_nanos() as u128;
-          (1 << 127) | (seconds << 32) | nanos
-        }
-        None => 0,
-      }
-    }
-    const fn decode_option_duration(encoded: u128) -> Option<Duration> {
-      if encoded >> 127 == 0 {
-        None
-      } else {
-        let seconds = ((encoded << 1) >> 33) as u64;
-        let nanos = (encoded & 0xFFFFFFFF) as u32;
-        Some(Duration::new(seconds, nanos))
-      }
-    }
+    use atomic_time::utils::{decode_option_duration, encode_option_duration};
 
     pub fn serialize<S>(time: &Option<SystemTime>, serializer: S) -> Result<S::Ok, S::Error>
     where

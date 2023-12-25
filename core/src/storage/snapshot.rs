@@ -8,7 +8,6 @@ use crate::{
 
 mod meta;
 pub use meta::*;
-use nodecraft::CheapClone;
 
 /// Used to allow for flexible implementations
 /// of snapshot storage and retrieval. For example, a client could implement
@@ -21,14 +20,18 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// The id type used to identify nodes.
-  type Id: Id + CheapClone + Send + Sync + 'static;
+  type Id: Id;
   /// The address type of node.
-  type Address: Address + CheapClone + Send + Sync + 'static;
+  type Address: Address;
 
+  /// The sink type used to write snapshots.
   type Sink: SnapshotSink<Runtime = Self::Runtime>;
+  /// The source type used to read snapshots.
   type Source: SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
+  /// The options type used to configure the snapshot storage.
   type Options;
 
+  /// Used to create a new snapshot storage instance.
   fn new(opts: Self::Options) -> impl Future<Output = Result<Self, Self::Error>> + Send
   where
     Self: Sized;
@@ -78,9 +81,10 @@ pub trait SnapshotSource: futures::io::AsyncRead + Unpin + Send + Sync + 'static
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
   /// The id type used to identify nodes.
-  type Id: Id + CheapClone + Send + Sync + 'static;
+  type Id: Id;
   /// The address type of node.
-  type Address: Address + CheapClone + Send + Sync + 'static;
+  type Address: Address;
 
+  /// Returns the snapshot meta information.
   fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address>;
 }

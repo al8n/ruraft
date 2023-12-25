@@ -2,8 +2,7 @@
 #![allow(clippy::type_complexity)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
-// #![deny(missing_docs)]
-// #![deny(warnings)]
+#![deny(missing_docs, warnings)]
 #![forbid(unsafe_code)]
 
 pub use nodecraft::CheapClone;
@@ -11,9 +10,9 @@ pub use nodecraft::CheapClone;
 const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
 
 /// A trait for the data type that can be used as the user data of the Raft.
-pub trait Data: Transformable + Send + Sync + 'static {}
+pub trait Data: Transformable {}
 
-impl<T: Transformable + Send + Sync + 'static> Data for T {}
+impl<T: Transformable> Data for T {}
 
 /// Add `test` prefix to the predefined unit test fn with a given [`Runtime`](agonstic::Runtime)
 #[cfg(any(feature = "test", test))]
@@ -76,7 +75,7 @@ pub trait TestTransformable: Transformable + Eq + core::fmt::Debug + Sized {
   #[doc(hidden)]
   fn assert_transformable(init: impl FnOnce() -> Self) -> impl core::future::Future<Output = ()>
   where
-    <Self as Transformable>::Error: core::fmt::Debug + Send + Sync + 'static,
+    <Self as Transformable>::Error: core::fmt::Debug,
   {
     async move {
       let val = init();
@@ -108,6 +107,7 @@ impl<T: Transformable + Eq + core::fmt::Debug + Sized> TestTransformable for T {
 /// and want to use the test if ruraft also works with their runtime.
 ///
 #[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
 pub mod tests {
   pub use paste;
 
@@ -121,6 +121,7 @@ pub mod tests {
   /// Sequential access lock for tests.
   static ACCESS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+  /// Run the unit test with a given async runtime sequentially.
   pub fn run<B, F>(block_on: B, fut: F)
   where
     B: FnOnce(F) -> F::Output,
@@ -131,6 +132,7 @@ pub mod tests {
     block_on(fut);
   }
 
+  /// Initialize the tracing subscriber for the unit tests.
   pub fn initialize_tests_tracing() {
     use std::sync::Once;
     static TRACE: Once = Once::new();

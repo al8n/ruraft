@@ -99,12 +99,7 @@ impl<I: Id, A: AddressResolver, W: Wire> core::fmt::Debug for Error<I, A, W> {
   }
 }
 
-impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W>
-where
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
-{
+impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W> {
   type Id = I;
 
   type Resolver = A;
@@ -215,11 +210,10 @@ where
 
 impl<I, A, D, W> MemoryTransportPipeline<I, A, D, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
@@ -344,11 +338,10 @@ where
 
 impl<I, A, D, W> AppendEntriesPipeline for MemoryTransportPipeline<I, A, D, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
@@ -590,11 +583,10 @@ where
 
 impl<I, A, D, W> MemoryTransport<I, A, D, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
@@ -636,11 +628,10 @@ where
 
 impl<I, A, D, W> MemoryTransport<I, A, D, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
+
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 {
@@ -682,11 +673,10 @@ where
 
 impl<I, A, D, W> Transport for MemoryTransport<I, A, D, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
@@ -937,13 +927,12 @@ pub(super) mod tests {
 
   struct NoopWire<I, A, D>(PhantomData<(I, A, D)>);
 
-  impl<I: Id + Send + Sync + 'static, A: Address + Send + Sync + 'static, D: Data> Wire
-    for NoopWire<I, A, D>
+  impl<I: Id, A: Address, D: Data> Wire for NoopWire<I, A, D>
   where
-    I: Id + Send + Sync + 'static,
-    <I as Transformable>::Error: Send + Sync + 'static,
+    I: Id,
+
     A: Send + Sync + 'static,
-    <A as Transformable>::Error: Send + Sync + 'static,
+
     D: Data,
   {
     type Error = NoopWireError;
@@ -1017,11 +1006,8 @@ pub(super) mod tests {
     addr2: A::Address,
     resolver2: A,
   ) where
-    I: Id + Send + Sync + 'static,
-    <I as Transformable>::Error: Send + Sync + 'static,
+    I: Id,
     A: AddressResolver,
-    A::Address: Send + Sync + 'static,
-    <A::Address as Transformable>::Error: Send + Sync + 'static,
     <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   {
     // InmemTransport should timeout if the other end has gone away

@@ -153,12 +153,9 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
 // --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 impl<I, A, D> Transformable for AppendEntriesRequest<I, A, D>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
   D: Data,
-  D::Error: Send + Sync + 'static,
 {
   type Error = TransformError;
 

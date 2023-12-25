@@ -47,9 +47,19 @@ pub enum Observed<I, A> {
   /// Used for the data when leadership changes.
   Leader(Option<Node<I, A>>),
   /// Sent to observers when peers change.
-  Peer { id: I, removed: bool },
+  Peer {
+    /// The ID of the peer.
+    id: I,
+    /// Whether the peer was removed.
+    removed: bool,
+  },
   /// Sent when a node fails to heartbeat with the leader
-  HeartbeatFailed { id: I, last_contact: Instant },
+  HeartbeatFailed {
+    /// The ID of the node that failed to heartbeat
+    id: I,
+    /// The last time we heard from the node
+    last_contact: Instant,
+  },
   /// Sent when a node resumes to heartbeat with the leader following failures
   HeartbeatResumed(I),
   /// Sent when a node has a role change
@@ -189,7 +199,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {

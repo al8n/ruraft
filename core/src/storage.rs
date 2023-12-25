@@ -1,5 +1,4 @@
 mod snapshot;
-use nodecraft::CheapClone;
 pub use snapshot::*;
 mod log;
 pub use log::*;
@@ -89,9 +88,9 @@ pub trait Storage: Send + Sync + 'static {
   type Error: StorageError<Stable = Self::Stable, Snapshot = Self::Snapshot, Log = Self::Log>;
 
   /// The id type used to identify nodes.
-  type Id: Id + CheapClone + Send + Sync + 'static;
+  type Id: Id;
   /// The address type of node.
-  type Address: Address + CheapClone + Send + Sync + 'static;
+  type Address: Address;
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;
 
@@ -231,6 +230,7 @@ pub(super) mod tests {
   use smol_str::SmolStr;
   use std::net::SocketAddr;
 
+  /// Test [`LogStorage::first_index`](LogStorage::first_index) implementation.
   pub async fn first_index<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
     s: &S,
   ) {
@@ -249,6 +249,7 @@ pub(super) mod tests {
     assert_eq!(s.first_index().await.unwrap().unwrap(), 1);
   }
 
+  /// Test [`LogStorage::last_index`](LogStorage::last_index) implementation.
   pub async fn last_index<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
     s: &S,
   ) {
@@ -267,6 +268,7 @@ pub(super) mod tests {
     assert_eq!(s.last_index().await.unwrap().unwrap(), 3);
   }
 
+  /// Test [`LogStorage::get_log`](LogStorage::get_log) implementation.
   pub async fn get_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(s: &S) {
     // Should get 0 index on empty log
     assert!(s.get_log(1).await.unwrap().is_none());
@@ -283,6 +285,7 @@ pub(super) mod tests {
     assert_eq!(s.get_log(2).await.unwrap().unwrap(), log2);
   }
 
+  /// Test [`LogStorage::store_log`](LogStorage::store_log) implementation.
   pub async fn store_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(s: &S) {
     assert!(s.get_log(1).await.unwrap().is_none());
 
@@ -294,6 +297,7 @@ pub(super) mod tests {
     assert_eq!(s.get_log(1).await.unwrap().unwrap(), log);
   }
 
+  /// Test [`LogStorage::store_logs`](LogStorage::store_logs) implementation.
   pub async fn store_logs<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
     s: &S,
   ) {
@@ -309,6 +313,7 @@ pub(super) mod tests {
     assert!(s.get_log(3).await.unwrap().is_none());
   }
 
+  /// Test [`LogStorage::remove_range`](LogStorage::remove_range) implementation.
   pub async fn remove_range<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
     s: &S,
   ) {
@@ -327,18 +332,21 @@ pub(super) mod tests {
     assert_eq!(s.get_log(3).await.unwrap().unwrap(), logs[2]);
   }
 
+  /// Test [`StableStorage::current_term`](StableStorage::current_term) implementation.
   pub async fn current_term<S: StableStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     assert!(s.current_term().await.unwrap().is_none());
     s.store_current_term(1).await.unwrap();
     assert_eq!(s.current_term().await.unwrap().unwrap(), 1);
   }
 
+  /// Test [`StableStorage::last_vote_term`](StableStorage::last_vote_term) implementation.
   pub async fn last_vote_term<S: StableStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     assert!(s.last_vote_term().await.unwrap().is_none());
     s.store_last_vote_term(1).await.unwrap();
     assert_eq!(s.last_vote_term().await.unwrap().unwrap(), 1);
   }
 
+  /// Test [`StableStorage::last_vote_candidate`](StableStorage::last_vote_candidate) implementation.
   pub async fn last_vote_candidate<S: StableStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     assert!(s.last_vote_candidate().await.unwrap().is_none());
     s.store_last_vote_candidate(Node::new(
@@ -356,6 +364,7 @@ pub(super) mod tests {
     );
   }
 
+  /// Test [`LogStorageExt::oldest_log`](crate::storage::LogStorageExt::oldest_log) implementation.
   #[cfg(all(feature = "test", feature = "metrics"))]
   pub async fn oldest_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
     store: &S,

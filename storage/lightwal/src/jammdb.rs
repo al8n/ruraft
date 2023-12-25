@@ -170,9 +170,9 @@ where
 
 impl<I, A, D, R> Db<I, A, D, R>
 where
-  I: Id + Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  D: Transformable + Send + Sync + 'static,
+  I: Id,
+  A: Address,
+  D: Transformable,
   R: Runtime,
 {
   fn store_many(
@@ -223,12 +223,9 @@ where
 
 impl<I, A, D, R> StableStorage for Db<I, A, D, R>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
-  D: Transformable + Send + Sync + 'static,
-  D::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
+  D: Transformable,
   R: Runtime,
 {
   type Error = Error<I, A, D>;
@@ -344,12 +341,9 @@ where
 
 impl<I, A, D, R> LogStorage for Db<I, A, D, R>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
-  D: Transformable + Send + Sync + 'static,
-  D::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
+  D: Transformable,
   R: Runtime,
 {
   type Error = Error<I, A, D>;

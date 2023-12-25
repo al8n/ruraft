@@ -22,10 +22,15 @@ enum_wrapper!(
   #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", bound = "I: Id + serde::Serialize + for<'a> serde::Deserialize<'a>, A: Address + serde::Serialize + for<'a> serde::Deserialize<'a>, D: serde::Serialize + for<'a> serde::Deserialize<'a>"))]
   #[non_exhaustive]
   pub enum Request<I, A, D> {
+    /// Append entries request.
     AppendEntries(AppendEntriesRequest<I, A, D>) = 0 => append_entries,
+    /// Vote request.
     Vote(VoteRequest<I, A>) = 1 => vote,
+    /// Install snapshot request.
     InstallSnapshot(InstallSnapshotRequest<I, A>) = 2 => install_snapshot,
+    /// Timeout now request.
     TimeoutNow(TimeoutNowRequest<I, A>) = 3 => timeout_now,
+    /// Heartbeat request.
     Heartbeat(HeartbeatRequest<I, A>) = 4 => heartbeat,
   }
 );

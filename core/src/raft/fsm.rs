@@ -87,7 +87,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   R: Runtime,
   <R::Sleep as Future>::Output: Send,
 {

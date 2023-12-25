@@ -5,24 +5,34 @@ use crate::MESSAGE_SIZE_LEN;
 
 use super::*;
 
+/// Errors that can occur when transforming a [`Log`] to its bytes representation.
 #[derive(thiserror::Error)]
 pub enum LogTransformError<I: Transformable, A: Transformable, D: Transformable> {
+  /// Id transform error.
   #[error("{0}")]
   Id(I::Error),
+  /// Address transform error.
   #[error("{0}")]
   Address(A::Error),
+  /// Data transform error.
   #[error("{0}")]
   Data(D::Error),
+  /// Membership transform error.
   #[error("{0}")]
   Membership(crate::membership::MembershipTransformError<I, A>),
+  /// Encode varint error.
   #[error("{0}")]
   EncodeVarint(#[from] ruraft_utils::EncodeVarintError),
+  /// Decode varint error.
   #[error("{0}")]
   DecodeVarint(#[from] ruraft_utils::DecodeVarintError),
+  /// Encode buffer too small.
   #[error("dst buffer is too small")]
   EncodeBufferTooSmall,
+  /// Unknown log kind.
   #[error("unknown log kind {0}")]
   UnknownLogKind(u8),
+  /// Corrupted log bytes data, which cannot be decoded back anymore because of losing information.
   #[error("{0}")]
   Corrupted(&'static str),
 }
@@ -55,12 +65,9 @@ where
 // --------------------------------------------------------------------------------------------------------
 impl<I, A, D> Transformable for Log<I, A, D>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  <A as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
   D: Data,
-  <D as Transformable>::Error: Send + Sync + 'static,
 {
   type Error = LogTransformError<I, A, D>;
 
@@ -218,12 +225,9 @@ mod tests {
 
   async fn test_log_transformable_in<I, A, D>(log: Log<I, A, D>)
   where
-    I: Id + Send + Sync + 'static,
-    <I as Transformable>::Error: Send + Sync + 'static,
-    A: Address + Send + Sync + 'static,
-    <A as Transformable>::Error: Send + Sync + 'static,
+    I: Id,
+    A: Address,
     D: Data + PartialEq + core::fmt::Debug,
-    <D as Transformable>::Error: Send + Sync + 'static,
   {
     let mut buf = vec![0; log.encoded_len()];
     log.encode(&mut buf).unwrap();

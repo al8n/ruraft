@@ -25,11 +25,17 @@ enum_wrapper!(
   #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
   #[non_exhaustive]
   pub enum Response<I, A> {
+    /// Append entries response.
     AppendEntries(AppendEntriesResponse<I, A>) = 0 => append_entries,
+    /// Vote response.
     Vote(VoteResponse<I, A>) = 1 => vote,
+    /// Install snapshot response.
     InstallSnapshot(InstallSnapshotResponse<I, A>) = 2 => install_snapshot,
+    /// Timeout now response.
     TimeoutNow(TimeoutNowResponse<I, A>) = 3 => timeout_now,
+    /// Heartbeat response.
     Heartbeat(HeartbeatResponse<I, A>) = 4 => heartbeat,
+    /// Error response.
     Error(ErrorResponse<I, A>) = 255 => error,
   }
 );

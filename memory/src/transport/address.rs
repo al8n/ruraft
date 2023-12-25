@@ -62,10 +62,7 @@ impl Transformable for MemoryAddress {
   async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
     &self,
     writer: &mut W,
-  ) -> io::Result<usize>
-  where
-    Self::Error: Send + Sync + 'static,
-  {
+  ) -> io::Result<usize> {
     self.0.into_bytes().encode_to_async_writer(writer).await
   }
 
@@ -93,7 +90,6 @@ impl Transformable for MemoryAddress {
   ) -> io::Result<(usize, Self)>
   where
     Self: Sized,
-    Self::Error: Send + Sync + 'static,
   {
     <[u8; 16] as Transformable>::decode_from_async_reader(reader)
       .await

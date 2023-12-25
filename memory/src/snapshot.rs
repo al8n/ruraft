@@ -32,8 +32,8 @@ pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
 
 impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  A: Address + Unpin,
   R: Runtime,
 {
   type Error = io::Error;
@@ -159,8 +159,8 @@ pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
 
 impl<I: Id, A: Address, R: Runtime> AsyncWrite for MemorySnapshotSink<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  A: Address + Unpin,
   R: Runtime,
 {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
@@ -191,8 +191,8 @@ where
 
 impl<I, A, R> SnapshotSink for MemorySnapshotSink<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  A: Address + Unpin,
   R: Runtime,
 {
   type Runtime = R;
@@ -222,8 +222,8 @@ pub struct MemorySnapshotSource<I: Id, A: Address, R: Runtime> {
 
 impl<I, A, R> AsyncRead for MemorySnapshotSource<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  A: Address + Unpin,
   R: Runtime,
 {
   fn poll_read(
@@ -240,8 +240,8 @@ where
 
 impl<I: Id, A: Address, R: Runtime> SnapshotSource for MemorySnapshotSource<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  A: Address + Unpin,
   R: Runtime,
 {
   type Runtime = R;

@@ -2,7 +2,6 @@ use std::future::Future;
 
 use agnostic::Runtime;
 use futures::{AsyncRead, AsyncWrite, Stream};
-use nodecraft::CheapClone;
 
 mod rpc;
 pub use rpc::*;
@@ -103,10 +102,10 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   type Error: std::error::Error + Send + Sync + 'static;
 
   /// Unique identifier associated with nodes.
-  type Id: Id + Send + Sync + 'static;
+  type Id: Id;
 
   /// Network address representation of nodes.
-  type Address: Address + Send + Sync + 'static;
+  type Address: Address;
 
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;
@@ -136,7 +135,7 @@ pub trait Transport: Send + Sync + 'static {
   type Runtime: Runtime;
 
   /// Unique identifier for nodes.
-  type Id: Id + CheapClone + Send + Sync + 'static;
+  type Id: Id;
 
   /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   type Data: Data;

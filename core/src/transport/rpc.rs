@@ -334,6 +334,7 @@ impl core::fmt::Debug for TransformError {
 }
 
 impl TransformError {
+  /// Creates a new transform error from the encode error.
   pub fn encode<E>(err: E) -> Self
   where
     E: std::error::Error + Send + Sync + 'static,
@@ -341,6 +342,7 @@ impl TransformError {
     Self::Encode(Box::new(err))
   }
 
+  /// Creates a new transform error from the decode error.
   pub fn decode<E>(err: E) -> Self
   where
     E: std::error::Error + Send + Sync + 'static,

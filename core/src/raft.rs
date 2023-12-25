@@ -54,6 +54,7 @@ use snapshot::{CountingReader, SnapshotRestoreMonitor};
 mod state;
 pub use state::*;
 
+/// A Raft node in the cluster.
 #[derive(Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node<I, A> {
@@ -98,6 +99,7 @@ impl<I, A> Node<I, A> {
     &self.addr
   }
 
+  /// Creates a new node.
   #[inline]
   pub const fn new(id: I, addr: A) -> Self {
     Self { id, addr }
@@ -258,7 +260,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -333,6 +334,7 @@ where
   >,
 }
 
+/// The Raft core is the main struct that implements the Raft consensus.
 pub struct RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<
@@ -347,7 +349,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -368,7 +370,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -395,7 +397,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
@@ -434,7 +436,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
@@ -662,7 +664,7 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-  <T::Resolver as AddressResolver>::Address: Send + Sync + 'static,
+
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,

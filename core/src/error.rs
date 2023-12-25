@@ -53,11 +53,21 @@ pub enum RaftError<T: Transport> {
 
   /// Returned when trying to create a snapshot, but the membership change has not been applied.
   #[error("ruraft: cannot take snapshot now, wait until the membership entry at {committed} has been applied (have applied {snapshot})")]
-  CantTakeSnapshot { committed: u64, snapshot: u64 },
+  CantTakeSnapshot {
+    /// The committed index.
+    committed: u64,
+    /// The last snapshot index.
+    snapshot: u64,
+  },
 
   /// Returned when trying to create a snapshot, but the membership change has not been applied.
   #[error("ruraft: cannot restore snapshot now, wait until the membership entry at {latest} has been applied (have applied {committed})")]
-  CantRestoreSnapshot { committed: u64, latest: u64 },
+  CantRestoreSnapshot {
+    /// The committed index.
+    committed: u64,
+    /// The last snapshot index.
+    latest: u64,
+  },
 
   /// Returned when an operation is attempted
   /// that's not supported by the current protocol version.
@@ -164,6 +174,7 @@ where
   #[error("ruraft: {0}")]
   Raft(#[from] RaftError<T>),
 
+  /// Returned when the options for the `Raft` are invalid.
   #[error("ruraft: invalid options: {0}")]
   InvalidOptions(#[from] OptionsError),
 

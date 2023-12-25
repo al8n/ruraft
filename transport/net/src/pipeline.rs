@@ -16,6 +16,7 @@ struct Event {
   start: SystemTime,
 }
 
+/// [`AppendEntriesPipeline`] implementation for [`NetTransport`].
 pub struct NetAppendEntriesPipeline<I, A, D, S, W>
 where
   I: Id,
@@ -48,11 +49,8 @@ where
 
 impl<I, A, D, S, W> NetAppendEntriesPipeline<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
+  I: Id,
   A: AddressResolver + Send + Sync + 'static,
-  A::Address: Send + Sync + 'static,
-  <A::Address as Transformable>::Error: Send + Sync + 'static,
   A::Error: Send + Sync + 'static,
   D: Data,
   S: StreamLayer,
@@ -138,11 +136,10 @@ where
 
 impl<I, A, D, S, W> AppendEntriesPipeline for NetAppendEntriesPipeline<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
-  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,

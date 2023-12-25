@@ -54,10 +54,8 @@ impl<I: CheapClone, A: CheapClone> CheapClone for TimeoutNowRequest<I, A> {
 
 impl<I, A> Transformable for TimeoutNowRequest<I, A>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   type Error = TransformError;
 

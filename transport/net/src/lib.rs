@@ -1,8 +1,19 @@
+//! A high level abstraction for the network transport layer of [`ruraft`](https://github.com/al8n/ruraft),
+//! which helps the developers to implement the network transport layer for [`ruraft`](https://github.com/al8n/ruraft) easily.
+//!
+//! # Usage
+//!
+//! Please see how those network transport layer implementations are implemented based on this crate:
+//!
+//! 1. [`ruraft-tcp`](https://github.com/al8n/ruraft/tree/main/transport/tcp).
+//! 2. [`ruraft-quinn`](https://github.com/al8n/ruraft/tree/main/transport/quinn).
+//! 3. [`ruraft-s2n`](https://github.com/al8n/ruraft/tree/main/transport/s2n).
 //!
 #![forbid(unsafe_code)]
 #![allow(clippy::type_complexity)]
-// #![deny(missing_docs)]
-
+#![deny(missing_docs, warnings)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
 /// Stream layer abstraction.
 pub mod stream;
 use arc_swap::ArcSwapOption;
@@ -106,7 +117,9 @@ pub enum Error<I: Id, A: AddressResolver, W: Wire> {
   /// Error indicating that the received response was not as expected.
   #[error("unexpected response {actual}, expected {expected}")]
   UnexpectedResponse {
+    /// Expected response type.
     expected: &'static str,
+    /// Actual response type.
     actual: &'static str,
   },
 
@@ -129,11 +142,7 @@ impl<I: Id, R: AddressResolver, W: Wire> core::fmt::Debug for Error<I, R, W> {
   }
 }
 
-impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W>
-where
-  <I as Transformable>::Error: Send + Sync + 'static,
-  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
-{
+impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W> {
   type Id = I;
 
   type Resolver = A;
@@ -193,19 +202,35 @@ where
 #[viewit::viewit]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NetTransportOptions<I: Id, A: Address> {
-  /// The protocol version to use for encoding/decoding messages.
-  protocol_version: ProtocolVersion,
-
-  /// The local ID of the server we are running on.
+  /// The local header of the header of the network transport.
+  #[viewit(
+    getter(
+      const,
+      style = "ref",
+      attrs(doc = "Returns the header of the network transport.")
+    ),
+    setter(attrs(doc = "Sets the header of the network transport."))
+  )]
   header: Header<I, A>,
 
   /// The address for the network transport layer bind to, if not set,
   /// will use the address of the header to resolve an address by using
   /// the [`AddressResolver`].
   #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Returns the socket address of this network transport layer bind to.")
+    ),
+    setter(attrs(doc = "Sets the socket address of this network transport layer bind to."))
+  )]
   advertise_addr: Option<SocketAddr>,
 
   /// Controls how many connections we will pool
+  #[viewit(
+    getter(const, attrs(doc = "Returns how many connections we will pool.")),
+    setter(attrs(doc = "Sets how many connections we will pool."))
+  )]
   max_pool: usize,
 
   /// Controls the pipelining "optimization" when replicating
@@ -231,11 +256,19 @@ pub struct NetTransportOptions<I: Id, A: Address> {
   /// Increasing this beyond `2` is likely to be beneficial only in very
   /// high-latency network conditions. HashiCorp doesn't recommend using our own
   /// products this way.
+  #[viewit(
+    getter(const, attrs(doc = "Returns the max inflight requests.")),
+    setter(attrs(doc = "Sets the max inflight requests."))
+  )]
   max_inflight_requests: usize,
 
   /// Used to apply I/O deadlines. For InstallSnapshot, we multiply
   /// the timeout by (SnapshotSize / TimeoutScale).
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+  #[viewit(
+    getter(const, attrs(doc = "Returns the timeout used to apply I/O deadlines.")),
+    setter(attrs(doc = "Sets the timeout used to apply I/O deadlines."))
+  )]
   timeout: Duration,
 }
 
@@ -251,7 +284,6 @@ where
       timeout: self.timeout,
       header: self.header.clone(),
       advertise_addr: self.advertise_addr,
-      protocol_version: self.protocol_version,
     }
   }
 }
@@ -270,7 +302,6 @@ where
       timeout: Duration::from_secs(10),
       header,
       advertise_addr: None,
-      protocol_version: ProtocolVersion::V1,
     }
   }
 }
@@ -291,7 +322,7 @@ where
 pub struct NetTransport<I, A, D, S, W>
 where
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
+
   S: StreamLayer,
 {
   shutdown: Arc<AtomicBool>,
@@ -319,16 +350,16 @@ where
 
 impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  A::Address: Send + Sync + 'static,
-  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
+  /// Create a new [`NetTransport`].
   pub async fn new(
     resolver: A,
     mut stream_layer: S,
@@ -379,13 +410,13 @@ where
     Ok(Self {
       shutdown,
       shutdown_tx,
-      local_header: opts.header,
       advertise_addr,
       resolver,
       consumer,
       conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
       conn_size: AtomicUsize::new(0),
-      protocol_version: opts.protocol_version,
+      protocol_version: opts.header.protocol_version(),
+      local_header: opts.header,
       wg,
       max_pool: opts.max_pool,
       max_inflight_requests: if opts.max_inflight_requests == 0 {
@@ -403,11 +434,10 @@ where
 
 impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  A::Address: Send + Sync + 'static,
-  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
+
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
@@ -682,11 +712,8 @@ where
 
 impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  A::Address: Send + Sync + 'static,
-  <<A as AddressResolver>::Address as Transformable>::Error: Send + Sync + 'static,
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
@@ -747,7 +774,6 @@ where
 impl<I, A, D, S, W> Drop for NetTransport<I, A, D, S, W>
 where
   A: AddressResolver,
-  A::Address: Send + Sync + 'static,
   S: StreamLayer,
 {
   fn drop(&mut self) {
@@ -774,8 +800,8 @@ struct RequestHandler<I, A, D, S: StreamLayer> {
 
 impl<I, A, D, S> RequestHandler<I, A, D, S>
 where
-  I: Id + Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
+  I: Id,
+  A: Address,
   D: Data,
   S: StreamLayer,
 {

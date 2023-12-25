@@ -126,10 +126,10 @@ pub struct FileSnapshotStorage<I, A, R> {
 
 impl<I, A, R> FileSnapshotStorage<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  I::Error: Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
-  A::Error: Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  I::Error: Unpin,
+  A: Address + Unpin,
+  A::Error: Unpin,
   R: Runtime,
 {
   /// Reaps any snapshots beyond the retain count.
@@ -229,10 +229,10 @@ where
 
 impl<I, A, R> SnapshotStorage for FileSnapshotStorage<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  I::Error: Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
-  A::Error: Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  I::Error: Unpin,
+  A: Address + Unpin,
+  A::Error: Unpin,
   R: Runtime,
 {
   type Error = FileSnapshotStorageError;
@@ -448,8 +448,8 @@ where
 
 impl<I, A, R> SnapshotSource for FileSnapshotSource<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  A: Address + Unpin,
   R: Runtime,
 {
   type Runtime = R;
@@ -474,10 +474,10 @@ pub struct FileSnapshotSink<I, A, R> {
 
 impl<I: Id, A: Address, R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  I::Error: Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
-  A::Error: Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  I::Error: Unpin,
+  A: Address + Unpin,
+  A::Error: Unpin,
   R: Runtime,
 {
   fn poll_write(
@@ -553,10 +553,8 @@ where
 
 impl<I, A, R> FileSnapshotSink<I, A, R>
 where
-  I: Id + Send + Sync + 'static,
-  I::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  A::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   fn finalize(&mut self) -> io::Result<()> {
@@ -597,10 +595,10 @@ where
 
 impl<I, A, R> SnapshotSink for FileSnapshotSink<I, A, R>
 where
-  I: Id + Send + Sync + Unpin + 'static,
-  I::Error: Send + Sync + Unpin + 'static,
-  A: Address + Send + Sync + Unpin + 'static,
-  A::Error: Send + Sync + Unpin + 'static,
+  I: Id + Unpin,
+  I::Error: Unpin,
+  A: Address + Unpin,
+  A::Error: Unpin,
   R: Runtime,
 {
   type Runtime = R;
@@ -637,10 +635,8 @@ const CRC_SIZE: usize = mem::size_of::<u64>();
 
 impl<I, A> Transformable for FileSnapshotMeta<I, A>
 where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  <A as Transformable>::Error: Send + Sync + 'static,
+  I: Id,
+  A: Address,
 {
   type Error = <SnapshotMeta<I, A> as Transformable>::Error;
 
