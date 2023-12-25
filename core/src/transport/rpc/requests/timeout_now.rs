@@ -63,7 +63,7 @@ where
 
   fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     <Header<I, A> as Transformable>::encode(&self.header, dst)
-  } 
+  }
 
   fn encoded_len(&self) -> usize {
     self.header.encoded_len()

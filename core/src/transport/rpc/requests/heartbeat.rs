@@ -88,7 +88,7 @@ where
     let mut offset = 0;
     NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
- 
+
     offset += self.header.encode(&mut dst[offset..])?;
     encode_varint(self.term, &mut dst[offset..])
       .map(|size| {

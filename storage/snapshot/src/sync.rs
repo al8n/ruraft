@@ -10,8 +10,8 @@ use std::{
 };
 
 use agnostic::Runtime;
-use byteorder::{NetworkEndian, ByteOrder};
-use futures::{AsyncWriteExt, AsyncReadExt};
+use byteorder::{ByteOrder, NetworkEndian};
+use futures::AsyncWriteExt;
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
@@ -584,7 +584,6 @@ where
     // Open the meta file
     let metapath = dir.as_ref().join(META_FILE_PATH.as_path());
     let mut fh = BufWriter::with_capacity(meta.encoded_len(), File::create(metapath)?);
-
     meta.encode_to_writer(&mut fh)?;
     fh.flush()?;
 
@@ -634,6 +633,7 @@ where
 }
 
 const CRC_SIZE: usize = mem::size_of::<u64>();
+// const MAX_INLINED_BYTES: usize = 256;
 
 impl<I, A> Transformable for FileSnapshotMeta<I, A>
 where
@@ -650,7 +650,10 @@ where
       return Err(Self::Error::EncodeBufferTooSmall);
     }
 
-    let mut offset = self.meta.encode(dst)?;
+    let mut offset = 0;
+    NetworkEndian::write_u32(dst, encoded_len as u32);
+    offset += 4;
+    offset += self.meta.encode(&mut dst[offset..])?;
     dst[offset..offset + CRC_SIZE].copy_from_slice(&self.crc.to_be_bytes());
     offset += CRC_SIZE;
 
@@ -663,7 +666,7 @@ where
   }
 
   fn encoded_len(&self) -> usize {
-    self.meta.encoded_len() + CRC_SIZE
+    4 + self.meta.encoded_len() + CRC_SIZE
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
@@ -671,38 +674,22 @@ where
     Self: Sized,
   {
     let src_len = src.len();
-    if src_len < CRC_SIZE {
+    if src_len < 4 + CRC_SIZE {
+      return Err(Self::Error::Corrupted);
+    }
+    let encoded_len = NetworkEndian::read_u32(src) as usize;
+    if encoded_len > src_len {
       return Err(Self::Error::Corrupted);
     }
 
-    <SnapshotMeta<I, A> as Transformable>::decode(&src[..src_len - CRC_SIZE]).and_then(|(readed, meta)| {
-      if src.len() < readed + CRC_SIZE {
-        return Err(Self::Error::Corrupted);
-      }
-      let crc = u64::from_be_bytes(src[readed..readed + CRC_SIZE].try_into().unwrap());
-      Ok((readed + CRC_SIZE, Self { meta, crc }))
-    })
-  }
-
-  fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized
-  {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let encoded_len = NetworkEndian::read_u32(&len_buf) as usize;
-    
-  }
-
-  fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
-    reader: &mut R,
-  ) -> std::io::Result<(usize, Self)>
-  where
-    Self: Sized
-  {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).await?;
-    let encoded_len = NetworkEndian::read_u32(&len_buf) as usize;
+    let mut offset = 4;
+    let (readed, meta) = SnapshotMeta::<I, A>::decode(&src[offset..])?;
+    offset += readed;
+    if src_len < offset + CRC_SIZE {
+      return Err(Self::Error::Corrupted);
+    }
+    let crc = u64::from_be_bytes(src[offset..offset + CRC_SIZE].try_into().unwrap());
+    Ok((offset + CRC_SIZE, Self { meta, crc }))
   }
 }
 
@@ -952,44 +939,54 @@ pub mod tests {
     assert_eq!(snaps[0].term, 36);
     assert_eq!(snaps[1].term, 5);
   }
+}
 
-  #[tokio::test]
-  async fn test_file_snapshot_meta_transformable_roundtrip() {
-    let meta = FileSnapshotMeta {
-      meta: SnapshotMeta {
-        version: SnapshotVersion::V1,
-        timestamp: 0,
-        index: 0,
-        term: 0,
-        membership: Membership::__single_server(),
-        membership_index: 0,
-        size: 0,
-      },
-      crc: 0,
-    };
+#[cfg(test)]
+#[tokio::test]
+async fn test_file_snapshot_meta_transformable_roundtrip() {
+  use smol_str::SmolStr;
+  use std::net::SocketAddr;
 
-    {
-      let mut buf = vec![0; meta.encoded_len()];
-      let encoded_len = meta.encode(&mut buf).unwrap();
-      let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode(&buf).unwrap();
-      assert_eq!(encoded_len, read);
-      assert_eq!(meta, decoded);
-    }
+  let meta = FileSnapshotMeta {
+    meta: SnapshotMeta {
+      version: SnapshotVersion::V1,
+      timestamp: 0,
+      index: 0,
+      term: 0,
+      membership: Membership::__single_server(),
+      membership_index: 0,
+      size: 0,
+    },
+    crc: 0,
+  };
 
-    {
-      let mut buf = vec![0; meta.encoded_len()];
-      let encoded_len = meta.encode_to_writer(&mut buf).unwrap();
-      let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode_from_reader(&mut std::io::Cursor::new(&buf)).unwrap();
-      assert_eq!(encoded_len, read);
-      assert_eq!(meta, decoded);
-    }
+  {
+    let mut buf = vec![0; meta.encoded_len()];
+    let encoded_len = meta.encode(&mut buf).unwrap();
+    let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode(&buf).unwrap();
+    assert_eq!(encoded_len, read);
+    assert_eq!(meta, decoded);
+  }
 
-    {
-      let mut buf = vec![0; meta.encoded_len()];
-      let encoded_len = meta.encode_to_async_writer(&mut buf).await.unwrap();
-      let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode_from_async_reader(&mut futures::io::Cursor::new(&buf)).await.unwrap();
-      assert_eq!(encoded_len, read);
-      assert_eq!(meta, decoded);
-    }
+  {
+    let mut buf = vec![];
+    let encoded_len = meta.encode_to_writer(&mut buf).unwrap();
+    let (read, decoded) =
+      FileSnapshotMeta::<SmolStr, SocketAddr>::decode_from_reader(&mut std::io::Cursor::new(&buf))
+        .unwrap();
+    assert_eq!(encoded_len, read);
+    assert_eq!(meta, decoded);
+  }
+
+  {
+    let mut buf = vec![];
+    let encoded_len = meta.encode_to_async_writer(&mut buf).await.unwrap();
+    let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode_from_async_reader(
+      &mut futures::io::Cursor::new(&buf),
+    )
+    .await
+    .unwrap();
+    assert_eq!(encoded_len, read);
+    assert_eq!(meta, decoded);
   }
 }

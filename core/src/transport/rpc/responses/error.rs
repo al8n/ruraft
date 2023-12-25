@@ -58,15 +58,20 @@ where
     NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
 
+    offset += self.header.encode(&mut dst[offset..])?;
+
     offset += self
-      .header
-      .encode(&mut dst[offset..])?;
+      .error
+      .encode(&mut dst[offset..])
+      .map_err(TransformError::encode)?;
 
-    offset += self.error.encode(&mut dst[offset..]).map_err(TransformError::encode)?;
-
-    debug_assert_eq!(offset, encoded_len, "expected bytes wrote ({}) not match actual bytes wrote ({})", encoded_len, offset);
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, offset
+    );
     Ok(offset)
-  } 
+  }
 
   fn encoded_len(&self) -> usize {
     MESSAGE_SIZE_LEN + self.header.encoded_len() + self.error.encoded_len()
@@ -91,11 +96,16 @@ where
     let (header_len, header) = Header::<I, A>::decode(&src[offset..])?;
     offset += header_len;
 
-    let (error_encoded_len, error) = String::decode(&src[offset..]).map_err(TransformError::decode)?;
+    let (error_encoded_len, error) =
+      String::decode(&src[offset..]).map_err(TransformError::decode)?;
     offset += error_encoded_len;
 
-    debug_assert_eq!(offset, encoded_len, "expected bytes read ({}) not match actual bytes read ({})", encoded_len, offset);
-  Ok((offset, Self { header, error }))
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      encoded_len, offset
+    );
+    Ok((offset, Self { header, error }))
   }
 }
 

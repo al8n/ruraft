@@ -195,7 +195,7 @@ where
     );
 
     Ok(offset)
-  } 
+  }
 
   fn encoded_len(&self) -> usize {
     MESSAGE_SIZE_LEN

@@ -67,7 +67,7 @@ where
     Self: Sized,
   {
     <Header<I, A> as Transformable>::decode(src).map(|(size, h)| (size, Self::from_header(h)))
-  } 
+  }
 }
 
 #[cfg(any(feature = "test", test))]

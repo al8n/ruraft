@@ -1,6 +1,6 @@
-use byteorder::{NetworkEndian, ByteOrder};
+use byteorder::{ByteOrder, NetworkEndian};
 use nodecraft::Transformable;
-use ruraft_utils::{encoded_len_varint, encode_varint, decode_varint};
+use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
 use crate::{
   membership::MembershipTransformError, options::UnknownSnapshotVersion, MESSAGE_SIZE_LEN,
@@ -187,7 +187,14 @@ where
   }
 
   fn encoded_len(&self) -> usize {
-    MESSAGE_SIZE_LEN + 1 + encoded_len_varint(self.term) + encoded_len_varint(self.index) + encoded_len_varint(self.timestamp) + encoded_len_varint(self.size) + encoded_len_varint(self.membership_index) + self.membership.encoded_len()
+    MESSAGE_SIZE_LEN
+      + 1
+      + encoded_len_varint(self.term)
+      + encoded_len_varint(self.index)
+      + encoded_len_varint(self.timestamp)
+      + encoded_len_varint(self.size)
+      + encoded_len_varint(self.membership_index)
+      + self.membership.encoded_len()
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
@@ -200,7 +207,7 @@ where
     }
 
     let mut offset = 0;
-    NetworkEndian::read_u32(&src[..MESSAGE_SIZE_LEN]);
+    let encoded_len = NetworkEndian::read_u32(&src[..MESSAGE_SIZE_LEN]);
     offset += MESSAGE_SIZE_LEN;
     let version = SnapshotVersion::try_from(src[offset])
       .map_err(SnapshotMetaTransformableError::UnknownVersion)?;
@@ -218,9 +225,9 @@ where
     let (readed, membership) = Membership::decode(&src[offset..])?;
     offset += readed;
     debug_assert_eq!(
-      offset, src_len,
+      encoded_len as usize, offset,
       "expected bytes read ({}) not match actual bytes read ({})",
-      src_len, offset
+      encoded_len, offset
     );
     Ok((
       offset,

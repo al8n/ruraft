@@ -159,7 +159,10 @@ macro_rules! decode {
 macro_rules! encode_to_writer {
   ($writer:ident($tag: ident, $target: ident)) => {{
     $writer.write_all(&[$tag]).await?;
-    $target.encode_to_async_writer(&mut $writer).await.map(|_| ())
+    $target
+      .encode_to_async_writer(&mut $writer)
+      .await
+      .map(|_| ())
   }};
 }
 

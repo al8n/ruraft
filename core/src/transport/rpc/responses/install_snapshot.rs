@@ -103,9 +103,13 @@ where
     offset += 1;
 
     offset += encode_varint(self.term, &mut dst[offset..])?;
-    debug_assert_eq!(offset, encoded_len, "expected bytes wrote ({}) not match actual bytes wrote ({})", encoded_len, offset);
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, offset
+    );
     Ok(offset)
-  } 
+  }
 
   fn encoded_len(&self) -> usize {
     MESSAGE_SIZE_LEN + 1 + encoded_len_varint(self.term) + self.header.encoded_len()

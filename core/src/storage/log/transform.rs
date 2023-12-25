@@ -1,5 +1,5 @@
-use byteorder::{NetworkEndian, ByteOrder};
-use ruraft_utils::{encode_varint, encoded_len_varint, decode_varint};
+use byteorder::{ByteOrder, NetworkEndian};
+use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
 use crate::MESSAGE_SIZE_LEN;
 
@@ -89,7 +89,8 @@ where
       }
       Some(instant) => {
         instant
-          .encode(&mut dst[cur..cur + ENCODED_SYSTEMTIME_LEN]).unwrap();
+          .encode(&mut dst[cur..cur + ENCODED_SYSTEMTIME_LEN])
+          .unwrap();
         cur += ENCODED_SYSTEMTIME_LEN;
       }
     }
@@ -99,23 +100,32 @@ where
         cur += d.encode(&mut dst[cur..]).map_err(LogTransformError::Data)?;
       }
       LogKind::Membership(m) => {
-        cur += m.encode(&mut dst[cur..])
+        cur += m
+          .encode(&mut dst[cur..])
           .map_err(LogTransformError::Membership)?;
       }
-      LogKind::Noop | LogKind::Barrier => {},
+      LogKind::Noop | LogKind::Barrier => {}
     }
-    debug_assert_eq!(cur, encoded_len, "expected bytes wrote ({}) not match actual bytes wrote ({})", encoded_len, cur);
+    debug_assert_eq!(
+      cur, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, cur
+    );
     Ok(cur)
   }
 
   fn encoded_len(&self) -> usize {
-    MESSAGE_SIZE_LEN + 1 + encoded_len_varint(self.index) + encoded_len_varint(self.term) + 12 +
-    match &self.kind {
-      LogKind::Data(d) => d.encoded_len(),
-      LogKind::Noop => 0,
-      LogKind::Barrier => 0,
-      LogKind::Membership(m) => m.encoded_len(),
-    }
+    MESSAGE_SIZE_LEN
+      + 1
+      + encoded_len_varint(self.index)
+      + encoded_len_varint(self.term)
+      + 12
+      + match &self.kind {
+        LogKind::Data(d) => d.encoded_len(),
+        LogKind::Noop => 0,
+        LogKind::Barrier => 0,
+        LogKind::Membership(m) => m.encoded_len(),
+      }
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
@@ -187,7 +197,11 @@ where
       }
       _ => return Err(LogTransformError::UnknownLogKind(tag)),
     };
-    debug_assert_eq!(cur, encoded_len, "expected bytes read ({}) not match actual bytes read ({})", encoded_len, cur);
+    debug_assert_eq!(
+      cur, encoded_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      encoded_len, cur
+    );
     Ok((cur, log))
   }
 }

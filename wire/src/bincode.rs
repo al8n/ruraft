@@ -1,8 +1,11 @@
 use std::{io, marker::PhantomData};
 
 use async_bincode::futures::{AsyncBincodeReader, AsyncBincodeWriter};
-use bincode::{Options, config::{WithOtherTrailing, WithOtherLimit, Bounded, AllowTrailing}, DefaultOptions};
-use byteorder::{NetworkEndian, WriteBytesExt, ByteOrder};
+use bincode::{
+  config::{AllowTrailing, Bounded, WithOtherLimit, WithOtherTrailing},
+  DefaultOptions, Options,
+};
+use byteorder::{ByteOrder, NetworkEndian, WriteBytesExt};
 use bytes::Bytes;
 use futures_util::{AsyncRead, SinkExt, TryStreamExt};
 use ruraft_core::{transport::*, Data};
@@ -115,13 +118,15 @@ where
   ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
     let message_size: u32 = NetworkEndian::read_u32(&src[..4]);
     bincoder()
-      .deserialize(&src[4..4 + message_size as usize]).map_err(Error::Decode)
+      .deserialize(&src[4..4 + message_size as usize])
+      .map_err(Error::Decode)
   }
 
   fn decode_response(src: &[u8]) -> Result<Response<Self::Id, Self::Address>, Self::Error> {
     let message_size: u32 = NetworkEndian::read_u32(&src[..4]);
     bincoder()
-      .deserialize(&src[4..4 + message_size as usize]).map_err(Error::Decode)
+      .deserialize(&src[4..4 + message_size as usize])
+      .map_err(Error::Decode)
   }
 
   async fn decode_request_from_reader(

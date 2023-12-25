@@ -23,7 +23,6 @@ pub(crate) async fn override_notify_bool(
   }
 }
 
-
 #[cfg(feature = "serde")]
 pub(crate) mod serde_system_time {
   use serde::{Deserialize, Deserializer, Serializer};
