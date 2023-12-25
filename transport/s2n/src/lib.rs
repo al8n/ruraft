@@ -8,6 +8,7 @@ use std::{
 };
 
 use agnostic::Runtime;
+use atomic_time::AtomicDuration;
 use bytes::Bytes;
 use futures::{AsyncRead, AsyncWrite, Future};
 use nodecraft::resolver::AddressResolver;
@@ -16,7 +17,6 @@ use quic::{
   stream::{ReceiveStream, SendStream},
 };
 use ruraft_net::{stream::*, NetTransport};
-use ruraft_utils::atomic_duration::AtomicDuration;
 pub use s2n_quic as quic;
 pub use s2n_quic::{Client, Server};
 

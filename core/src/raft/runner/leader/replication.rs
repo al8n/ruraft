@@ -559,7 +559,7 @@ where
         Ok(req) => {
           // Make the RPC call
           #[cfg(feature = "metrics")]
-          let start = Instant::now();
+          let system_now = std::time::SystemTime::now();
           #[cfg(feature = "metrics")]
           let num_entries = req.entries.len();
           let req_last_index = req.entries.last().map(|l| l.index);
@@ -567,7 +567,7 @@ where
           match self.transport.append_entries(&remote, req).await {
             Ok(resp) => {
               #[cfg(feature = "metrics")]
-              append_stats(&remote, start, num_entries as u64);
+              append_stats(&remote, system_now, num_entries as u64);
               // Check for a newer term, stop running
               if resp.term > self.current_term {
                 Self::handle_stale_term(&remote, &self.notify, &self.step_down_tx).await;
@@ -912,7 +912,7 @@ where
               last_contact.update();
 
               // Abort pipeline if not successful
-              if !resp.resp().success {
+              if !resp.response().success {
                 return;
               }
 
@@ -1045,7 +1045,7 @@ where
 #[cfg(feature = "metrics")]
 fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
   remote: &Node<I, A>,
-  start: Instant,
+  start: std::time::SystemTime,
   logs: u64,
 ) {
   let id: std::borrow::Cow<'static, str> = std::borrow::Cow::Owned(remote.id().to_string());
@@ -1053,7 +1053,7 @@ fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
 
   metrics::histogram!(
     "ruraft.repl.append_entries.rpc",
-    start.elapsed().as_millis() as f64,
+    start.elapsed().unwrap().as_millis() as f64,
     "peer_id" => id1,
   );
 

@@ -3,7 +3,7 @@
 use std::{
   collections::HashMap,
   sync::Arc,
-  time::{Duration, Instant},
+  time::{Duration, SystemTime},
 };
 
 use agnostic::Runtime;
@@ -171,7 +171,7 @@ struct PipelineInflight<I, A> {
   num_entries: usize,
 
   /// The time that the original request was started
-  start: Instant,
+  start: SystemTime,
   handle: RpcHandle<I, A>,
 }
 
@@ -413,7 +413,7 @@ where
         term,
         highest_log_index,
         num_entries,
-        start: Instant::now(),
+        start: SystemTime::now(),
       }).fuse() => {
         if rst.is_err() {
           return Err(Error::PipelineShutdown);
@@ -906,22 +906,9 @@ pub(super) mod tests {
 
   use super::*;
 
-  struct NoopWireError<I, A, D>(PhantomData<(I, A, D)>);
+  struct NoopWireError;
 
-  impl<I: Id, A: Address, D: Data> WireError for NoopWireError<I, A, D>
-  where
-    I: Id + Send + Sync + 'static,
-    <I as Transformable>::Error: Send + Sync + 'static,
-    A: Send + Sync + 'static,
-    <A as Transformable>::Error: Send + Sync + 'static,
-  {
-    type Id = I;
-    type Address = A;
-
-    fn address(_err: <Self::Address as Transformable>::Error) -> Self {
-      unreachable!()
-    }
-
+  impl WireError for NoopWireError {
     fn custom<T>(_msg: T) -> Self
     where
       T: core::fmt::Display,
@@ -929,24 +916,24 @@ pub(super) mod tests {
       unreachable!()
     }
 
-    fn id(_err: <Self::Id as Transformable>::Error) -> Self {
+    fn io(_err: std::io::Error) -> Self {
       unreachable!()
     }
   }
 
-  impl<I, A, D> core::fmt::Display for NoopWireError<I, A, D> {
+  impl core::fmt::Display for NoopWireError {
     fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
       unreachable!()
     }
   }
 
-  impl<I, A, D> core::fmt::Debug for NoopWireError<I, A, D> {
+  impl core::fmt::Debug for NoopWireError {
     fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
       unreachable!()
     }
   }
 
-  impl<I, A, D> std::error::Error for NoopWireError<I, A, D> {}
+  impl std::error::Error for NoopWireError {}
 
   struct NoopWire<I, A, D>(PhantomData<(I, A, D)>);
 
@@ -959,7 +946,7 @@ pub(super) mod tests {
     <A as Transformable>::Error: Send + Sync + 'static,
     D: Data,
   {
-    type Error = NoopWireError<I, A, D>;
+    type Error = NoopWireError;
 
     type Id = I;
 
@@ -981,16 +968,40 @@ pub(super) mod tests {
       unreachable!()
     }
 
-    async fn decode_request(
-      _reader: impl futures::AsyncRead + Unpin,
-    ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
+    async fn encode_request_to_writer(
+      _req: &Request<Self::Id, Self::Address, Self::Data>,
+      _writer: impl futures::prelude::AsyncWrite + Send + Unpin,
+    ) -> std::io::Result<()> {
       unreachable!()
     }
 
-    async fn decode_response(
-      _reader: impl futures::AsyncRead + Unpin,
-    ) -> Result<Response<Self::Id, Self::Address>, Self::Error> {
+    async fn encode_response_to_writer(
+      _resp: &Response<Self::Id, Self::Address>,
+      _writer: impl futures::prelude::AsyncWrite + Send + Unpin,
+    ) -> std::io::Result<()> {
       unreachable!()
+    }
+
+    fn decode_request(
+      _src: &[u8],
+    ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
+      todo!()
+    }
+
+    fn decode_response(_src: &[u8]) -> Result<Response<Self::Id, Self::Address>, Self::Error> {
+      todo!()
+    }
+
+    async fn decode_request_from_reader(
+      _reader: impl futures::prelude::AsyncRead + Send + Unpin,
+    ) -> std::io::Result<Request<Self::Id, Self::Address, Self::Data>> {
+      todo!()
+    }
+
+    async fn decode_response_from_reader(
+      _reader: impl futures::prelude::AsyncRead + Send + Unpin,
+    ) -> std::io::Result<Response<Self::Id, Self::Address>> {
+      todo!()
     }
   }
 

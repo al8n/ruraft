@@ -1,6 +1,5 @@
-use std::{future::Future, io, mem, ops::RangeBounds, sync::Arc, time::SystemTime};
+use std::{future::Future, ops::RangeBounds, sync::Arc, time::SystemTime};
 
-use futures::AsyncWrite;
 #[cfg(feature = "metrics")]
 use futures::FutureExt;
 use nodecraft::Transformable;
@@ -8,7 +7,6 @@ use nodecraft::Transformable;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  utils::invalid_data,
   Data,
 };
 
@@ -47,7 +45,7 @@ impl<I, A> MembershipLog<I, A> {
 #[derive(Debug)]
 #[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum LogKind<I, A, D> {
   /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
   Data(Arc<D>),
@@ -181,7 +179,10 @@ pub struct Log<I, A, D> {
       )
     )
   )]
-  #[cfg_attr(feature = "serde", serde(with = "serde_millis"))]
+  #[cfg_attr(
+    feature = "serde",
+    serde(with = "crate::utils::serde_system_time::option")
+  )]
   appended_at: Option<SystemTime>,
 }
 

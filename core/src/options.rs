@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use ruraft_utils::atomic_duration::Duration as DurationNoUninit;
+use ruraft_utils::duration::PadDuration;
 use std::time::Duration;
 
 /// The version of the protocol (which includes RPC messages
@@ -20,6 +20,36 @@ pub enum ProtocolVersion {
   /// The current version of the protocol.
   #[default]
   V1 = 1,
+}
+
+#[derive(Debug)]
+pub struct UnknownProtocolVersion(u8);
+
+impl UnknownProtocolVersion {
+  #[inline]
+  pub const fn version(&self) -> u8 {
+    self.0
+  }
+}
+
+impl core::fmt::Display for UnknownProtocolVersion {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "unknown protocol version {}", self.0)
+  }
+}
+
+impl std::error::Error for UnknownProtocolVersion {}
+
+impl TryFrom<u8> for ProtocolVersion {
+  type Error = UnknownProtocolVersion;
+
+  #[inline]
+  fn try_from(value: u8) -> Result<Self, Self::Error> {
+    match value {
+      1 => Ok(ProtocolVersion::V1),
+      val => Err(UnknownProtocolVersion(val)),
+    }
+  }
 }
 
 /// The version of snapshots that this server can understand.
@@ -62,6 +92,8 @@ impl core::fmt::Display for UnknownSnapshotVersion {
     write!(f, "unknown snapshot version {}", self.0)
   }
 }
+
+impl std::error::Error for UnknownSnapshotVersion {}
 
 impl TryFrom<u8> for SnapshotVersion {
   type Error = UnknownSnapshotVersion;
@@ -243,15 +275,15 @@ pub struct ReloadableOptions {
   /// Controls how often we check if we should perform a snapshot.
   /// We randomly stagger between this value and 2x this value to avoid the entire
   /// cluster from performing a snapshot at once.
-  snapshot_interval: DurationNoUninit,
+  snapshot_interval: PadDuration,
 
   /// Specifies the time in follower state without
   /// a leader before we attempt an election.
-  heartbeat_timeout: DurationNoUninit,
+  heartbeat_timeout: PadDuration,
 
   /// Specifies the time in candidate state without
   /// a leader before we attempt an election.
-  election_timeout: DurationNoUninit,
+  election_timeout: PadDuration,
 }
 
 impl Default for ReloadableOptions {
@@ -273,9 +305,9 @@ impl ReloadableOptions {
     Self {
       trailing_logs: options.trailing_logs,
       snapshot_threshold: options.snapshot_threshold,
-      snapshot_interval: DurationNoUninit::from_std(options.snapshot_interval),
-      heartbeat_timeout: DurationNoUninit::from_std(options.heartbeat_timeout),
-      election_timeout: DurationNoUninit::from_std(options.election_timeout),
+      snapshot_interval: PadDuration::from_std(options.snapshot_interval),
+      heartbeat_timeout: PadDuration::from_std(options.heartbeat_timeout),
+      election_timeout: PadDuration::from_std(options.election_timeout),
     }
   }
 
@@ -361,7 +393,7 @@ impl ReloadableOptions {
   /// Set how often we check if we should perform a snapshot.
   #[inline]
   pub const fn with_snapshot_interval(mut self, val: Duration) -> Self {
-    self.snapshot_interval = DurationNoUninit::from_std(val);
+    self.snapshot_interval = PadDuration::from_std(val);
     self
   }
 
@@ -376,7 +408,7 @@ impl ReloadableOptions {
   /// a leader before we attempt an election.
   #[inline]
   pub const fn with_heartbeat_timeout(mut self, val: Duration) -> Self {
-    self.heartbeat_timeout = DurationNoUninit::from_std(val);
+    self.heartbeat_timeout = PadDuration::from_std(val);
     self
   }
 
@@ -391,7 +423,7 @@ impl ReloadableOptions {
   /// a leader before we attempt an election.
   #[inline]
   pub const fn with_election_timeout(mut self, val: Duration) -> Self {
-    self.election_timeout = DurationNoUninit::from_std(val);
+    self.election_timeout = PadDuration::from_std(val);
     self
   }
 }

@@ -51,18 +51,18 @@ impl Address for MemoryAddress {}
 impl Transformable for MemoryAddress {
   type Error = <[u8; 16] as Transformable>::Error;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     self.0.into_bytes().encode(dst)
   }
 
-  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<()> {
+  fn encode_to_writer<W: io::Write>(&self, writer: &mut W) -> io::Result<usize> {
     self.0.into_bytes().encode_to_writer(writer)
   }
 
   async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
     &self,
     writer: &mut W,
-  ) -> io::Result<()>
+  ) -> io::Result<usize>
   where
     Self::Error: Send + Sync + 'static,
   {

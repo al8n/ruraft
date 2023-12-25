@@ -11,7 +11,8 @@ members = [
   "transport/grpc",
   "transport/quinn",
   "transport/s2n",
-  "utils"
+  "utils",
+  "wire",
 ]
 resolver = "2"
 
@@ -32,6 +33,7 @@ agnostic = "0.2"
 async-channel = "2"
 async-lock = "3"
 bytes = "1.5"
+byteorder = "1.5"
 futures = "0.3"
 humantime-serde = "1.1"
 nodecraft = "0.2"

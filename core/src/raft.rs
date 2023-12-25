@@ -14,6 +14,7 @@ use agnostic::Runtime;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
+use atomic_time::AtomicOptionInstant;
 use futures::channel::oneshot;
 use nodecraft::CheapClone;
 use wg::AsyncWaitGroup;
@@ -87,18 +88,18 @@ impl<I: Display, A: Display> core::fmt::Display for Node<I, A> {
 impl<I, A> Node<I, A> {
   /// Returns the id of the leader.
   #[inline]
-  pub fn id(&self) -> &I {
+  pub const fn id(&self) -> &I {
     &self.id
   }
 
   /// Returns the address of the leader.
   #[inline]
-  pub fn addr(&self) -> &A {
+  pub const fn addr(&self) -> &A {
     &self.addr
   }
 
   #[inline]
-  pub fn new(id: I, addr: A) -> Self {
+  pub const fn new(id: I, addr: A) -> Self {
     Self { id, addr }
   }
 }
@@ -133,22 +134,22 @@ impl Contact {
 
 #[derive(Clone)]
 #[repr(transparent)]
-struct OptionalContact(Arc<ArcSwapOption<Instant>>);
+struct OptionalContact(Arc<AtomicOptionInstant>);
 
 impl OptionalContact {
   #[inline]
   fn none() -> Self {
-    Self(Arc::new(ArcSwapOption::from_pointee(None)))
+    Self(Arc::new(AtomicOptionInstant::none()))
   }
 
   #[inline]
   fn update(&self) {
-    self.0.store(Some(Arc::new(Instant::now())));
+    self.0.store(Some(Instant::now()), Ordering::Release);
   }
 
   #[inline]
   fn get(&self) -> Option<Instant> {
-    self.0.load().as_ref().map(|x| **x)
+    self.0.load(Ordering::Acquire)
   }
 }
 

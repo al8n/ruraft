@@ -2,424 +2,21 @@ use std::{
   future::Future,
   pin::Pin,
   task::{Context, Poll},
-  time::Instant,
 };
 
+use byteorder::{ByteOrder, NetworkEndian};
 use futures::{channel::oneshot, Stream};
-use nodecraft::CheapClone;
+use nodecraft::{Address, CheapClone, Id, Transformable};
+use ruraft_utils::{DecodeVarintError, EncodeVarintError};
 
 use crate::{
   membership::Membership,
-  options::{ProtocolVersion, SnapshotVersion},
+  options::{ProtocolVersion, SnapshotVersion, UnknownProtocolVersion, UnknownSnapshotVersion},
   storage::Log,
   Node,
 };
 
 pub use async_channel::{RecvError, TryRecvError};
-
-/// A common sub-structure used to pass along protocol version and
-/// other information about the cluster.
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  getters(vis_all = "pub"),
-  setters(vis_all = "pub")
-)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Header<I, A> {
-  /// The protocol version of the request or response
-  #[viewit(
-    getter(
-      const,
-      attrs(doc = "Get the protocol version of the request or response"),
-    ),
-    setter(attrs(doc = "Set the protocol version of the request or response"),)
-  )]
-  protocol_version: ProtocolVersion,
-
-  /// The id of the node sending the RPC Request or Response
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Get the node of the request or response"),
-    ),
-    setter(attrs(doc = "Set the node of the request or response"),)
-  )]
-  from: Node<I, A>,
-}
-
-impl<I: CheapClone, A: CheapClone> CheapClone for Header<I, A> {
-  fn cheap_clone(&self) -> Self {
-    Self {
-      protocol_version: self.protocol_version,
-      from: self.from.cheap_clone(),
-    }
-  }
-}
-
-impl<I, A> Header<I, A> {
-  /// Create a new [`Header`] with the given `id` and `addr`.
-  #[inline]
-  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
-    Self {
-      protocol_version: version,
-      from: Node::new(id, addr),
-    }
-  }
-
-  #[inline]
-  pub fn addr(&self) -> &A {
-    self.from.addr()
-  }
-
-  #[inline]
-  pub fn id(&self) -> &I {
-    self.from.id()
-  }
-}
-
-impl<I, A> From<(ProtocolVersion, Node<I, A>)> for Header<I, A> {
-  #[inline]
-  fn from((version, from): (ProtocolVersion, Node<I, A>)) -> Self {
-    Self {
-      protocol_version: version,
-      from,
-    }
-  }
-}
-
-/// The command used to append entries to the
-/// replicated log.
-#[viewit::viewit]
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct AppendEntriesRequest<I, A, D> {
-  /// The header of the request
-  #[viewit(getter(const))]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, D: ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
-  header: Header<I, A>,
-
-  /// Provide the current term and leader
-  term: u64,
-
-  /// Provide the previous entries for integrity checking
-  prev_log_entry: u64,
-  /// Provide the previous term for integrity checking
-  prev_log_term: u64,
-
-  /// New entries to commit
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, D: ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
-  entries: Vec<Log<I, A, D>>,
-
-  /// Commit index on the leader
-  leader_commit: u64,
-}
-
-impl<I, A, D> AppendEntriesRequest<I, A, D> {
-  /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
-  /// are set to their default values.
-  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
-    Self {
-      header: Header {
-        protocol_version: version,
-        from: Node::new(id, addr),
-      },
-      term: 0,
-      prev_log_entry: 0,
-      prev_log_term: 0,
-      entries: Vec::new(),
-      leader_commit: 0,
-    }
-  }
-}
-
-/// The response returned from an
-/// [`AppendEntriesRequest`].
-#[viewit::viewit(setters(prefix = "with"))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-
-pub struct AppendEntriesResponse<I, A> {
-  /// The header of the response
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-
-  /// Newer term if leader is out of date
-  term: u64,
-
-  /// A hint to help accelerate rebuilding slow nodes
-  last_log: u64,
-
-  /// We may not succeed if we have a conflicting entry
-  success: bool,
-
-  /// There are scenarios where this request didn't succeed
-  /// but there's no need to wait/back-off the next attempt.
-  no_retry_backoff: bool,
-}
-
-impl<I, A> AppendEntriesResponse<I, A> {
-  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
-    Self {
-      header: Header::new(version, id, addr),
-      term: 0,
-      last_log: 0,
-      success: false,
-      no_retry_backoff: false,
-    }
-  }
-}
-
-impl<I: CheapClone, A: CheapClone> CheapClone for AppendEntriesResponse<I, A> {}
-
-/// The response returned by a pipeline.
-///
-/// The difference between this and [`AppendEntriesResponse`] is that this
-/// keeps some extra information:
-///
-/// 1. the time that the append request was started
-/// 2. the original request's `term`
-/// 3. the number of entries the original request has
-/// 4. highest log index of the original request's entries
-#[viewit::viewit(getters(vis_all = "pub"), setters(prefix = "with"))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct PipelineAppendEntriesResponse<I, A> {
-  /// The term of the request
-  term: u64,
-
-  /// The highest log index of the [`AppendEntriesRequest`]'s entries
-  highest_log_index: Option<u64>,
-
-  /// The number of entries in the [`AppendEntriesRequest`]'s
-  num_entries: usize,
-
-  /// The time that the original request was started
-  #[cfg_attr(feature = "serde", serde(with = "serde_millis"))]
-  start: Instant,
-
-  /// The response of the [`AppendEntriesRequest`]
-  #[viewit(getter(const, style = "ref"))]
-  resp: AppendEntriesResponse<I, A>,
-}
-
-impl<I: CheapClone, A: CheapClone> CheapClone for PipelineAppendEntriesResponse<I, A> {}
-
-/// The command used by a candidate to ask a Raft peer
-/// for a vote in an election.
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct VoteRequest<I, A> {
-  /// The header of the request
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-
-  /// The term of the candidate
-  term: u64,
-
-  /// The index of the candidate's last log entry
-  last_log_index: u64,
-
-  /// The term of the candidate's last log entry
-  last_log_term: u64,
-
-  /// Used to indicate to peers if this vote was triggered by a leadership
-  /// transfer. It is required for leadership transfer to work, because servers
-  /// wouldn't vote otherwise if they are aware of an existing leader.
-  leadership_transfer: bool,
-}
-
-impl<I: CheapClone, A: CheapClone> CheapClone for VoteRequest<I, A> {
-  fn cheap_clone(&self) -> Self {
-    Self {
-      header: self.header.cheap_clone(),
-      term: self.term,
-      last_log_index: self.last_log_index,
-      last_log_term: self.last_log_term,
-      leadership_transfer: self.leadership_transfer,
-    }
-  }
-}
-
-/// The command used by a candidate to ask a Raft peer
-/// for a vote in an election.
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct VoteResponse<I, A> {
-  /// The header of the response
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-
-  /// Newer term if leader is out of date.
-  term: u64,
-
-  /// Is the vote granted.
-  granted: bool,
-}
-
-impl<I: CheapClone, A: CheapClone> CheapClone for VoteResponse<I, A> {
-  fn cheap_clone(&self) -> Self {
-    Self {
-      header: self.header.cheap_clone(),
-      term: self.term,
-      granted: self.granted,
-    }
-  }
-}
-
-/// The command sent to a Raft peer to bootstrap its
-/// log (and state machine) from a snapshot on another peer.
-#[viewit::viewit]
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct InstallSnapshotRequest<I, A> {
-  /// The header of the request
-  #[viewit(getter(const))]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
-  header: Header<I, A>,
-
-  /// The snapshot version
-  snapshot_version: SnapshotVersion,
-
-  /// The term
-  term: u64,
-
-  /// The last index included in the snapshot
-  last_log_index: u64,
-  /// The last term included in the snapshot
-  last_log_term: u64,
-
-  /// Cluster membership.
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
-  membership: Membership<I, A>,
-
-  /// Log index where [`Membership`] entry was originally written.
-  membership_index: u64,
-
-  /// Size of the snapshot
-  size: u64,
-}
-
-/// The response returned from an
-/// [`InstallSnapshotRequest`].
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct InstallSnapshotResponse<I, A> {
-  /// The header of the response
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-
-  /// The term
-  term: u64,
-
-  /// Successfully install the snapshot or not.
-  success: bool,
-}
-
-/// The command used by a leader to signal another server to
-/// start an election.
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TimeoutNowRequest<I, A> {
-  /// The header of the request
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-}
-
-/// The response to [`TimeoutNowRequest`].
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TimeoutNowResponse<I, A> {
-  /// The header of the response
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-}
-
-/// The heartbeat command.
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct HeartbeatRequest<I, A> {
-  /// The header of the request
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-
-  /// Provide the current term and leader
-  term: u64,
-}
-
-/// The response returned from an
-/// [`HeartbeatRequest`].
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct HeartbeatResponse<I, A> {
-  /// The header of the response
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-
-  /// We may not succeed if we have a conflicting entry
-  success: bool,
-}
-
-impl<I, A> HeartbeatResponse<I, A> {
-  /// Create a new HeartbeatResponse
-  pub const fn new(header: Header<I, A>, success: bool) -> Self {
-    Self { header, success }
-  }
-}
-
-/// The response returned from an
-/// [`HeartbeatRequest`].
-#[viewit::viewit]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ErrorResponse<I, A> {
-  /// The header of the response
-  #[viewit(getter(const))]
-  header: Header<I, A>,
-  /// The error message
-  error: String,
-}
-
-impl<I, A> From<ErrorResponse<I, A>> for String {
-  fn from(value: ErrorResponse<I, A>) -> Self {
-    value.error
-  }
-}
-
-impl<I, A> ErrorResponse<I, A> {
-  /// Create a new ErrorResponse
-  pub const fn new(header: Header<I, A>, error: String) -> Self {
-    Self { header, error }
-  }
-}
 
 // macro_rules! encode {
 //   (v1::$ty:ident { $expr: expr }) => {{
@@ -437,116 +34,6 @@ impl<I, A> ErrorResponse<I, A> {
 //     Ok(buf)
 //   }};
 // }
-
-macro_rules! enum_wrapper {
-  (
-    $(#[$outer:meta])*
-    $vis:vis enum $name:ident $(<$($generic:tt),+>)? {
-      $(
-        $(#[$variant_meta:meta])*
-        $variant:ident($variant_ty: ty) = $variant_tag:literal => $variant_snake_case: ident
-      ), +$(,)?
-    }
-  ) => {
-    $(#[$outer])*
-    $vis enum $name $(< $($generic),+ >)? {
-      $(
-        $(#[$variant_meta])*
-        $variant($variant_ty),
-      )*
-    }
-
-    impl $(< $($generic),+ >)? $name $(< $($generic),+ >)? {
-      const fn type_name(&self) -> &'static str {
-        match self {
-          $(
-            Self::$variant(_) => stringify!($variant_ty),
-          )*
-        }
-      }
-
-      /// Returns the tag of this request kind for encoding/decoding.
-      #[inline]
-      pub const fn tag(&self) -> u8 {
-        match self {
-          $(
-            Self::$variant(_) => $variant_tag,
-          )*
-        }
-      }
-
-      /// Returns the variant name
-      #[inline]
-      pub const fn description(&self) -> &'static str {
-        match self {
-          $(
-            Self::$variant(_) => stringify!($variant),
-          )*
-        }
-      }
-
-      /// Returns the header of the request
-      pub const fn header(&self) -> &Header<I, A> {
-        match self {
-          $(
-            Self::$variant(req) => req.header(),
-          )*
-        }
-      }
-
-      /// Returns the protocol version of the request.
-      #[inline]
-      pub const fn protocol_version(&self) -> ProtocolVersion {
-        self.header().protocol_version
-      }
-
-      $(
-        paste::paste! {
-          #[doc = concat!("Returns the contained [`", stringify!($variant_ty), "`] request, consuming the self value. Panics if the value is not [`", stringify!($variant_ty), "`].")]
-          $vis fn [< unwrap_ $variant_snake_case>] (self) -> $variant_ty {
-            if let Self::$variant(val) = self {
-              val
-            } else {
-              panic!(concat!("expect ", stringify!($variant), ", buf got {}"), self.type_name())
-            }
-          }
-        }
-
-        #[doc = concat!("Construct a [`", stringify!($name), "`] from [`", stringify!($variant_ty), "`].")]
-        pub const fn $variant_snake_case(val: $variant_ty) -> Self {
-          Self::$variant(val)
-        }
-      )*
-    }
-  };
-}
-
-enum_wrapper!(
-  /// Request to be sent to the Raft node.
-  #[derive(Debug, Clone)]
-  #[non_exhaustive]
-  pub enum Request<I, A, D> {
-    AppendEntries(AppendEntriesRequest<I, A, D>) = 0 => append_entries,
-    Vote(VoteRequest<I, A>) = 1 => vote,
-    InstallSnapshot(InstallSnapshotRequest<I, A>) = 2 => install_snapshot,
-    TimeoutNow(TimeoutNowRequest<I, A>) = 3 => timeout_now,
-    Heartbeat(HeartbeatRequest<I, A>) = 4 => heartbeat,
-  }
-);
-
-enum_wrapper!(
-  /// Response from the Raft node
-  #[derive(Debug, Clone)]
-  #[non_exhaustive]
-  pub enum Response<I, A> {
-    AppendEntries(AppendEntriesResponse<I, A>) = 0 => append_entries,
-    Vote(VoteResponse<I, A>) = 1 => vote,
-    InstallSnapshot(InstallSnapshotResponse<I, A>) = 2 => install_snapshot,
-    TimeoutNow(TimeoutNowResponse<I, A>) = 3 => timeout_now,
-    Heartbeat(HeartbeatResponse<I, A>) = 4 => heartbeat,
-    Error(ErrorResponse<I, A>) = 255 => error,
-  }
-);
 
 /// Used to send a response back to the remote.
 pub struct RpcResponseSender<I, A>(oneshot::Sender<Response<I, A>>);
@@ -708,3 +195,185 @@ pub fn rpc<I, A, D, R>() -> (RpcProducer<I, A, D, R>, RpcConsumer<I, A, D, R>) {
   let (tx, rx) = async_channel::unbounded();
   (RpcProducer { tx }, RpcConsumer { rx })
 }
+
+macro_rules! enum_wrapper {
+  (
+    $(#[$outer:meta])*
+    $vis:vis enum $name:ident $(<$($generic:tt),+>)? {
+      $(
+        $(#[$variant_meta:meta])*
+        $variant:ident($variant_ty: ident $(<$($variant_generic:tt),+>)?) = $variant_tag:literal => $variant_snake_case: ident
+      ), +$(,)?
+    }
+  ) => {
+    $(#[$outer])*
+    $vis enum $name $(< $($generic),+ >)? {
+      $(
+        $(#[$variant_meta])*
+        $variant($variant_ty $(< $($variant_generic),+ >)?),
+      )*
+    }
+
+    impl $(< $($generic),+ >)? $name $(< $($generic),+ >)? {
+      const fn type_name(&self) -> &'static str {
+        match self {
+          $(
+            Self::$variant(_) => stringify!($variant_ty),
+          )*
+        }
+      }
+
+      /// Returns the tag of this request kind for encoding/decoding.
+      #[inline]
+      pub const fn tag(&self) -> u8 {
+        match self {
+          $(
+            Self::$variant(_) => $variant_tag,
+          )*
+        }
+      }
+
+      /// Returns the variant name
+      #[inline]
+      pub const fn description(&self) -> &'static str {
+        match self {
+          $(
+            Self::$variant(_) => stringify!($variant),
+          )*
+        }
+      }
+
+      /// Returns the header of the request
+      pub const fn header(&self) -> &Header<I, A> {
+        match self {
+          $(
+            Self::$variant(req) => req.header(),
+          )*
+        }
+      }
+
+      /// Returns the protocol version of the request.
+      #[inline]
+      pub const fn protocol_version(&self) -> ProtocolVersion {
+        self.header().protocol_version
+      }
+
+      $(
+        paste::paste! {
+          #[doc = concat!("Returns the contained [`", stringify!($variant_ty), "`] request, consuming the self value. Panics if the value is not [`", stringify!($variant_ty), "`].")]
+          $vis fn [< unwrap_ $variant_snake_case>] (self) -> $variant_ty $(< $($variant_generic),+ >)? {
+            if let Self::$variant(val) = self {
+              val
+            } else {
+              panic!(concat!("expect ", stringify!($variant), ", buf got {}"), self.type_name())
+            }
+          }
+        }
+
+        #[doc = concat!("Construct a [`", stringify!($name), "`] from [`", stringify!($variant_ty), "`].")]
+        pub const fn $variant_snake_case(val: $variant_ty $(< $($variant_generic),+ >)?) -> Self {
+          Self::$variant(val)
+        }
+      )*
+    }
+
+    $(
+      impl $(< $($variant_generic),+ >)? $variant_ty $(< $($variant_generic),+ >)? {
+        /// The type tag for encoding/decoding.
+        pub const TAG: u8 = $variant_tag;
+      }
+    )*
+  };
+}
+
+/// Transform error
+#[derive(thiserror::Error)]
+pub enum TransformError {
+  /// Encode buffer too small
+  #[error("encode buffer too small")]
+  EncodeBufferTooSmall,
+  /// Decode buffer too small
+  #[error("decode buffer too small")]
+  DecodeBufferTooSmall,
+  /// Encode error
+  #[error("encode error: {0}")]
+  Encode(Box<dyn std::error::Error + Send + Sync + 'static>),
+  /// Decode error
+  #[error("decode error: {0}")]
+  Decode(Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+impl From<UnknownProtocolVersion> for TransformError {
+  fn from(version: UnknownProtocolVersion) -> Self {
+    Self::decode(version)
+  }
+}
+
+impl From<UnknownSnapshotVersion> for TransformError {
+  fn from(version: UnknownSnapshotVersion) -> Self {
+    Self::decode(version)
+  }
+}
+
+impl From<EncodeVarintError> for TransformError {
+  fn from(err: EncodeVarintError) -> Self {
+    Self::Encode(Box::new(err))
+  }
+}
+
+impl From<DecodeVarintError> for TransformError {
+  fn from(err: DecodeVarintError) -> Self {
+    Self::Decode(Box::new(err))
+  }
+}
+
+impl core::fmt::Debug for TransformError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    core::fmt::Display::fmt(self, f)
+  }
+}
+
+impl TransformError {
+  pub fn encode<E>(err: E) -> Self
+  where
+    E: std::error::Error + Send + Sync + 'static,
+  {
+    Self::Encode(Box::new(err))
+  }
+
+  pub fn decode<E>(err: E) -> Self
+  where
+    E: std::error::Error + Send + Sync + 'static,
+  {
+    Self::Decode(Box::new(err))
+  }
+}
+
+#[cfg(test)]
+macro_rules! unit_test_transformable_roundtrip {
+  ($variant_ty:ident $(<$($generic:ty),+>)? => $variant_snake_case:ident) => {
+    paste::paste! {
+      #[tokio::test]
+      async fn [< test_ $variant_snake_case _transformable_roundtrip >]() {
+        test_transformable_roundtrip!(
+          $variant_ty $(<$($generic),+>)? {
+            $variant_ty::__small()
+          }
+        );
+
+        test_transformable_roundtrip!(
+          $variant_ty $(<$($generic),+>)? {
+            $variant_ty::__large()
+          }
+        );
+      }
+    }
+  };
+}
+
+mod header;
+pub use header::*;
+mod requests;
+pub use requests::*;
+mod responses;
+pub use responses::*;
