@@ -15,15 +15,27 @@ pub mod io;
 
 use core::time::Duration;
 #[cfg(feature = "std")]
-use std::{cmp, fs::DirBuilder, path::Path};
+use std::cmp;
 
 /// Like [`std::fs::create_dir_all`] but with a mode
 #[cfg(all(unix, feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(all(unix, feature = "std"))))]
-pub fn make_dir_all<P: AsRef<Path>>(path: &P, mode: u32) -> std::io::Result<()> {
+pub fn make_dir_all<P: AsRef<std::path::Path>>(path: &P, mode: u32) -> std::io::Result<()> {
   use std::os::unix::fs::DirBuilderExt;
+  std::fs::DirBuilder::new()
+    .recursive(true)
+    .mode(mode)
+    .create(path)
+}
 
-  DirBuilder::new().recursive(true).mode(mode).create(path)
+/// Like [`std::fs::create_dir_all`] but with a mode
+///
+/// On Windows, this function does nothing with mode.
+// TODO(al8n): I am not fimilar with Windows, so I am not sure how to create dir with mode.
+#[cfg(all(windows, feature = "std"))]
+#[cfg_attr(docsrs, doc(cfg(all(windows, feature = "std"))))]
+pub fn make_dir_all<P: AsRef<std::path::Path>>(path: &P, _mode: u32) -> std::io::Result<()> {
+  std::fs::DirBuilder::new().recursive(true).create(path)
 }
 
 /// Returns a value that is between the min_val and 2x min_val.
