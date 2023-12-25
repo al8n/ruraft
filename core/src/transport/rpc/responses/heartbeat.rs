@@ -54,7 +54,7 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
 
     if dst.len() < encoded_len {
@@ -64,12 +64,18 @@ where
     dst[offset..offset + MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
     offset += MESSAGE_SIZE_LEN;
 
-    let header_len = self.header.encoded_len();
-    self.header.encode(&mut dst[offset..])?;
-    offset += header_len;
+    offset += self.header.encode(&mut dst[offset..])?;
 
     dst[offset] = self.success as u8;
-    Ok(())
+    offset += 1;
+
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, offset
+    );
+
+    Ok(offset)
   }
 
   fn encoded_len(&self) -> usize {

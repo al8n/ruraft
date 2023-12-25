@@ -48,32 +48,28 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
 
     if dst.len() < encoded_len {
       return Err(TransformError::EncodeBufferTooSmall);
     }
     let mut offset = 0;
-    dst[offset..offset + MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
 
-    let header_encoded_len = self.header.encoded_len();
-    self
+    offset += self
       .header
-      .encode(&mut dst[offset..offset + header_encoded_len])?;
-    offset += header_encoded_len;
+      .encode(&mut dst[offset..])?;
 
-    let error_encoded_len = self.error.len();
-    dst[offset..offset + MESSAGE_SIZE_LEN]
-      .copy_from_slice(&(error_encoded_len as u32).to_be_bytes());
-    offset += MESSAGE_SIZE_LEN;
-    dst[offset..offset + error_encoded_len].copy_from_slice(self.error.as_bytes());
-    Ok(())
+    offset += self.error.encode(&mut dst[offset..]).map_err(TransformError::encode)?;
+
+    debug_assert_eq!(offset, encoded_len, "expected bytes wrote ({}) not match actual bytes wrote ({})", encoded_len, offset);
+    Ok(offset)
   } 
 
   fn encoded_len(&self) -> usize {
-    MESSAGE_SIZE_LEN + self.header.encoded_len() + MESSAGE_SIZE_LEN + self.error.len()
+    MESSAGE_SIZE_LEN + self.header.encoded_len() + self.error.encoded_len()
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
@@ -86,26 +82,20 @@ where
     }
 
     let mut offset = 0;
-    let encoded_len =
-      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
+    let encoded_len = NetworkEndian::read_u32(&src[offset..]) as usize;
     if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
-
     offset += MESSAGE_SIZE_LEN;
 
     let (header_len, header) = Header::<I, A>::decode(&src[offset..])?;
     offset += header_len;
 
-    let error_encoded_len =
-      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
-    offset += MESSAGE_SIZE_LEN;
-    let error = core::str::from_utf8(&src[offset..offset + error_encoded_len])
-      .map(|s| s.to_string())
-      .map_err(Self::Error::decode)?;
-
+    let (error_encoded_len, error) = String::decode(&src[offset..]).map_err(TransformError::decode)?;
     offset += error_encoded_len;
-    Ok((offset, Self { header, error }))
+
+    debug_assert_eq!(offset, encoded_len, "expected bytes read ({}) not match actual bytes read ({})", encoded_len, offset);
+  Ok((offset, Self { header, error }))
   }
 }
 

@@ -3,13 +3,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 // #![deny(missing_docs)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![forbid(unsafe_code)]
 
 pub use nodecraft::CheapClone;
 
 const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
-const MAX_INLINED_BYTES: usize = 256;
 
 /// A trait for the data type that can be used as the user data of the Raft.
 pub trait Data: Transformable + Send + Sync + 'static {}

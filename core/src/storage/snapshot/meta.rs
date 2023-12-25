@@ -1,9 +1,9 @@
-use core::mem;
-
+use byteorder::{NetworkEndian, ByteOrder};
 use nodecraft::Transformable;
+use ruraft_utils::{encoded_len_varint, encode_varint, decode_varint};
 
 use crate::{
-  membership::MembershipTransformError, options::UnknownSnapshotVersion,
+  membership::MembershipTransformError, options::UnknownSnapshotVersion, MESSAGE_SIZE_LEN,
 };
 
 use super::*;
@@ -96,8 +96,6 @@ impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for SnapshotMeta<I, A> {
 
 impl<I: core::hash::Hash + Eq, A: PartialEq> Eq for SnapshotMeta<I, A> {}
 
-const META_FIXED_FIELDS_SIZE: usize = mem::size_of::<SnapshotVersion>() + 5 * mem::size_of::<u64>();
-
 impl<I, A> SnapshotMeta<I, A> {
   /// Create a snapshot meta with a [`Membership`](crate::membership::Membership), and keep
   /// other fields as default.
@@ -136,6 +134,10 @@ pub enum SnapshotMetaTransformableError<I: Transformable, A: Transformable> {
   EncodeBufferTooSmall,
   #[error("{0}")]
   Membership(#[from] MembershipTransformError<I, A>),
+  #[error("{0}")]
+  EncodeVarint(#[from] ruraft_utils::EncodeVarintError),
+  #[error("{0}")]
+  DecodeVarint(#[from] ruraft_utils::DecodeVarintError),
   #[error("corrupted")]
   Corrupted,
   #[error("{0}")]
@@ -143,8 +145,6 @@ pub enum SnapshotMetaTransformableError<I: Transformable, A: Transformable> {
   #[error("{0}")]
   Custom(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
-
-const U64_SIZE: usize = mem::size_of::<u64>();
 
 impl<I, A> Transformable for SnapshotMeta<I, A>
 where
@@ -155,59 +155,73 @@ where
 {
   type Error = SnapshotMetaTransformableError<I, A>;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
     if dst.len() < encoded_len {
       return Err(SnapshotMetaTransformableError::EncodeBufferTooSmall);
     }
 
     let mut offset = 0;
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
+    offset += MESSAGE_SIZE_LEN;
     dst[offset] = self.version as u8;
     offset += 1;
-    dst[offset..offset + U64_SIZE].copy_from_slice(&self.term.to_be_bytes());
-    offset += U64_SIZE;
-    dst[offset..offset + U64_SIZE].copy_from_slice(&self.index.to_be_bytes());
-    offset += U64_SIZE;
-    dst[offset..offset + U64_SIZE].copy_from_slice(&self.timestamp.to_be_bytes());
-    offset += U64_SIZE;
-    dst[offset..offset + U64_SIZE].copy_from_slice(&self.size.to_be_bytes());
-    offset += U64_SIZE;
-    dst[offset..offset + U64_SIZE].copy_from_slice(&self.membership_index.to_be_bytes());
-    offset += U64_SIZE;
+    offset += encode_varint(self.term, &mut dst[offset..])?;
+    offset += encode_varint(self.index, &mut dst[offset..])?;
+    offset += encode_varint(self.timestamp, &mut dst[offset..])?;
+    offset += encode_varint(self.size, &mut dst[offset..])?;
+    offset += encode_varint(self.membership_index, &mut dst[offset..])?;
     self
       .membership
       .encode(&mut dst[offset..])
+      .map(|membership_encoded_len| {
+        offset += membership_encoded_len;
+        debug_assert_eq!(
+          offset, encoded_len,
+          "expected bytes wrote ({}) not match actual bytes wrote ({})",
+          encoded_len, offset
+        );
+        offset
+      })
       .map_err(Into::into)
   }
 
   fn encoded_len(&self) -> usize {
-    META_FIXED_FIELDS_SIZE + self.membership.encoded_len()
+    MESSAGE_SIZE_LEN + 1 + encoded_len_varint(self.term) + encoded_len_varint(self.index) + encoded_len_varint(self.timestamp) + encoded_len_varint(self.size) + encoded_len_varint(self.membership_index) + self.membership.encoded_len()
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
   where
     Self: Sized,
   {
-    if src.len() < META_FIXED_FIELDS_SIZE {
+    let src_len = src.len();
+    if src_len < MESSAGE_SIZE_LEN {
       return Err(SnapshotMetaTransformableError::Corrupted);
     }
 
     let mut offset = 0;
+    NetworkEndian::read_u32(&src[..MESSAGE_SIZE_LEN]);
+    offset += MESSAGE_SIZE_LEN;
     let version = SnapshotVersion::try_from(src[offset])
       .map_err(SnapshotMetaTransformableError::UnknownVersion)?;
     offset += 1;
-    let term = u64::from_be_bytes(src[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let index = u64::from_be_bytes(src[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let timestamp = u64::from_be_bytes(src[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let size = u64::from_be_bytes(src[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
-    let membership_index = u64::from_be_bytes(src[offset..offset + U64_SIZE].try_into().unwrap());
-    offset += U64_SIZE;
+    let (readed, term) = decode_varint(&src[offset..])?;
+    offset += readed;
+    let (readed, index) = decode_varint(&src[offset..])?;
+    offset += readed;
+    let (readed, timestamp) = decode_varint(&src[offset..])?;
+    offset += readed;
+    let (readed, size) = decode_varint(&src[offset..])?;
+    offset += readed;
+    let (readed, membership_index) = decode_varint(&src[offset..])?;
+    offset += readed;
     let (readed, membership) = Membership::decode(&src[offset..])?;
     offset += readed;
+    debug_assert_eq!(
+      offset, src_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      src_len, offset
+    );
     Ok((
       offset,
       Self {

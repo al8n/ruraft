@@ -10,7 +10,8 @@ use std::{
 };
 
 use agnostic::Runtime;
-use futures::AsyncWriteExt;
+use byteorder::{NetworkEndian, ByteOrder};
+use futures::{AsyncWriteExt, AsyncReadExt};
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
@@ -401,6 +402,7 @@ where
 
 /// Stored on disk. We also put a CRC
 /// on disk so that we can verify the snapshot.
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct FileSnapshotMeta<I, A> {
   #[cfg_attr(
@@ -413,6 +415,14 @@ struct FileSnapshotMeta<I, A> {
   meta: SnapshotMeta<I, A>,
   crc: u64,
 }
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for FileSnapshotMeta<I, A> {
+  fn eq(&self, other: &Self) -> bool {
+    self.meta == other.meta && self.crc == other.crc
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> Eq for FileSnapshotMeta<I, A> {}
 
 /// The [`SnapshotSource`] implementor for [`FileSnapshotStorage`].
 pub struct FileSnapshotSource<I, A, R> {
@@ -634,29 +644,22 @@ where
 {
   type Error = <SnapshotMeta<I, A> as Transformable>::Error;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
     if dst.len() < encoded_len {
       return Err(Self::Error::EncodeBufferTooSmall);
     }
 
-    self.meta.encode(dst)?;
-    dst[encoded_len..encoded_len + CRC_SIZE].copy_from_slice(&self.crc.to_be_bytes());
+    let mut offset = self.meta.encode(dst)?;
+    dst[offset..offset + CRC_SIZE].copy_from_slice(&self.crc.to_be_bytes());
+    offset += CRC_SIZE;
 
-    Ok(())
-  }
-
-  fn encode_to_writer<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-    self.meta.encode_to_writer(writer)?;
-    writer.write_all(&self.crc.to_be_bytes())
-  }
-
-  async fn encode_to_async_writer<W: futures::io::AsyncWrite + Send + Unpin>(
-    &self,
-    writer: &mut W,
-  ) -> std::io::Result<()> {
-    self.meta.encode_to_async_writer(writer).await?;
-    writer.write_all(&self.crc.to_be_bytes()).await
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, offset
+    );
+    Ok(offset)
   }
 
   fn encoded_len(&self) -> usize {
@@ -667,7 +670,12 @@ where
   where
     Self: Sized,
   {
-    <SnapshotMeta<I, A> as Transformable>::decode(src).and_then(|(readed, meta)| {
+    let src_len = src.len();
+    if src_len < CRC_SIZE {
+      return Err(Self::Error::Corrupted);
+    }
+
+    <SnapshotMeta<I, A> as Transformable>::decode(&src[..src_len - CRC_SIZE]).and_then(|(readed, meta)| {
       if src.len() < readed + CRC_SIZE {
         return Err(Self::Error::Corrupted);
       }
@@ -678,31 +686,23 @@ where
 
   fn decode_from_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<(usize, Self)>
   where
-    Self: Sized,
+    Self: Sized
   {
-    <SnapshotMeta<I, A> as Transformable>::decode_from_reader(reader).and_then(|(readed, meta)| {
-      let mut crc_buf = [0u8; CRC_SIZE];
-      reader.read_exact(&mut crc_buf)?;
-      let crc = u64::from_be_bytes(crc_buf);
-      Ok((readed + CRC_SIZE, Self { meta, crc }))
-    })
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf)?;
+    let encoded_len = NetworkEndian::read_u32(&len_buf) as usize;
+    
   }
 
-  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
+  fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
     reader: &mut R,
   ) -> std::io::Result<(usize, Self)>
   where
-    Self: Sized,
+    Self: Sized
   {
-    use futures::AsyncReadExt;
-
-    let (readed, meta) =
-      <SnapshotMeta<I, A> as Transformable>::decode_from_async_reader(reader).await?;
-
-    let mut crc_buf = [0u8; CRC_SIZE];
-    reader.read_exact(&mut crc_buf).await?;
-    let crc = u64::from_be_bytes(crc_buf);
-    Ok((readed + CRC_SIZE, Self { meta, crc }))
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf).await?;
+    let encoded_len = NetworkEndian::read_u32(&len_buf) as usize;
   }
 }
 
@@ -951,5 +951,45 @@ pub mod tests {
     // Check they are ordered
     assert_eq!(snaps[0].term, 36);
     assert_eq!(snaps[1].term, 5);
+  }
+
+  #[tokio::test]
+  async fn test_file_snapshot_meta_transformable_roundtrip() {
+    let meta = FileSnapshotMeta {
+      meta: SnapshotMeta {
+        version: SnapshotVersion::V1,
+        timestamp: 0,
+        index: 0,
+        term: 0,
+        membership: Membership::__single_server(),
+        membership_index: 0,
+        size: 0,
+      },
+      crc: 0,
+    };
+
+    {
+      let mut buf = vec![0; meta.encoded_len()];
+      let encoded_len = meta.encode(&mut buf).unwrap();
+      let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode(&buf).unwrap();
+      assert_eq!(encoded_len, read);
+      assert_eq!(meta, decoded);
+    }
+
+    {
+      let mut buf = vec![0; meta.encoded_len()];
+      let encoded_len = meta.encode_to_writer(&mut buf).unwrap();
+      let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode_from_reader(&mut std::io::Cursor::new(&buf)).unwrap();
+      assert_eq!(encoded_len, read);
+      assert_eq!(meta, decoded);
+    }
+
+    {
+      let mut buf = vec![0; meta.encoded_len()];
+      let encoded_len = meta.encode_to_async_writer(&mut buf).await.unwrap();
+      let (read, decoded) = FileSnapshotMeta::<SmolStr, SocketAddr>::decode_from_async_reader(&mut futures::io::Cursor::new(&buf)).await.unwrap();
+      assert_eq!(encoded_len, read);
+      assert_eq!(meta, decoded);
+    }
   }
 }

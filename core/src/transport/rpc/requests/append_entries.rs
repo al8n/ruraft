@@ -162,19 +162,17 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
     if dst.len() < encoded_len {
       return Err(TransformError::EncodeBufferTooSmall);
     }
 
     let mut offset = 0;
-    dst[..MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
 
-    let header_encoded_len = self.header.encoded_len();
-    self.header.encode(&mut dst[offset..])?;
-    offset += header_encoded_len;
+    offset += self.header.encode(&mut dst[offset..])?;
 
     offset += encode_varint(self.term, &mut dst[offset..])?;
     offset += encode_varint(self.prev_log_entry, &mut dst[offset..])?;
@@ -185,14 +183,18 @@ where
     offset += core::mem::size_of::<u32>();
 
     for entry in &self.entries {
-      let encoded_log_len = entry.encoded_len();
-      entry
+      offset += entry
         .encode(&mut dst[offset..])
         .map_err(Self::Error::encode)?;
-      offset += encoded_log_len;
     }
 
-    Ok(())
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, offset
+    );
+
+    Ok(offset)
   } 
 
   fn encoded_len(&self) -> usize {
@@ -216,8 +218,7 @@ where
     }
 
     let mut offset = 0;
-    let encoded_len =
-      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
+    let encoded_len = NetworkEndian::read_u32(&src[offset..]) as usize;
     if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
@@ -254,6 +255,12 @@ where
       offset += readed;
       entries.push(entry);
     }
+
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      encoded_len, offset
+    );
 
     Ok((
       offset,

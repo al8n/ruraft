@@ -1,3 +1,8 @@
+use byteorder::{NetworkEndian, ByteOrder};
+use ruraft_utils::{encode_varint, encoded_len_varint, decode_varint};
+
+use crate::MESSAGE_SIZE_LEN;
+
 use super::*;
 
 #[derive(thiserror::Error)]
@@ -10,6 +15,10 @@ pub enum LogTransformError<I: Transformable, A: Transformable, D: Transformable>
   Data(D::Error),
   #[error("{0}")]
   Membership(crate::membership::MembershipTransformError<I, A>),
+  #[error("{0}")]
+  EncodeVarint(#[from] ruraft_utils::EncodeVarintError),
+  #[error("{0}")]
+  DecodeVarint(#[from] ruraft_utils::DecodeVarintError),
   #[error("dst buffer is too small")]
   EncodeBufferTooSmall,
   #[error("unknown log kind {0}")]
@@ -33,120 +42,10 @@ where
       Self::EncodeBufferTooSmall => f.debug_tuple("EncodeBufferTooSmall").finish(),
       Self::Corrupted(arg0) => f.debug_tuple("Corrupted").field(arg0).finish(),
       Self::UnknownLogKind(arg0) => f.debug_tuple("UnknownLogKind").field(arg0).finish(),
+      Self::EncodeVarint(arg0) => f.debug_tuple("EncodeVarint").field(arg0).finish(),
+      Self::DecodeVarint(arg0) => f.debug_tuple("DecodeVarint").field(arg0).finish(),
     }
   }
-}
-
-const LEN_SIZE: usize = mem::size_of::<u32>();
-const LOG_HEADER_SIZE: usize = LEN_SIZE + 1 + 8 + 8 + 12;
-// inlined max 64 bytes on stack when encoding/decoding
-const INLINED: usize = 256;
-
-#[derive(Debug, Copy, Clone)]
-struct Header {
-  encoded_len: usize,
-  tag: u8,
-  index: u64,
-  term: u64,
-  appended_at: Option<SystemTime>,
-}
-
-impl Header {
-  fn from_bytes(b: [u8; LOG_HEADER_SIZE]) -> Self {
-    let encoded_len = u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize;
-    let tag = b[4];
-    let index = u64::from_be_bytes([b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12]]);
-    let term = u64::from_be_bytes([b[13], b[14], b[15], b[16], b[17], b[18], b[19], b[20]]);
-    let appended_at = &b[21..33];
-    let appended_at = if appended_at == [0; 12] {
-      None
-    } else {
-      Some(SystemTime::decode(appended_at).unwrap().1)
-    };
-
-    Self {
-      encoded_len,
-      tag,
-      index,
-      term,
-      appended_at,
-    }
-  }
-}
-
-fn encode_header(header: Header, dst: &mut [u8]) {
-  let Header {
-    encoded_len,
-    tag,
-    index,
-    term,
-    appended_at,
-  } = header;
-
-  let mut cur = 0;
-  dst[cur..cur + 4].copy_from_slice((encoded_len as u32).to_be_bytes().as_slice());
-  cur += 4;
-  dst[cur] = tag;
-  cur += 1;
-  dst[cur..cur + 8].copy_from_slice(index.to_be_bytes().as_slice());
-  cur += 8;
-  dst[cur..cur + 8].copy_from_slice(term.to_be_bytes().as_slice());
-  cur += 8;
-
-  const ENCODED_SYSTEMTIME_LEN: usize = 12;
-
-  match appended_at {
-    None => {
-      dst[cur..cur + ENCODED_SYSTEMTIME_LEN].copy_from_slice(&[0; ENCODED_SYSTEMTIME_LEN]);
-    }
-    Some(instant) => {
-      instant
-        .encode(&mut dst[cur..cur + ENCODED_SYSTEMTIME_LEN])
-        .unwrap();
-    }
-  }
-}
-
-fn decode_log_data<I, A, D>(
-  index: u64,
-  term: u64,
-  appended_at: Option<SystemTime>,
-  src: &[u8],
-) -> Result<Log<I, A, D>, LogTransformError<I, A, D>>
-where
-  I: Transformable,
-  A: Transformable,
-  D: Transformable,
-{
-  let (_, data) = D::decode(src).map_err(|e| LogTransformError::Data(e))?;
-  Ok(Log {
-    kind: LogKind::Data(Arc::new(data)),
-    index,
-    term,
-    appended_at,
-  })
-}
-
-fn decode_log_membership<I, A, D>(
-  index: u64,
-  term: u64,
-  appended_at: Option<SystemTime>,
-  src: &[u8],
-) -> Result<Log<I, A, D>, LogTransformError<I, A, D>>
-where
-  I: Id + Send + Sync + 'static,
-  <I as Transformable>::Error: Send + Sync + 'static,
-  A: Address + Send + Sync + 'static,
-  <A as Transformable>::Error: Send + Sync + 'static,
-  D: Transformable,
-{
-  let (_, data) = Membership::decode(src).map_err(|e| LogTransformError::Membership(e))?;
-  Ok(Log {
-    kind: LogKind::Membership(data),
-    index,
-    term,
-    appended_at,
-  })
 }
 
 // Log Binary Format
@@ -172,44 +71,50 @@ where
       return Err(LogTransformError::EncodeBufferTooSmall);
     }
 
-    let tag = self.kind.tag();
-    let header = Header {
-      encoded_len,
-      tag,
-      index: self.index,
-      term: self.term,
-      appended_at: self.appended_at,
-    };
-    match &self.kind {
-      LogKind::Data(d) => {
-        encode_header(header, dst);
-        let data_encoded_len = d.encoded_len();
-        d.encode(&mut dst[LOG_HEADER_SIZE..LOG_HEADER_SIZE + data_encoded_len])
-          .map_err(LogTransformError::Data)
+    let mut cur = 0;
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
+    cur += MESSAGE_SIZE_LEN;
+    dst[cur] = self.kind.tag();
+    cur += 1;
+
+    cur += encode_varint(self.index, &mut dst[cur..])?;
+    cur += encode_varint(self.term, &mut dst[cur..])?;
+
+    const ENCODED_SYSTEMTIME_LEN: usize = 12;
+
+    match self.appended_at {
+      None => {
+        dst[cur..cur + ENCODED_SYSTEMTIME_LEN].copy_from_slice(&[0; ENCODED_SYSTEMTIME_LEN]);
+        cur += ENCODED_SYSTEMTIME_LEN;
       }
-      LogKind::Noop => {
-        encode_header(header, dst);
-        Ok(())
-      }
-      LogKind::Barrier => {
-        encode_header(header, dst);
-        Ok(())
-      }
-      LogKind::Membership(m) => {
-        encode_header(header, dst);
-        let membership_encoded_len = m.encoded_len();
-        m.encode(&mut dst[LOG_HEADER_SIZE..LOG_HEADER_SIZE + membership_encoded_len])
-          .map_err(LogTransformError::Membership)
+      Some(instant) => {
+        instant
+          .encode(&mut dst[cur..cur + ENCODED_SYSTEMTIME_LEN]).unwrap();
+        cur += ENCODED_SYSTEMTIME_LEN;
       }
     }
+
+    match &self.kind {
+      LogKind::Data(d) => {
+        cur += d.encode(&mut dst[cur..]).map_err(LogTransformError::Data)?;
+      }
+      LogKind::Membership(m) => {
+        cur += m.encode(&mut dst[cur..])
+          .map_err(LogTransformError::Membership)?;
+      }
+      LogKind::Noop | LogKind::Barrier => {},
+    }
+    debug_assert_eq!(cur, encoded_len, "expected bytes wrote ({}) not match actual bytes wrote ({})", encoded_len, cur);
+    Ok(cur)
   }
 
   fn encoded_len(&self) -> usize {
+    MESSAGE_SIZE_LEN + 1 + encoded_len_varint(self.index) + encoded_len_varint(self.term) + 12 +
     match &self.kind {
-      LogKind::Data(d) => LOG_HEADER_SIZE + d.encoded_len(),
-      LogKind::Noop => LOG_HEADER_SIZE,
-      LogKind::Barrier => LOG_HEADER_SIZE,
-      LogKind::Membership(m) => LOG_HEADER_SIZE + m.encoded_len(),
+      LogKind::Data(d) => d.encoded_len(),
+      LogKind::Noop => 0,
+      LogKind::Barrier => 0,
+      LogKind::Membership(m) => m.encoded_len(),
     }
   }
 
@@ -217,191 +122,73 @@ where
   where
     Self: Sized,
   {
-    if src.len() < LOG_HEADER_SIZE {
+    let src_len = src.len();
+    if src_len < MESSAGE_SIZE_LEN {
       return Err(LogTransformError::Corrupted("corrupted log"));
     }
 
-    let mut header = [0; LOG_HEADER_SIZE];
-    header.copy_from_slice(&src[..LOG_HEADER_SIZE]);
-    let Header {
-      encoded_len,
-      tag,
-      index,
-      term,
-      appended_at,
-    } = Header::from_bytes(header);
-
-    if src.len() < encoded_len {
+    let mut cur = 0;
+    let encoded_len = NetworkEndian::read_u32(&src[..MESSAGE_SIZE_LEN]) as usize;
+    cur += MESSAGE_SIZE_LEN;
+    if src_len < encoded_len {
       return Err(LogTransformError::Corrupted("corrupted log"));
     }
 
-    match tag {
-      0 => decode_log_data(index, term, appended_at, &src[LOG_HEADER_SIZE..encoded_len])
-        .map(|l| (encoded_len, l)),
-      1 => Ok((
-        encoded_len,
-        Log {
-          kind: LogKind::Noop,
-          index,
-          term,
-          appended_at,
-        },
-      )),
-      2 => Ok((
-        encoded_len,
-        Log {
-          kind: LogKind::Barrier,
-          index,
-          term,
-          appended_at,
-        },
-      )),
-      3 => decode_log_membership(index, term, appended_at, &src[LOG_HEADER_SIZE..encoded_len])
-        .map(|l| (encoded_len, l)),
-      _ => Err(LogTransformError::UnknownLogKind(tag)),
-    }
-  }
+    let tag = src[cur];
+    cur += 1;
 
-  fn decode_from_reader<R: io::Read>(reader: &mut R) -> io::Result<(usize, Self)>
-  where
-    Self: Sized,
-  {
-    let mut buf = [0; LOG_HEADER_SIZE];
-    reader.read_exact(&mut buf)?;
-    let Header {
-      encoded_len: total_len,
-      tag,
-      index,
-      term,
-      appended_at,
-    } = Header::from_bytes(buf);
-    let remaining = total_len - LOG_HEADER_SIZE;
-    match tag {
+    let (readed, index) = decode_varint(&src[cur..])?;
+    cur += readed;
+    let (readed, term) = decode_varint(&src[cur..])?;
+    cur += readed;
+
+    let appended_at = &src[cur..cur + 12];
+    let (readed, appended_at) = if appended_at == [0; 12] {
+      (12, None)
+    } else {
+      let (readed, appended_at) = SystemTime::decode(appended_at).unwrap();
+      (readed, Some(appended_at))
+    };
+    cur += readed;
+
+    let log = match tag {
       0 => {
-        if remaining <= INLINED {
-          let mut dst = [0; INLINED];
-          reader.read_exact(&mut dst[..remaining])?;
-          decode_log_data(index, term, appended_at, &dst[..remaining])
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
-        } else {
-          let mut dst = vec![0; remaining];
-          reader.read_exact(&mut dst)?;
-          decode_log_data(index, term, appended_at, &dst)
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
+        let (readed, data) = D::decode(&src[cur..]).map_err(LogTransformError::Data)?;
+        cur += readed;
+        Log {
+          kind: LogKind::Data(Arc::new(data)),
+          index,
+          term,
+          appended_at,
         }
       }
-      1 => Ok((
-        total_len,
-        Log {
-          kind: LogKind::Noop,
-          index,
-          term,
-          appended_at,
-        },
-      )),
-      2 => Ok((
-        total_len,
-        Log {
-          kind: LogKind::Barrier,
-          index,
-          term,
-          appended_at,
-        },
-      )),
+      1 => Log {
+        kind: LogKind::Noop,
+        index,
+        term,
+        appended_at,
+      },
+      2 => Log {
+        kind: LogKind::Barrier,
+        index,
+        term,
+        appended_at,
+      },
       3 => {
-        if remaining <= INLINED {
-          let mut dst = [0; INLINED];
-          reader.read_exact(&mut dst[..remaining])?;
-          decode_log_membership(index, term, appended_at, &dst[..remaining])
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
-        } else {
-          let mut dst = vec![0; remaining];
-          reader.read_exact(&mut dst)?;
-          decode_log_membership(index, term, appended_at, &dst)
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
-        }
-      }
-      _ => Err(invalid_data(LogTransformError::<I, A, D>::UnknownLogKind(
-        tag,
-      ))),
-    }
-  }
-
-  async fn decode_from_async_reader<R: futures::io::AsyncRead + Send + Unpin>(
-    reader: &mut R,
-  ) -> io::Result<(usize, Self)>
-  where
-    Self: Sized,
-    Self::Error: Send + Sync + 'static,
-  {
-    use futures::AsyncReadExt;
-
-    let mut buf = [0; LOG_HEADER_SIZE];
-    reader.read_exact(&mut buf).await?;
-    let Header {
-      encoded_len: total_len,
-      tag,
-      index,
-      term,
-      appended_at,
-    } = Header::from_bytes(buf);
-
-    let remaining = total_len - LOG_HEADER_SIZE;
-    match tag {
-      0 => {
-        if remaining <= INLINED {
-          let mut dst = [0; INLINED];
-          reader.read_exact(&mut dst[..remaining]).await?;
-          decode_log_data(index, term, appended_at, &dst[..remaining])
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
-        } else {
-          let mut dst = vec![0; remaining];
-          reader.read_exact(&mut dst).await?;
-          decode_log_data(index, term, appended_at, &dst)
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
-        }
-      }
-      1 => Ok((
-        total_len,
+        let (readed, membership) =
+          Membership::decode(&src[cur..]).map_err(LogTransformError::Membership)?;
+        cur += readed;
         Log {
-          kind: LogKind::Noop,
+          kind: LogKind::Membership(membership),
           index,
           term,
           appended_at,
-        },
-      )),
-      2 => Ok((
-        total_len,
-        Log {
-          kind: LogKind::Barrier,
-          index,
-          term,
-          appended_at,
-        },
-      )),
-      3 => {
-        if remaining <= INLINED {
-          let mut dst = [0; INLINED];
-          reader.read_exact(&mut dst[..remaining]).await?;
-          decode_log_membership(index, term, appended_at, &dst[..remaining])
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
-        } else {
-          let mut dst = vec![0; remaining];
-          reader.read_exact(&mut dst).await?;
-          decode_log_membership(index, term, appended_at, &dst)
-            .map(|l| (total_len, l))
-            .map_err(invalid_data)
         }
       }
-      _ => Err(invalid_data(LogTransformError::UnknownLogKind(tag))),
-    }
+      _ => return Err(LogTransformError::UnknownLogKind(tag)),
+    };
+    debug_assert_eq!(cur, encoded_len, "expected bytes read ({}) not match actual bytes read ({})", encoded_len, cur);
+    Ok((cur, log))
   }
 }
 

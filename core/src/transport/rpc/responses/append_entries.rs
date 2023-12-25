@@ -110,19 +110,17 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
     if dst.len() < encoded_len {
       return Err(TransformError::EncodeBufferTooSmall);
     }
 
     let mut offset = 0;
-    dst[..MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    NetworkEndian::write_u32(&mut dst[offset..], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
 
-    let encoded_len = self.header.encoded_len();
-    self.header.encode(&mut dst[offset..])?;
-    offset += encoded_len;
+    offset += self.header.encode(&mut dst[offset..])?;
 
     let mut result = 0u8;
     // Set the first bit for `success`
@@ -139,16 +137,22 @@ where
     offset += 1;
 
     offset += encode_varint(self.term, &mut dst[offset..])?;
-    encode_varint(self.last_log, &mut dst[offset..])?;
-    Ok(())
+    offset += encode_varint(self.last_log, &mut dst[offset..])?;
+
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes wrote ({}) not match actual bytes wrote ({})",
+      encoded_len, offset
+    );
+    Ok(offset)
   }
 
   fn encoded_len(&self) -> usize {
     MESSAGE_SIZE_LEN
+      + self.header.encoded_len()
       + 1
       + encoded_len_varint(self.term)
       + encoded_len_varint(self.last_log)
-      + self.header.encoded_len()
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
@@ -161,13 +165,12 @@ where
     }
 
     let mut offset = 0;
-    let encoded_len =
-      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
+    let encoded_len = NetworkEndian::read_u32(&src[offset..]) as usize;
     if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
-
     offset += MESSAGE_SIZE_LEN;
+
     let (header_size, header) = <Header<I, A> as Transformable>::decode(&src[offset..])?;
     offset += header_size;
 
@@ -181,6 +184,12 @@ where
 
     let (readed, last_log) = decode_varint(&src[offset..])?;
     offset += readed;
+
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      encoded_len, offset
+    );
 
     Ok((
       offset,

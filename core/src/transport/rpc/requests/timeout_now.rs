@@ -61,7 +61,7 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     <Header<I, A> as Transformable>::encode(&self.header, dst)
   } 
 

@@ -1,6 +1,5 @@
-use std::{future::Future, io, mem, ops::RangeBounds, sync::Arc, time::SystemTime};
+use std::{future::Future, ops::RangeBounds, sync::Arc, time::SystemTime};
 
-use futures::AsyncWrite;
 #[cfg(feature = "metrics")]
 use futures::FutureExt;
 use nodecraft::Transformable;
@@ -8,7 +7,6 @@ use nodecraft::Transformable;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  utils::invalid_data,
   Data,
 };
 

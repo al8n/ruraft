@@ -192,19 +192,17 @@ where
 {
   type Error = TransformError;
 
-  fn encode(&self, dst: &mut [u8]) -> Result<(), Self::Error> {
+  fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
 
     if dst.len() < encoded_len {
       return Err(TransformError::EncodeBufferTooSmall);
     }
     let mut offset = 0;
-    dst[offset..offset + MESSAGE_SIZE_LEN].copy_from_slice(&(encoded_len as u32).to_be_bytes());
+    NetworkEndian::write_u32(&mut dst[..MESSAGE_SIZE_LEN], encoded_len as u32);
     offset += MESSAGE_SIZE_LEN;
 
-    let header_encoded_len = self.header.encoded_len();
-    self.header.encode(&mut dst[offset..])?;
-    offset += header_encoded_len;
+    offset += self.header.encode(&mut dst[offset..])?;
     dst[offset] = self.snapshot_version as u8;
     offset += 1;
     offset += encode_varint(self.size, &mut dst[offset..])?;
@@ -215,6 +213,15 @@ where
     self
       .membership
       .encode(&mut dst[offset..])
+      .map(|size| {
+        offset += size;
+        debug_assert_eq!(
+          offset, encoded_len,
+          "expected bytes wrote ({}) not match actual bytes wrote ({})",
+          encoded_len, offset
+        );
+        offset
+      })
       .map_err(Self::Error::encode)
   }
 
@@ -240,8 +247,7 @@ where
     }
 
     let mut offset = 0;
-    let encoded_len =
-      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
+    let encoded_len = NetworkEndian::read_u32(&src[offset..]) as usize;
     if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
@@ -264,6 +270,13 @@ where
     let (membership_len, membership) =
       Membership::<I, A>::decode(&src[offset..]).map_err(Self::Error::decode)?;
     offset += membership_len;
+
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      encoded_len, offset
+    );
+
     Ok((
       offset,
       Self {

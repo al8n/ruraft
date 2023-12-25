@@ -110,7 +110,7 @@ where
   } 
 
   fn encoded_len(&self) -> usize {
-    MESSAGE_SIZE_LEN + 1 + encoded_len_varint(self.term) + self.header.encoded_len()
+    MESSAGE_SIZE_LEN + self.header.encoded_len() + 1 + encoded_len_varint(self.term)
   }
 
   fn decode(src: &[u8]) -> Result<(usize, Self), Self::Error>
@@ -118,13 +118,12 @@ where
     Self: Sized,
   {
     let src_len = src.len();
-    if src_len < MESSAGE_SIZE_LEN + 1 {
+    if src_len < MESSAGE_SIZE_LEN {
       return Err(TransformError::DecodeBufferTooSmall);
     }
 
     let mut offset = 0;
-    let encoded_len =
-      u32::from_be_bytes(src[offset..offset + MESSAGE_SIZE_LEN].try_into().unwrap()) as usize;
+    let encoded_len = NetworkEndian::read_u32(&src[offset..]) as usize;
     if encoded_len > src_len {
       return Err(TransformError::DecodeBufferTooSmall);
     }
@@ -139,6 +138,12 @@ where
 
     let (readed, term) = decode_varint(&src[offset..])?;
     offset += readed;
+
+    debug_assert_eq!(
+      offset, encoded_len,
+      "expected bytes read ({}) not match actual bytes read ({})",
+      encoded_len, offset
+    );
 
     Ok((
       offset,
