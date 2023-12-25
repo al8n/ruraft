@@ -15,15 +15,14 @@ pub mod io;
 
 use core::time::Duration;
 #[cfg(feature = "std")]
-use std::{cmp, fs::DirBuilder, path::Path};
+use std::cmp;
 
 /// Like [`std::fs::create_dir_all`] but with a mode
 #[cfg(all(unix, feature = "std"))]
 #[cfg_attr(docsrs, doc(cfg(all(unix, feature = "std"))))]
-pub fn make_dir_all<P: AsRef<Path>>(path: &P, mode: u32) -> std::io::Result<()> {
+pub fn make_dir_all<P: AsRef<std::path::Path>>(path: &P, mode: u32) -> std::io::Result<()> {
   use std::os::unix::fs::DirBuilderExt;
-
-  DirBuilder::new().recursive(true).mode(mode).create(path)
+  std::fs::DirBuilder::new().recursive(true).mode(mode).create(path)
 }
 
 /// Returns a value that is between the min_val and 2x min_val.
