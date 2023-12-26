@@ -13,7 +13,7 @@ use nodecraft::{CheapClone, Transformable};
 
 use crate::{
   transport::{Address, Id},
-  MESSAGE_SIZE_LEN,
+  Node, MESSAGE_SIZE_LEN,
 };
 
 /// The suffrage of a server.
@@ -131,6 +131,18 @@ impl<I, A> Server<I, A> {
   #[inline]
   pub fn new(id: I, addr: A, suffrage: ServerSuffrage) -> Self {
     Self { id, addr, suffrage }
+  }
+}
+
+impl<I: Clone, A: Clone> Server<I, A> {
+  /// Creates a new `Server` from a [`Node`].
+  #[inline]
+  pub fn from_node(node: Node<I, A>, suffrage: ServerSuffrage) -> Self {
+    Self {
+      id: node.id().clone(),
+      addr: node.addr().clone(),
+      suffrage,
+    }
   }
 }
 

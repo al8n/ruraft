@@ -285,7 +285,7 @@ pub mod tests {
   use futures::{FutureExt, StreamExt};
 
   use crate::{
-    membership::Membership,
+    membership::{MembershipBuilder, Server, ServerSuffrage},
     options::SnapshotVersion,
     storage::{Log, LogKind},
   };
@@ -400,7 +400,8 @@ pub mod tests {
       .await
       .unwrap();
 
-    for _ in 0..10 {
+    for i in 0..10 {
+      tracing::error!("DEBUG: append_entries_pipeline: {}", i);
       pipeline.append_entries(args1.clone()).await.unwrap();
     }
 
@@ -493,7 +494,16 @@ pub mod tests {
       last_log_term: 9,
       size: 10,
       snapshot_version: SnapshotVersion::V1,
-      membership: Membership::__empty(),
+      membership: {
+        let mut builder = MembershipBuilder::new();
+        builder
+          .insert(Server::from_node(
+            fake_target.from().clone(),
+            ServerSuffrage::Voter,
+          ))
+          .unwrap();
+        builder.build().unwrap()
+      },
       membership_index: 1,
     };
     let args1 = args.clone();
@@ -518,12 +528,12 @@ pub mod tests {
           }
 
           // Try to read the bytes
-          let mut buf = Vec::new();
+          let mut buf = [0; 10];
           let reader = req.reader_mut().unwrap();
-          reader.read_to_end(&mut buf).await.unwrap();
+          reader.read_exact(&mut buf).await.unwrap();
 
           // Compare
-          assert_eq!(buf, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+          assert_eq!(buf, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
           let Ok(_) = req.respond(Response::install_snapshot(resp.clone())) else {
             panic!("unexpected respond fail");

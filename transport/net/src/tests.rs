@@ -1,11 +1,5 @@
-use std::{
-  convert::Infallible,
-  marker::PhantomData,
-  pin::Pin,
-  task::{Context, Poll},
-};
+use std::{convert::Infallible, marker::PhantomData};
 
-use futures::AsyncWrite;
 use ruraft_core::transport::*;
 
 use super::*;
@@ -161,7 +155,7 @@ pub async fn append_entries_pipeline_max_rpc_inflight<
 }
 
 /// Test [`NetTransport::vote`](Transport::vote) implementation.
-pub async fn vote_request<
+pub async fn vote<
   I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
   D: Data,
@@ -174,6 +168,7 @@ pub async fn vote_request<
   header2: Header<I, A::Address>,
   stream_layer2: S,
   resolver2: A,
+  fake_target: Header<I, A::Address>,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
@@ -185,7 +180,7 @@ pub async fn vote_request<
     .await
     .unwrap();
 
-  ruraft_core::tests::transport::vote(trans1, trans2).await;
+  ruraft_core::tests::transport::vote(trans1, trans2, fake_target).await;
 }
 
 /// Test [`NetTransport::install_snapshot`](Transport::install_snapshot) implementation.
@@ -202,6 +197,7 @@ pub async fn install_snapshot<
   header2: Header<I, A::Address>,
   stream_layer2: S,
   resolver2: A,
+  fake_target: Header<I, A::Address>,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
@@ -213,7 +209,7 @@ pub async fn install_snapshot<
     .await
     .unwrap();
 
-  ruraft_core::tests::transport::install_snapshot(trans1, trans2).await;
+  ruraft_core::tests::transport::install_snapshot(trans1, trans2, fake_target).await;
 }
 
 /// Test [`NetTransport`] pooled connection functionality.
@@ -221,104 +217,112 @@ pub async fn pooled_conn<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2: S) {
   unimplemented!()
 }
 
-#[derive(Clone)]
-struct TestCountingStreamLayer {
-  num_calls: Arc<AtomicUsize>,
-}
-
-impl TestCountingStreamLayer {
-  fn new() -> Self {
-    Self {
-      num_calls: Arc::new(AtomicUsize::new(0)),
-    }
-  }
-}
-
-impl AsyncRead for TestCountingStreamLayer {
-  fn poll_read(
-    self: Pin<&mut Self>,
-    _cx: &mut Context<'_>,
-    _buf: &mut [u8],
-  ) -> Poll<std::io::Result<usize>> {
-    unreachable!()
-  }
-}
-
-impl AsyncWrite for TestCountingStreamLayer {
-  fn poll_write(
-    self: Pin<&mut Self>,
-    _cx: &mut Context<'_>,
-    _buf: &[u8],
-  ) -> Poll<std::io::Result<usize>> {
-    unreachable!()
-  }
-
-  fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-    unreachable!()
-  }
-
-  fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-    unreachable!()
-  }
-}
-
-impl Connection for TestCountingStreamLayer {
-  type OwnedReadHalf = Self;
-
-  type OwnedWriteHalf = Self;
-
-  fn set_write_timeout(&self, _timeout: Option<Duration>) {}
-
-  fn write_timeout(&self) -> Option<Duration> {
-    None
-  }
-
-  fn set_read_timeout(&self, _timeout: Option<Duration>) {}
-
-  fn read_timeout(&self) -> Option<Duration> {
-    None
-  }
-
-  fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
-    (self.clone(), self.clone())
-  }
-}
-
-impl Listener for TestCountingStreamLayer {
-  type Stream = Self;
-
-  async fn accept(&mut self) -> std::io::Result<(Self::Stream, SocketAddr)> {
-    self.num_calls.fetch_add(1, Ordering::SeqCst);
-    Err(std::io::Error::new(
-      std::io::ErrorKind::Other,
-      "intentional error in test",
-    ))
-  }
-
-  fn local_addr(&self) -> std::io::Result<SocketAddr> {
-    panic!("no needed")
-  }
-}
-
-impl StreamLayer for TestCountingStreamLayer {
-  type Listener = Self;
-
-  type Stream = Self;
-
-  async fn connect(&self, _addr: SocketAddr) -> std::io::Result<Self::Stream> {
-    panic!("no needed")
-  }
-
-  async fn bind(&mut self, _addr: SocketAddr) -> std::io::Result<Self::Listener> {
-    Ok(self.clone())
-  }
-}
-
 /// Tests that [`Listener::accept`] errors in `NetTransport`
 /// do not result in a tight loop and spam the log. We verify this here by counting the number
 /// of calls against [`Listener::accept`] and the logger
 #[tokio::test]
+#[cfg(test)]
 async fn test_network_transport_listenbackoff() {
+  use std::{
+    pin::Pin,
+    task::{Context, Poll},
+  };
+
+  use futures::AsyncWrite;
+
+  #[derive(Clone)]
+  struct TestCountingStreamLayer {
+    num_calls: Arc<AtomicUsize>,
+  }
+
+  impl TestCountingStreamLayer {
+    fn new() -> Self {
+      Self {
+        num_calls: Arc::new(AtomicUsize::new(0)),
+      }
+    }
+  }
+
+  impl AsyncRead for TestCountingStreamLayer {
+    fn poll_read(
+      self: Pin<&mut Self>,
+      _cx: &mut Context<'_>,
+      _buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+      unreachable!()
+    }
+  }
+
+  impl AsyncWrite for TestCountingStreamLayer {
+    fn poll_write(
+      self: Pin<&mut Self>,
+      _cx: &mut Context<'_>,
+      _buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+      unreachable!()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+      unreachable!()
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+      unreachable!()
+    }
+  }
+
+  impl Connection for TestCountingStreamLayer {
+    type OwnedReadHalf = Self;
+
+    type OwnedWriteHalf = Self;
+
+    fn set_write_timeout(&self, _timeout: Option<Duration>) {}
+
+    fn write_timeout(&self) -> Option<Duration> {
+      None
+    }
+
+    fn set_read_timeout(&self, _timeout: Option<Duration>) {}
+
+    fn read_timeout(&self) -> Option<Duration> {
+      None
+    }
+
+    fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
+      (self.clone(), self.clone())
+    }
+  }
+
+  impl Listener for TestCountingStreamLayer {
+    type Stream = Self;
+
+    async fn accept(&mut self) -> std::io::Result<(Self::Stream, SocketAddr)> {
+      self.num_calls.fetch_add(1, Ordering::SeqCst);
+      Err(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        "intentional error in test",
+      ))
+    }
+
+    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+      panic!("no needed")
+    }
+  }
+
+  impl StreamLayer for TestCountingStreamLayer {
+    type Listener = Self;
+
+    type Stream = Self;
+
+    async fn connect(&self, _addr: SocketAddr) -> std::io::Result<Self::Stream> {
+      panic!("no needed")
+    }
+
+    async fn bind(&mut self, _addr: SocketAddr) -> std::io::Result<Self::Listener> {
+      Ok(self.clone())
+    }
+  }
+
   // TEST_TIME is the amount of time we will allow NetworkTransport#listen() to run
   // This needs to be long enough that to verify that maxDelay is in force,
   // but not so long as to be obnoxious when running the test suite.

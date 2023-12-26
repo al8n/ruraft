@@ -43,12 +43,20 @@ use futures::{
   io::{BufReader, BufWriter},
   AsyncRead, AsyncWriteExt, FutureExt,
 };
-use ruraft_core::{options::ProtocolVersion, transport::*, Data, HeartbeatHandler, Node};
+use ruraft_core::{HeartbeatHandler, Node};
 use wg::AsyncWaitGroup;
+
+pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
 
 /// Re-exports [`ruraft-wire`](ruraft_wire).
 pub mod wire {
+  pub use ruraft_core::transport::{Wire, WireError};
   pub use ruraft_wire::*;
+}
+
+/// Re-exports [`nodecraft`]'s address resolver.
+pub mod resolver {
+  pub use nodecraft::resolver::{dns::DnsResolver, socket_addr::SocketAddrResolver};
 }
 
 mod pipeline;
@@ -61,7 +69,7 @@ pub const DEFAULT_TIMEOUT_SCALE: usize = 256 * 1024; // 256KB
 /// if a zero value is passed. See https://github.com/hashicorp/raft/pull/541
 /// for rationale. Note, if this is changed we should update the doc comments
 /// below for [`NetTransportOptions`].
-pub const DEFAULT_MAX_INFLIGHT_REQUESTS: usize = 2;
+pub const DEFAULT_MAX_INFLIGHT_REQUESTS: usize = 3;
 
 /// The size of the buffer we will use for reading RPC requests into
 /// on followers
@@ -381,6 +389,13 @@ where
         .await
         .map_err(<Error<_, _, _> as TransportError>::resolver)?
     };
+
+    tracing::info!(
+      target = "ruraft.net.transport",
+      "advertise to {}",
+      advertise_addr
+    );
+
     let auto_port = advertise_addr.port() == 0;
 
     let ln = stream_layer.bind(advertise_addr).await.map_err(|e| {
@@ -618,7 +633,7 @@ where
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     req: InstallSnapshotRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    source: impl AsyncRead + Send + Unpin,
+    data: impl AsyncRead + Send + Unpin,
   ) -> Result<
     InstallSnapshotResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
@@ -632,7 +647,9 @@ where
     let req = Request::install_snapshot(req);
     let conn = self.send(addr, req).await?;
     let mut w = BufWriter::with_capacity(CONN_SEND_BUFFER_SIZE, conn);
-    futures::io::copy(source, &mut w).await?;
+    futures::io::copy(data, &mut w).await?;
+    w.flush().await?;
+
     let mut conn = BufReader::new(w.into_inner());
     let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
@@ -853,7 +870,7 @@ where
               let wg = wg.add(1);
               let heartbeat_handler = self.heartbeat_handler.clone();
               <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
-                if Self::handle_connection::<Resolver, W>(
+                if let Err(e) = Self::handle_connection::<Resolver, W>(
                   &heartbeat_handler,
                   conn,
                   producer,
@@ -861,10 +878,9 @@ where
                   local_header
                 )
                   .await
-                  .is_err()
                 {
                   // We do not need to log error here, error has been logged in handle_connection
-                  tracing::error!(target = "ruraft.net.transport", remote = %addr, "failed to handle connection");
+                  tracing::error!(target = "ruraft.net.transport", remote = %addr, err=%e, "failed to handle connection");
                 }
                 wg.done();
               });

@@ -175,15 +175,20 @@ where
     };
 
     // Send the RPC
+    tracing::error!("DEBUG: send");
     {
       W::encode_request_to_writer(&Request::AppendEntries(req), &mut self.conn)
         .await
-        .map_err(|e| Error::wire(W::Error::io(e)))?;
-      self
-        .conn
-        .flush()
-        .await
-        .map_err(|e| Error::wire(W::Error::io(e)))?;
+        .map_err(|e| {
+          tracing::error!("DEBUG: wire encode error: {:?}", e);
+          Error::wire(W::Error::io(e))
+        })?;
+      tracing::error!("DEBUG: after encode");
+      self.conn.flush().await.map_err(|e| {
+        tracing::error!("DEBUG: wire error: {:?}", e);
+        Error::wire(W::Error::io(e))
+      })?;
+      tracing::error!("DEBUG: after flush");
     }
 
     // Hand-off for decoding, this can also cause back-pressure

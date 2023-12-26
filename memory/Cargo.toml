@@ -28,12 +28,12 @@ serde = { workspace = true, optional = true }
 humantime-serde = { workspace = true, optional = true }
 
 # test features related dependencies
-smol_str = { version = "0.2", optional = true }
+smol_str = { workspace = true, optional = true }
 
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
 ruraft-core = { path = "../core", features = ["test"] }
-smol_str = "0.2"
+smol_str = { workspace = true } 
 tokio = { version = "1", features = ["full"] }
 paste = "1"
 
