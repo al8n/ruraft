@@ -14,6 +14,11 @@
 #![deny(missing_docs, warnings)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
+
+/// Exports unit tests to let users test transport implementation based on this crate.
+#[cfg(any(feature = "test", test))]
+pub mod tests;
+
 /// Stream layer abstraction.
 pub mod stream;
 use arc_swap::ArcSwapOption;
@@ -41,8 +46,10 @@ use futures::{
 use ruraft_core::{options::ProtocolVersion, transport::*, Data, HeartbeatHandler, Node};
 use wg::AsyncWaitGroup;
 
-/// Network [`Wire`](ruraft_core::transport::Wire) implementors.
-pub mod wire;
+/// Re-exports [`ruraft-wire`](ruraft_wire).
+pub mod wire {
+  pub use ruraft_wire::*;
+}
 
 mod pipeline;
 pub use pipeline::*;
@@ -322,9 +329,10 @@ where
 pub struct NetTransport<I, A, D, S, W>
 where
   A: AddressResolver,
-
   S: StreamLayer,
 {
+  #[cfg(test)]
+  shutdown_rx: async_channel::Receiver<()>,
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <A as AddressResolver>::Address>,
@@ -351,9 +359,7 @@ where
 impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
   I: Id,
-
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
@@ -399,6 +405,9 @@ where
       local_header: opts.header.clone(),
       producer,
       shutdown: shutdown.clone(),
+      #[cfg(test)]
+      shutdown_rx: shutdown_rx.clone(),
+      #[cfg(not(test))]
       shutdown_rx,
       wg: wg.clone(),
       heartbeat_handler: heartbeat_handler.clone(),
@@ -408,6 +417,8 @@ where
     ));
 
     Ok(Self {
+      #[cfg(test)]
+      shutdown_rx,
       shutdown,
       shutdown_tx,
       advertise_addr,
@@ -430,14 +441,21 @@ where
       _w: std::marker::PhantomData,
     })
   }
+
+  /// Closes the current streams.
+  pub async fn close_streams(&self) {
+    let mut pool = self.conn_pool.lock().await;
+
+    // Close all the connections in the connection pool and then remove their
+    // entry.
+    pool.clear();
+  }
 }
 
 impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
 where
   I: Id,
-
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-
   <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
@@ -893,7 +911,6 @@ where
       D,
       LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
     >,
-
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<(), Error<I, Resolver, W>>
@@ -1084,118 +1101,3 @@ impl<I, A, D> RequestMetricsExt for Request<I, A, D> {
     }
   }
 }
-
-// #[cfg(any(test, feature = "test"))]
-// pub(super) mod tests {
-//   use nodecraft::{NodeId, resolver::socket_addr::SocketAddrResolver};
-//   use ruraft_core::storage::{Log, LogKind};
-
-//   use super::*;
-
-//   pub trait NodeIdExt {
-//     fn random() -> Self;
-//   }
-
-//   impl NodeIdExt for NodeId {
-//     fn random() -> Self {
-//       use rand::Rng;
-//       use rand::distributions::Alphanumeric;
-//       let rand_string: String = rand::thread_rng()
-//         .sample_iter(&Alphanumeric)
-//         .take(32) // Adjust this to the desired length
-//         .map(char::from)
-//         .collect();
-
-//       NodeId::new(rand_string)
-//     }
-//   }
-
-//   async fn make_transport<R>() -> NetTransport<NodeId, SocketAddrResolver<Runtime = R>, SomeWire>
-//   where
-//     R: Runtime,
-//     <R::Sleep as Future>::Output: Send,
-//   {
-//     let opts = NetTransportOptions::new(NodeId::random(), "127.0.0.1:0".parse().unwrap());
-//     NetTransport::<R>::new(SocketAddrResolver::default(), opts).await.unwrap()
-//   }
-
-//   fn make_append_req(id: ServerId, addr: SocketAddr) -> AppendEntriesRequest {
-//     AppendEntriesRequest {
-//       header: Header::new(ProtocolVersion::V1, id, addr),
-//       term: 10,
-//       prev_log_entry: 100,
-//       prev_log_term: 4,
-//       entries: vec![Log::new(101, 4, LogKind::Noop)],
-//       leader_commit: 90,
-//     }
-//   }
-
-//   fn make_append_resp(id: ServerId, addr: SocketAddr) -> AppendEntriesResponse {
-//     AppendEntriesResponse {
-//       header: Header::new(ProtocolVersion::V1, id, addr),
-//       term: 4,
-//       last_log: 90,
-//       success: true,
-//       no_retry_backoff: false,
-//     }
-//   }
-
-//   pub async fn test_net_transport_start_stop<R: Runtime>()
-//   where
-//     <R::Sleep as Future>::Output: Send,
-//   {
-//     let trans = NetTransport::<R>::new(NetTransportOptions::new(
-//       NodeId::random(),
-//       "127.0.0.1:0".parse().unwrap(),
-//     ))
-//     .await
-//     .unwrap();
-
-//     trans.shutdown().await.unwrap();
-//   }
-
-//   pub async fn test_net_transport_append_entries<R>()
-//   where
-//     R: Runtime,
-//     <R::Sleep as Future>::Output: Send,
-//   {
-//     let trans1 = NetTransport::<R>::new(NetTransportOptions::new(
-//       NodeId::random(),
-//       "127.0.0.1:0".parse().unwrap(),
-//     ))
-//     .await
-//     .unwrap();
-
-//     let trans1_addr = trans1.local_addr();
-//     let args = make_append_req(trans1.local_id().clone(), trans1_addr);
-//     let expected_resp = make_append_resp(trans1.local_id().clone(), trans1_addr);
-//     let mut consumer = trans1.consumer();
-//     let resp = expected_resp.clone();
-
-//     R::spawn_detach(async move {
-//       use futures::StreamExt;
-
-//       futures::select! {
-//         req = consumer.next().fuse() => {
-//           let req = req.unwrap();
-//           let Ok(_) = req.respond(Response::append_entries(ProtocolVersion::V1, resp)) else {
-//             panic!("unexpected respond fail");
-//           };
-//         },
-//         _ = R::sleep(Duration::from_millis(200)).fuse() => {
-//           panic!("timeout");
-//         },
-//       }
-//     });
-
-//     let trans2 = NetTransport::<R>::new(NetTransportOptions::new(
-//       NodeId::random(),
-//       "127.0.0.1:0".parse().unwrap(),
-//     ))
-//     .await
-//     .unwrap();
-
-//     let res = trans2.append_entries(args).await.unwrap();
-//     assert_eq!(res, expected_resp);
-//   }
-// }

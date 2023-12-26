@@ -122,6 +122,21 @@ impl<I, A, D, R> Rpc<I, A, D, R> {
     self.tx.send(resp)
   }
 
+  /// Returns the request.
+  pub fn request(&self) -> &Request<I, A, D> {
+    &self.req
+  }
+
+  /// Returns the reader.
+  pub fn reader(&self) -> Option<&R> {
+    self.reader.as_ref()
+  }
+
+  /// Returns the mutable reader.
+  pub fn reader_mut(&mut self) -> Option<&mut R> {
+    self.reader.as_mut()
+  }
+
   /// Consumes the [`Rpc`] and returns the components.
   pub fn into_components(self) -> (RpcResponseSender<I, A>, Request<I, A, D>, Option<R>) {
     (RpcResponseSender(self.tx), self.req, self.reader)

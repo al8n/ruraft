@@ -17,9 +17,16 @@ serde = ["dep:serde", "humantime-serde", "ruraft-core/serde"]
 # enable DNS node address resolver
 dns = ["agnostic/dns", "nodecraft/dns"]
 
+# enable rmp encoding/decoding 
+rmp = ["ruraft-wire/rmp"]
+
+# enable bincode encoding/decoding
+bincode = ["ruraft-wire/bincode"]
+
+# enable metrics
 metrics = ["ruraft-core/metrics", "dep:metrics"]
 
-test = ["ruraft-core/test", "tempfile"]
+test = ["ruraft-core/test", "smol_str"]
 
 [dependencies]
 arc-swap = "1"
@@ -32,6 +39,7 @@ pollster = { workspace = true }
 pin-project = { workspace = true }
 ruraft-core = { path = "../../core" }
 ruraft-utils = { path = "../../utils", features = ["io"] }
+ruraft-wire = { path = "../../wire" }
 scopeguard = "1.1"
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -44,8 +52,9 @@ serde = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
 # test features related dependencies
-tempfile = { version = "3", optional = true }
+smol_str = { version = "0.2", optional = true }
 
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
 tokio = { version = "1.32", features = ["full"] }
+smol_str = "0.2"

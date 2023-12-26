@@ -116,7 +116,10 @@ pub mod tests {
     pub use super::super::storage::tests::*;
   }
 
-  // pub use super::transport::tests::*;
+  /// Transport layer unit tests
+  pub mod transport {
+    pub use super::super::transport::tests::*;
+  }
 
   /// Sequential access lock for tests.
   static ACCESS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());

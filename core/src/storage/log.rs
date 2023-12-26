@@ -244,8 +244,11 @@ impl<I, A, D> Log<I, A, D> {
     matches!(self.kind, LogKind::Noop)
   }
 
+  /// Only used for testing.
+  #[cfg(any(feature = "test", test))]
   #[inline]
-  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+  #[doc(hidden)]
+  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
     Self {
       index,
       term,
