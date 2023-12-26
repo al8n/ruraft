@@ -98,6 +98,7 @@ where
           // if we fail to receive a tx, it means
           // that the pipeline has been closed.
           if let Ok(ev) = ev {
+            tracing::error!("DEBUG: recv event");
             let resp = W::decode_response_from_reader(&mut conn)
               .await
               .map_err(|e| Error::wire(W::Error::io(e)))
@@ -121,6 +122,7 @@ where
 
             futures::select! {
               _ = finish_tx.send(resp).fuse() => {
+                tracing::error!("DEBUG: send response");
                 // no need to handle send error here
                 // because if we fail to send, it means that the pipeline has been closed.
               },

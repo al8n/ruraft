@@ -375,6 +375,7 @@ pub mod tests {
       for _ in 0..10 {
         futures::select! {
           req = trans1_consumer.next().fuse() => {
+            tracing::info!("receive request");
             let req = req.unwrap();
             // Verify the command
             if let Request::AppendEntries(req) = req.request() {
@@ -382,7 +383,7 @@ pub mod tests {
             } else {
               panic!("unexpected request");
             }
-
+            tracing::error!("prepare response");
             let Ok(_) = req.respond(Response::append_entries(resp.clone())) else {
               panic!("unexpected respond fail");
             };

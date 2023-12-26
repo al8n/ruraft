@@ -861,7 +861,7 @@ where
               // No error, reset loop delay
               loop_delay = Duration::ZERO;
 
-              tracing::debug!(target = "ruraft.net.transport", remote = %addr, "accepted connection");
+              tracing::debug!(target = "ruraft.net.transport", local = %self.local_header.addr(), remote = %addr, "accepted connection");
 
               // Spawn a task to handle the connection
               let producer = self.producer.clone();
@@ -870,18 +870,13 @@ where
               let wg = wg.add(1);
               let heartbeat_handler = self.heartbeat_handler.clone();
               <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
-                if let Err(e) = Self::handle_connection::<Resolver, W>(
+                Self::handle_connection::<Resolver, W>(
                   &heartbeat_handler,
                   conn,
                   producer,
                   shutdown_rx,
                   local_header
-                )
-                  .await
-                {
-                  // We do not need to log error here, error has been logged in handle_connection
-                  tracing::error!(target = "ruraft.net.transport", remote = %addr, err=%e, "failed to handle connection");
-                }
+                ).await;
                 wg.done();
               });
             }
@@ -929,12 +924,12 @@ where
     >,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
-  ) -> Result<(), Error<I, Resolver, W>>
+  )
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
-    let (mut reader, writer) = {
+    let (mut reader, mut writer) = {
       let (reader, writer) = conn.into_split();
       (
         BufReader::with_capacity(CONN_RECEIVE_BUFFER_SIZE, reader),
@@ -942,6 +937,48 @@ where
       )
     };
 
+    loop {
+      // TODO: connctx.done()
+      if let Err(e) = Self::handle_command::<Resolver, W>(
+        reader,
+        &mut writer,
+        &heartbeat_handler,
+        producer.clone(),
+        shutdown_rx.clone(),
+        local_header.clone(),
+      ).await {
+        if let Error::IO(ref e) = e {
+          if e.kind() != std::io::ErrorKind::UnexpectedEof {
+            tracing::error!(target = "ruraft.net.transport", err=%e, "failed to decode incoming command");
+          }
+        }
+        return;
+      }
+
+      if let Err(e) = writer.flush().await {
+        tracing::error!(target = "ruraft.net.transport", err=%e, "failed to flush response");
+        return;
+      }
+    }
+  }
+
+  async fn handle_command<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
+    reader: BufReader<<S::Stream as Connection>::OwnedReadHalf>,
+    writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
+    heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
+    producer: RpcProducer<
+      I,
+      A,
+      D,
+      LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
+    >,
+    shutdown_rx: async_channel::Receiver<()>,
+    local_header: Header<I, A>,
+  ) -> Result<(), Error<I, Resolver, W>>
+  where
+    <Resolver as AddressResolver>::Runtime: Runtime,
+    <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
+  {
     // TODO: metrics
     // measuring the time to get the first byte separately because the heartbeat conn will hang out here
     // for a good while waiting for a heartbeat whereas the append entries/rpc conn should not.
@@ -1025,7 +1062,7 @@ where
     Resolver: AddressResolver,
     W: Wire<Id = I, Address = A, Data = D>,
   >(
-    mut writer: BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
+    writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     local_header: Header<I, A>,
     handle: RpcHandle<I, A>,
     shutdown_rx: async_channel::Receiver<()>,
