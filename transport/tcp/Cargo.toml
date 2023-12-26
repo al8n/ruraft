@@ -22,7 +22,7 @@ native-tls = ["dep:native-tls", "async-native-tls"]
 
 metrics = ["ruraft-net/metrics"]
 
-test = ["ruraft-net/test", "tempfile"]
+test = ["ruraft-net/test"]
 
 [dependencies]
 agnostic = { workspace = true, features = ["net"] }
@@ -38,11 +38,8 @@ async-rustls = { version = "0.4", optional = true }
 native-tls = { version = "0.2", optional = true }
 async-native-tls = { version = "0.5", optional = true }
 
-
-# test features related dependencies
-tempfile = { version = "3", optional = true }
-
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
-ruraft-core = { path = "../../core" }
+ruraft-core = { path = "../../core", features = ["test"] }
+ruraft-net = { path = "../net", features = ["test"] }
 tokio = { version = "1.32", features = ["full"] }

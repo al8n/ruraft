@@ -64,39 +64,156 @@ pub async fn heartbeat_fastpath<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2
 }
 
 /// Test [`NetTransport::append_entries`](Transport::append_entries) implementation.
-pub async fn append_entries<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2: S) {
-  unimplemented!()
+pub async fn append_entries<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  header1: Header<I, A::Address>,
+  stream_layer1: S,
+  resolver1: A,
+  header2: Header<I, A::Address>,
+  stream_layer2: S,
+  resolver2: A,
+) where
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
+  let trans1 =
+    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
+      .await
+      .unwrap();
+  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
+    .await
+    .unwrap();
+
+  ruraft_core::tests::transport::append_entries(trans1, trans2).await;
 }
 
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline).
-pub async fn append_entries_pipeline<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2: S) {
-  unimplemented!()
+pub async fn append_entries_pipeline<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  header1: Header<I, A::Address>,
+  stream_layer1: S,
+  resolver1: A,
+  header2: Header<I, A::Address>,
+  stream_layer2: S,
+  resolver2: A,
+) where
+  D: core::fmt::Debug + PartialEq,
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
+  let trans1 =
+    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
+      .await
+      .unwrap();
+  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
+    .await
+    .unwrap();
+
+  ruraft_core::tests::transport::append_entries_pipeline(trans1, trans2).await;
 }
 
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport::close_streams`].
-pub async fn append_entries_pipeline_close_streams<S: StreamLayer, W: Wire, R: Runtime>(
-  _s1: S,
-  _s2: S,
-) {
+pub async fn append_entries_pipeline_close_streams<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  _header1: Header<I, A::Address>,
+  _stream_layer1: S,
+  _resolver1: A,
+  _header2: Header<I, A::Address>,
+  _stream_layer2: S,
+  _resolver2: A,
+) where
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
   unimplemented!()
 }
 
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport`]'s max rpc inflight special case.
-pub async fn append_entries_pipeline_max_rpc_inflight<S: StreamLayer, W: Wire, R: Runtime>(
-  _s1: S,
-  _s2: S,
-) {
+pub async fn append_entries_pipeline_max_rpc_inflight<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  _header1: Header<I, A::Address>,
+  _stream_layer1: S,
+  _resolver1: A,
+  _header2: Header<I, A::Address>,
+  _stream_layer2: S,
+  _resolver2: A,
+) where
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
   unimplemented!()
 }
 
 /// Test [`NetTransport::vote`](Transport::vote) implementation.
-pub async fn vote<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2: S) {
-  unimplemented!()
+pub async fn vote_request<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  header1: Header<I, A::Address>,
+  stream_layer1: S,
+  resolver1: A,
+  header2: Header<I, A::Address>,
+  stream_layer2: S,
+  resolver2: A,
+) where
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
+  let trans1 =
+    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
+      .await
+      .unwrap();
+  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
+    .await
+    .unwrap();
+
+  ruraft_core::tests::transport::vote(trans1, trans2).await;
 }
 
 /// Test [`NetTransport::install_snapshot`](Transport::install_snapshot) implementation.
-pub async fn install_snapshot<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2: S) {
-  unimplemented!()
+pub async fn install_snapshot<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  header1: Header<I, A::Address>,
+  stream_layer1: S,
+  resolver1: A,
+  header2: Header<I, A::Address>,
+  stream_layer2: S,
+  resolver2: A,
+) where
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
+  let trans1 =
+    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
+      .await
+      .unwrap();
+  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
+    .await
+    .unwrap();
+
+  ruraft_core::tests::transport::install_snapshot(trans1, trans2).await;
 }
 
 /// Test [`NetTransport`] pooled connection functionality.

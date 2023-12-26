@@ -421,7 +421,7 @@ pub mod tests {
   }
 
   /// Test [`Transport::vote`](Transport::vote).
-  pub async fn vote_request<T: Transport>(
+  pub async fn vote<T: Transport>(
     trans1: T,
     trans2: T,
     fake_vote_target: Header<T::Id, <T::Resolver as AddressResolver>::Address>,
