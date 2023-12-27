@@ -329,7 +329,10 @@ struct StreamContext {
 
 impl StreamContext {
   fn new() -> Arc<Self> {
-    Arc::new(Self { queue: ConcurrentQueue::unbounded(), mu: spin::Mutex::new(()) })
+    Arc::new(Self {
+      queue: ConcurrentQueue::unbounded(),
+      mu: spin::Mutex::new(()),
+    })
   }
 
   fn cancel(&self) {
@@ -915,7 +918,7 @@ where
               let local_header = self.local_header.clone();
               let wg = wg.add(1);
               let heartbeat_handler = self.heartbeat_handler.clone();
-              
+
               let (tx, rx) = async_channel::bounded(1);
               self.stream_ctx.push(tx);
               <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
@@ -975,8 +978,7 @@ where
     >,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
-  )
-  where
+  ) where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
@@ -1005,7 +1007,9 @@ where
         producer.clone(),
         shutdown_rx.clone(),
         local_header.clone(),
-      ).await {
+      )
+      .await
+      {
         Ok(r) => {
           if r.is_some() {
             reader = r;
@@ -1106,7 +1110,8 @@ where
           shutdown_rx,
           respond_label,
         )
-        .await.map(|_| reader);
+        .await
+        .map(|_| reader);
       }
     }
 
@@ -1128,7 +1133,9 @@ where
     metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
 
     // Wait for response
-    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label).await.map(|_| reader)
+    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label)
+      .await
+      .map(|_| reader)
   }
 
   async fn wait_and_send_response<

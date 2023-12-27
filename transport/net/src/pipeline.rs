@@ -121,7 +121,7 @@ where
               });
 
             futures::select! {
-              _ = finish_tx.send(resp).fuse() => { 
+              _ = finish_tx.send(resp).fuse() => {
                 // no need to handle send error here
                 // because if we fail to send, it means that the pipeline has been closed.
               },
@@ -179,12 +179,12 @@ where
     {
       W::encode_request_to_writer(&Request::AppendEntries(req), &mut self.conn)
         .await
-        .map_err(|e| {
-          Error::wire(W::Error::io(e))
-        })?;
-      self.conn.flush().await.map_err(|e| {
-        Error::wire(W::Error::io(e))
-      })?;
+        .map_err(|e| Error::wire(W::Error::io(e)))?;
+      self
+        .conn
+        .flush()
+        .await
+        .map_err(|e| Error::wire(W::Error::io(e)))?;
     }
 
     // Hand-off for decoding, this can also cause back-pressure
