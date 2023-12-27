@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use super::{stream::Connection, *};
 
+#[derive(Debug, Copy, Clone)]
 struct Event {
   /// The term of the request
   term: u64,
@@ -65,7 +66,7 @@ where
     }
     let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
     let (inprogress_tx, inprogress_rx) = async_channel::bounded(max_inflight - 2);
-    let (finish_tx, finish_rx) = async_channel::bounded(max_inflight - 2);
+    let (finish_tx, finish_rx) = async_channel::unbounded();
 
     let (reader, writer) = conn.into_split();
 
@@ -98,7 +99,6 @@ where
           // if we fail to receive a tx, it means
           // that the pipeline has been closed.
           if let Ok(ev) = ev {
-            tracing::error!("DEBUG: recv event");
             let resp = W::decode_response_from_reader(&mut conn)
               .await
               .map_err(|e| Error::wire(W::Error::io(e)))
@@ -121,8 +121,7 @@ where
               });
 
             futures::select! {
-              _ = finish_tx.send(resp).fuse() => {
-                tracing::error!("DEBUG: send response");
+              _ = finish_tx.send(resp).fuse() => { 
                 // no need to handle send error here
                 // because if we fail to send, it means that the pipeline has been closed.
               },
@@ -177,20 +176,15 @@ where
     };
 
     // Send the RPC
-    tracing::error!("DEBUG: send");
     {
       W::encode_request_to_writer(&Request::AppendEntries(req), &mut self.conn)
         .await
         .map_err(|e| {
-          tracing::error!("DEBUG: wire encode error: {:?}", e);
           Error::wire(W::Error::io(e))
         })?;
-      tracing::error!("DEBUG: after encode");
       self.conn.flush().await.map_err(|e| {
-        tracing::error!("DEBUG: wire error: {:?}", e);
         Error::wire(W::Error::io(e))
       })?;
-      tracing::error!("DEBUG: after flush");
     }
 
     // Hand-off for decoding, this can also cause back-pressure

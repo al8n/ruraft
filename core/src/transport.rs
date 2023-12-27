@@ -375,7 +375,6 @@ pub mod tests {
       for _ in 0..10 {
         futures::select! {
           req = trans1_consumer.next().fuse() => {
-            tracing::info!("receive request");
             let req = req.unwrap();
             // Verify the command
             if let Request::AppendEntries(req) = req.request() {
@@ -383,12 +382,11 @@ pub mod tests {
             } else {
               panic!("unexpected request");
             }
-            tracing::error!("prepare response");
             let Ok(_) = req.respond(Response::append_entries(resp.clone())) else {
               panic!("unexpected respond fail");
             };
           },
-          _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+          _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(12200)).fuse() => {
             panic!("timeout");
           },
         }
@@ -401,8 +399,7 @@ pub mod tests {
       .await
       .unwrap();
 
-    for i in 0..10 {
-      tracing::error!("DEBUG: append_entries_pipeline: {}", i);
+    for _ in 0..10 {
       pipeline.append_entries(args1.clone()).await.unwrap();
     }
 

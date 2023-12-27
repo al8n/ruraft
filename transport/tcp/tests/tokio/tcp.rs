@@ -15,8 +15,3 @@ unit_tests!(
     vote,
   )
 );
-
-#[test]
-fn test1() {
-  run(append_entries_pipeline::<TokioRuntime>())
-}

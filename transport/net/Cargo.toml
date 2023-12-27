@@ -33,6 +33,7 @@ arc-swap = "1"
 agnostic = { workspace = true }
 async-channel = { workspace = true }
 async-lock = { workspace = true }
+concurrent-queue = "2"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pollster = { workspace = true }
@@ -41,6 +42,7 @@ ruraft-core = { path = "../../core" }
 ruraft-utils = { path = "../../utils", features = ["io"] }
 ruraft-wire = { path = "../../wire" }
 scopeguard = "1.1"
+spin = "0.9"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 viewit = { workspace = true }

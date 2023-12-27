@@ -22,6 +22,7 @@ pub mod tests;
 /// Stream layer abstraction.
 pub mod stream;
 use arc_swap::ArcSwapOption;
+use concurrent_queue::ConcurrentQueue;
 use nodecraft::CheapClone;
 use ruraft_utils::io::LimitedReader;
 use stream::{Connection, Listener, StreamLayer};
@@ -82,7 +83,7 @@ const CONN_SEND_BUFFER_SIZE: usize = 256 * 1024; // 256KB
 /// a property of our current pipelining
 /// implementation and must not be changed unless we change the invariants of
 /// that implementation. Roughly speaking even with a zero-length in-flight
-/// buffer we still allow 2 requests to be in-flight before we block because we
+/// buffer we still allow 3 requests to be in-flight before we block because we
 /// only block after sending and the receiving task always unblocks the
 /// chan right after first send. This is a constant just to provide context
 /// rather than a magic number in a few places we have to check invariants to
@@ -321,6 +322,42 @@ where
   }
 }
 
+struct StreamContext {
+  mu: spin::Mutex<()>,
+  queue: ConcurrentQueue<async_channel::Sender<()>>,
+}
+
+impl StreamContext {
+  fn new() -> Arc<Self> {
+    Arc::new(Self { queue: ConcurrentQueue::unbounded(), mu: spin::Mutex::new(()) })
+  }
+
+  fn cancel(&self) {
+    let _guard = self.mu.lock();
+    while let Ok(tx) = self.queue.pop() {
+      tx.close();
+    }
+  }
+
+  fn renew(&self) {
+    let _guard = self.mu.lock();
+    // checkpoint, prevent new comming tx be poped out
+    let mut size = self.queue.len();
+    while size > 0 {
+      if let Ok(tx) = self.queue.pop() {
+        tx.close();
+      }
+      size -= 1;
+    }
+  }
+
+  fn push(&self, tx: async_channel::Sender<()>) {
+    if let Err(t) = self.queue.push(tx) {
+      t.into_inner().close();
+    }
+  }
+}
+
 /// Provides a TCP based transport that can be
 /// used to communicate with Raft on remote machines.
 ///
@@ -361,6 +398,7 @@ where
   timeout: Duration,
   stream_layer: S,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A::Address>>>,
+  stream_ctx: Arc<StreamContext>,
   _w: std::marker::PhantomData<W>,
 }
 
@@ -415,6 +453,7 @@ where
     let wg = AsyncWaitGroup::from(1);
     let (producer, consumer) = rpc();
     let heartbeat_handler = Arc::new(ArcSwapOption::from_pointee(None));
+    let stream_ctx = StreamContext::new();
     let request_handler = RequestHandler {
       ln,
       local_header: opts.header.clone(),
@@ -424,6 +463,7 @@ where
       shutdown_rx: shutdown_rx.clone(),
       #[cfg(not(test))]
       shutdown_rx,
+      stream_ctx: stream_ctx.clone(),
       wg: wg.clone(),
       heartbeat_handler: heartbeat_handler.clone(),
     };
@@ -452,6 +492,7 @@ where
       },
       timeout: opts.timeout,
       stream_layer,
+      stream_ctx,
       heartbeat_handler,
       _w: std::marker::PhantomData,
     })
@@ -464,6 +505,8 @@ where
     // Close all the connections in the connection pool and then remove their
     // entry.
     pool.clear();
+
+    self.stream_ctx.renew();
   }
 }
 
@@ -740,6 +783,7 @@ where
     }
     self.shutdown.store(true, Ordering::Release);
     self.shutdown_tx.close();
+    self.stream_ctx.cancel();
     self.wg.wait().await;
     Ok(())
   }
@@ -817,6 +861,7 @@ where
     }
     self.shutdown.store(true, Ordering::Release);
     self.shutdown_tx.close();
+    self.stream_ctx.cancel();
     self.wg.block_wait();
   }
 }
@@ -830,6 +875,7 @@ struct RequestHandler<I, A, D, S: StreamLayer> {
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A>>>,
+  stream_ctx: Arc<StreamContext>,
   wg: AsyncWaitGroup,
 }
 
@@ -869,8 +915,12 @@ where
               let local_header = self.local_header.clone();
               let wg = wg.add(1);
               let heartbeat_handler = self.heartbeat_handler.clone();
+              
+              let (tx, rx) = async_channel::bounded(1);
+              self.stream_ctx.push(tx);
               <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
                 Self::handle_connection::<Resolver, W>(
+                  rx,
                   &heartbeat_handler,
                   conn,
                   producer,
@@ -914,6 +964,7 @@ where
   }
 
   async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
+    ctx: async_channel::Receiver<()>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
     conn: S::Stream,
     producer: RpcProducer<
@@ -929,7 +980,7 @@ where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
-    let (mut reader, mut writer) = {
+    let (reader, mut writer) = {
       let (reader, writer) = conn.into_split();
       (
         BufReader::with_capacity(CONN_RECEIVE_BUFFER_SIZE, reader),
@@ -937,22 +988,43 @@ where
       )
     };
 
+    let mut reader = Some(reader);
     loop {
-      // TODO: connctx.done()
-      if let Err(e) = Self::handle_command::<Resolver, W>(
-        reader,
+      futures::select! {
+        _ = ctx.recv().fuse() => {
+          tracing::debug!(target = "ruraft.net.transport", "stream layer is closed");
+          return;
+        },
+        default => {},
+      }
+
+      match Self::handle_command::<Resolver, W>(
+        reader.take().unwrap(),
         &mut writer,
-        &heartbeat_handler,
+        heartbeat_handler,
         producer.clone(),
         shutdown_rx.clone(),
         local_header.clone(),
       ).await {
-        if let Error::IO(ref e) = e {
-          if e.kind() != std::io::ErrorKind::UnexpectedEof {
-            tracing::error!(target = "ruraft.net.transport", err=%e, "failed to decode incoming command");
+        Ok(r) => {
+          if r.is_some() {
+            reader = r;
+          } else {
+            if let Err(e) = writer.flush().await {
+              tracing::error!(target = "ruraft.net.transport", err=%e, "failed to flush response");
+              return;
+            }
+            return;
           }
         }
-        return;
+        Err(e) => {
+          if let Error::IO(ref e) = e {
+            if e.kind() != std::io::ErrorKind::UnexpectedEof {
+              tracing::error!(target = "ruraft.net.transport", err=%e, "failed to decode incoming command");
+            }
+          }
+          return;
+        }
       }
 
       if let Err(e) = writer.flush().await {
@@ -963,7 +1035,7 @@ where
   }
 
   async fn handle_command<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
-    reader: BufReader<<S::Stream as Connection>::OwnedReadHalf>,
+    mut reader: BufReader<<S::Stream as Connection>::OwnedReadHalf>,
     writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
     producer: RpcProducer<
@@ -974,7 +1046,7 @@ where
     >,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
-  ) -> Result<(), Error<I, Resolver, W>>
+  ) -> Result<Option<BufReader<<S::Stream as Connection>::OwnedReadHalf>>, Error<I, Resolver, W>>
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
@@ -1003,16 +1075,17 @@ where
     let respond_label = req.respond_label();
 
     let mut is_heartbeat = false;
-    let (rpc, handle) = match &req {
+    let ((rpc, handle), reader) = match &req {
       Request::InstallSnapshot(ireq) => {
         let lr = LimitedReader::new(*ireq.size(), reader);
-        Rpc::new(req, Some(lr))
+        (Rpc::new(req, Some(lr)), None)
       }
       Request::Heartbeat(_) => {
         is_heartbeat = true;
-        Rpc::new(req, None)
+        (Rpc::new(req, None), None)
       }
-      _ => Rpc::new(req, None),
+      Request::AppendEntries(_) => (Rpc::new(req, None), Some(reader)),
+      _ => (Rpc::new(req, None), None),
     };
 
     // Check for heartbeat fast-path
@@ -1033,7 +1106,7 @@ where
           shutdown_rx,
           respond_label,
         )
-        .await;
+        .await.map(|_| reader);
       }
     }
 
@@ -1055,14 +1128,14 @@ where
     metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
 
     // Wait for response
-    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label).await
+    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label).await.map(|_| reader)
   }
 
   async fn wait_and_send_response<
     Resolver: AddressResolver,
     W: Wire<Id = I, Address = A, Data = D>,
   >(
-    writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
+    mut writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     local_header: Header<I, A>,
     handle: RpcHandle<I, A>,
     shutdown_rx: async_channel::Receiver<()>,
@@ -1083,10 +1156,7 @@ where
     let resp = futures::select! {
       res = handle.fuse() => {
         match res {
-          Ok(resp) => {
-            resp
-
-          },
+          Ok(resp) => resp,
           Err(e) => {
             tracing::error!(target = "ruraft.net.transport", err=%e, "canceled command");
             Response::error(ErrorResponse::new(local_header, e.to_string()))
