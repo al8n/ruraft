@@ -5,7 +5,7 @@ use ruraft_tcp::tests::tcp::*;
 unit_tests!(
   SmolRuntime => run(
     start_and_shutdown,
-    // heartbeat_fastpath,
+    heartbeat_fastpath,
     close_streams,
     append_entries,
     append_entries_pipeline,
@@ -19,3 +19,8 @@ unit_tests!(
     pooled_conn,
   )
 );
+
+#[test]
+fn test() {
+  run(append_entries_pipeline_max_rpc_inflight_some::<SmolRuntime>())
+}

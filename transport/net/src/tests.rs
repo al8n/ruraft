@@ -106,11 +106,12 @@ pub async fn close_streams<
 
     loop {
       futures::select! {
-        req = trans1_consumer.next().fuse() => {
-          let req = req.unwrap();
-          let Ok(_) = req.respond(Response::append_entries(resp1.clone())) else {
-            panic!("unexpected respond fail");
-          };
+        req = trans1_consumer.recv().fuse() => {
+          if let Ok(req) = req {
+            let Ok(_) = req.respond(Response::append_entries(resp1.clone())) else {
+              panic!("unexpected respond fail");
+            };
+          }
         },
         _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
           panic!("timeout");
@@ -197,8 +198,43 @@ where
 }
 
 /// Test [`NetTransport::set_heartbeat_handler`](Transport::set_heartbeat_handler) implementation.
-pub async fn heartbeat_fastpath<S: StreamLayer, W: Wire, R: Runtime>(_s1: S, _s2: S) {
-  unimplemented!()
+pub async fn heartbeat_fastpath<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  header1: Header<I, A::Address>,
+  stream_layer1: S,
+  resolver1: A,
+  header2: Header<I, A::Address>,
+  stream_layer2: S,
+  resolver2: A,
+) where
+  D: core::fmt::Debug + PartialEq,
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(header1)
+      .with_max_pool(2)
+      .with_timeout(Duration::from_secs(1)),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::new(
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(header2)
+      .with_max_pool(2)
+      .with_timeout(Duration::from_secs(1)),
+  )
+  .await
+  .unwrap();
+
+  ruraft_core::tests::transport::heartbeat_fastpath(trans1, trans2).await;
 }
 
 /// Test [`NetTransport::append_entries`](Transport::append_entries) implementation.

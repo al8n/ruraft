@@ -44,7 +44,7 @@ use futures::{
   io::{BufReader, BufWriter},
   AsyncRead, AsyncWriteExt, FutureExt,
 };
-use ruraft_core::{HeartbeatHandler, Node};
+use ruraft_core::Node;
 use wg::AsyncWaitGroup;
 
 pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
@@ -1096,7 +1096,7 @@ where
       if let Some(h) = handler.as_ref() {
         let (sender, req, _) = rpc.into_components();
         if let Request::Heartbeat(req) = req {
-          h.handle_heartbeat(local_header.clone(), req, sender).await;
+          (h)(local_header.clone(), req, sender).await;
         } else {
           unreachable!();
         }

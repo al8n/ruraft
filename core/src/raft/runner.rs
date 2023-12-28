@@ -48,7 +48,7 @@ mod follower;
 mod leader;
 
 /// Heartbeat RPC handler, can be used to handle heartbeat requests in a fast-path manner.
-pub struct HeartbeatHandler<I, A> {
+pub(super) struct DefaultHeartbeatHandler<I, A> {
   pub(super) state: Arc<State>,
   pub(super) last_contact: OptionalContact,
   pub(super) shutdown_rx: async_channel::Receiver<()>,
@@ -56,7 +56,7 @@ pub struct HeartbeatHandler<I, A> {
   pub(super) observers: Arc<async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>>,
 }
 
-impl<I, A> HeartbeatHandler<I, A>
+impl<I, A> DefaultHeartbeatHandler<I, A>
 where
   I: Id,
   A: Address,

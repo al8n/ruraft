@@ -723,7 +723,10 @@ where
   fn set_heartbeat_handler(
     &self,
     _handler: Option<
-      ruraft_core::HeartbeatHandler<Self::Id, <Self::Resolver as AddressResolver>::Address>,
+      ruraft_core::transport::HeartbeatHandler<
+        Self::Id,
+        <Self::Resolver as AddressResolver>::Address,
+      >,
     >,
   ) {
   }

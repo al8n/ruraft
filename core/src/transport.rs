@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use agnostic::Runtime;
 use futures::{AsyncRead, AsyncWrite, Stream};
@@ -11,7 +11,7 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-use crate::{options::ProtocolVersion, Data, HeartbeatHandler, Node};
+use crate::{options::ProtocolVersion, Data, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -126,6 +126,19 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Gracefully closes the pipeline and terminates any in-flight requests.
   fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
+
+/// Represents the header used for fastpath heartbeat.
+pub type HeartbeatHandler<I, A> = Arc<
+  dyn Fn(
+      Header<I, A>,
+      HeartbeatRequest<I, A>,
+      RpcResponseSender<I, A>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>>
+    + Send
+    + Sync
+    + 'static,
+>;
+
 /// Defines the capabilities and requirements for communication with other nodes across a network.
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
@@ -319,8 +332,56 @@ pub mod tests {
   }
 
   /// Test [`Transport::set_heartbeat_handler`](Transport::set_heartbeat_handler).
-  pub async fn heartbeat_fastpath<T: Transport>(_t1: T, _t2: T) {
-    todo!()
+  pub async fn heartbeat_fastpath<T: Transport>(t1: T, t2: T)
+  where
+    T::Data: core::fmt::Debug + PartialEq,
+  {
+    let args = HeartbeatRequest {
+      header: t2.header().clone(),
+      term: 10,
+    };
+    let args1 = args.clone();
+    let resp = HeartbeatResponse {
+      header: t1.header().clone(),
+      success: true,
+    };
+    let resp1 = resp.clone();
+
+    let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let invoked1 = invoked.clone();
+
+    let fast_path = Arc::new(
+      move |_header,
+            req,
+            tx: RpcResponseSender<T::Id, <T::Resolver as AddressResolver>::Address>| {
+        let argsx = args1.clone();
+        let respx = resp1.clone();
+        let invokedx = invoked1.clone();
+        async move {
+          // Verify the command
+          assert_eq!(req, argsx);
+
+          let Ok(_) = tx.respond(Response::heartbeat(respx)) else {
+            panic!("unexpected respond fail");
+          };
+          invokedx.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        .boxed()
+      },
+    );
+
+    t1.set_heartbeat_handler(Some(fast_path));
+
+    let res = t2.heartbeat(t1.header().from(), args).await.unwrap();
+
+    // Verify the response
+    assert_eq!(res, resp, "resp mismatch");
+
+    // Ensure fast-path is used
+    assert!(
+      invoked.load(std::sync::atomic::Ordering::SeqCst),
+      "fast-path not used"
+    );
   }
 
   /// Test [`Transport::append_entries`](Transport::append_entries).

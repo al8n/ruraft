@@ -5,7 +5,7 @@ use ruraft_tcp::tests::tcp::*;
 unit_tests!(
   AsyncStdRuntime => run(
     start_and_shutdown,
-    // heartbeat_fastpath,
+    heartbeat_fastpath,
     close_streams,
     append_entries,
     append_entries_pipeline,

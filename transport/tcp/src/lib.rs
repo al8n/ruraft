@@ -96,7 +96,7 @@ pub mod tests {
         where
           <R::Sleep as Future>::Output: Send + 'static,
         {
-          todo!()
+          tests::heartbeat_fastpath::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
         }
 
         #[doc = concat!("Test close streams for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]

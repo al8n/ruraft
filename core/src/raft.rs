@@ -24,7 +24,11 @@ use crate::{
   fsm::FinateStateMachine,
   membership::{Membership, Memberships, Server, ServerSuffrage},
   options::{Options, ReloadableOptions},
-  raft::{fsm::FSMRunner, runner::RaftRunner, snapshot::SnapshotRunner},
+  raft::{
+    fsm::FSMRunner,
+    runner::{DefaultHeartbeatHandler, RaftRunner},
+    snapshot::SnapshotRunner,
+  },
   sidecar::{NoopSidecar, Sidecar},
   storage::{
     Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
@@ -46,7 +50,6 @@ mod observer;
 pub use observer::*;
 
 mod runner;
-pub use runner::HeartbeatHandler;
 
 mod snapshot;
 use snapshot::{CountingReader, SnapshotRestoreMonitor};
@@ -827,16 +830,24 @@ where
     let candidate_from_leadership_transfer = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(Shutdown::new(shutdown_tx, wg.clone()));
 
-    // Setup a heartbeat fast-path to avoid head-of-line
-    // blocking where possible. It MUST be safe for this
-    // to be called concurrently with a blocking RPC.
-    transport.set_heartbeat_handler(Some(HeartbeatHandler {
+    let hb = Arc::new(DefaultHeartbeatHandler {
       state: state.clone(),
       last_contact: last_contact.clone(),
       shutdown_rx: shutdown_rx.clone(),
       observers: observers.clone(),
       candidate_from_leadership_transfer: candidate_from_leadership_transfer.clone(),
-    }));
+    });
+
+    // Setup a heartbeat fast-path to avoid head-of-line
+    // blocking where possible. It MUST be safe for this
+    // to be called concurrently with a blocking RPC.
+    transport.set_heartbeat_handler(Some(Arc::new(move |header, req, resp| {
+      let hb1 = hb.clone();
+      async move {
+        hb1.handle_heartbeat(header, req, resp).await;
+      }
+      .boxed()
+    })));
 
     RaftRunner::<F, S, T, SC, R> {
       options: options.clone(),
