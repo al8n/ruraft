@@ -19,8 +19,3 @@ unit_tests!(
     pooled_conn,
   )
 );
-
-#[test]
-fn test() {
-  run(append_entries_pipeline_max_rpc_inflight_some::<SmolRuntime>())
-}

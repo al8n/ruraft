@@ -73,7 +73,6 @@ pub async fn close_streams<
     .expect("failed to create transport"),
   );
 
-  let trans1_consumer = trans1.consumer();
   let trans1_header = trans1.header().clone();
 
   // Make the RPC request
@@ -102,16 +101,16 @@ pub async fn close_streams<
 
   // Listen for a request
   <A::Runtime as Runtime>::spawn_detach(async move {
+    let trans1_consumer = trans1.consumer();
     futures::pin_mut!(trans1_consumer);
 
     loop {
       futures::select! {
-        req = trans1_consumer.recv().fuse() => {
-          if let Ok(req) = req {
-            let Ok(_) = req.respond(Response::append_entries(resp1.clone())) else {
-              panic!("unexpected respond fail");
-            };
-          }
+        req = trans1_consumer.next().fuse() => {
+          let req = req.unwrap();
+          let Ok(_) = req.respond(Response::append_entries(resp1.clone())) else {
+            panic!("unexpected respond fail");
+          };
         },
         _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
           panic!("timeout");
@@ -157,7 +156,9 @@ pub async fn close_streams<
     // Check the conn pool size
     {
       let pool = trans2.conn_pool.lock().await;
-      let conns = pool.get(trans1.local_addr()).expect("no conns in the pool");
+      let conns = pool
+        .get(trans1_header.from().addr())
+        .expect("no conns in the pool");
       assert_eq!(conns.len(), 3, "Expected 3 pooled conns!");
     }
 
@@ -168,7 +169,7 @@ pub async fn close_streams<
           .conn_pool
           .lock()
           .await
-          .get(trans1.local_addr())
+          .get(trans1_header.from().addr())
           .is_none(),
         "Expected no pooled conns after closing streams!"
       );
@@ -578,16 +579,19 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   let t1 = trans1.clone();
   let t2 = trans2.clone();
 
-  let ctx = Arc::new(AtomicBool::new(false));
-  scopeguard::defer!(ctx.store(true, Ordering::SeqCst););
-  let ctx1 = ctx.clone();
+  let (ctx_tx, ctx_rx) = async_channel::bounded::<()>(1);
+  scopeguard::defer!(let _ = ctx_tx.close(););
 
   // Kill the transports on the timeout to unblock. That means things that
   // shouldn't have blocked did block.
   <A::Runtime as Runtime>::spawn_detach(async move {
-    while !ctx1.load(Ordering::SeqCst) {
-      std::hint::spin_loop();
+    futures::select! {
+      _ = <A::Runtime as Runtime>::sleep(Duration::from_secs(5)).fuse() => {
+      },
+      _ = ctx_rx.recv().fuse() => {
+      },
     }
+
     t1.shutdown().await.unwrap();
     t2.shutdown().await.unwrap();
   });
@@ -652,7 +656,6 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   // We also need to consume the response from the pipeline in case chan is
   // unbuffered (inflight is 2 or 1)
   pc.next().await;
-
   // The last append should unblock once the response is received.
   futures::select! {
     _ = err_rx.recv().fuse() => {
@@ -749,7 +752,6 @@ pub async fn pooled_conn<
       .unwrap(),
   );
 
-  let trans1_consumer = trans1.consumer();
   let trans1_header = trans1.header().clone();
 
   // Make the RPC request
@@ -778,6 +780,7 @@ pub async fn pooled_conn<
 
   // Listen for a request
   <A::Runtime as Runtime>::spawn_detach(async move {
+    let trans1_consumer = trans1.consumer();
     futures::pin_mut!(trans1_consumer);
 
     loop {
@@ -829,7 +832,9 @@ pub async fn pooled_conn<
   // Check the conn pool size
   {
     let pool = trans2.conn_pool.lock().await;
-    let conns = pool.get(trans1.local_addr()).expect("no conns in the pool");
+    let conns = pool
+      .get(trans1_header.from().addr())
+      .expect("no conns in the pool");
     assert_eq!(conns.len(), 3, "Expected 3 pooled conns!");
   }
 }

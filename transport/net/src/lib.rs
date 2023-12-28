@@ -863,7 +863,6 @@ where
     self.shutdown.store(true, Ordering::Release);
     self.shutdown_tx.close();
     self.stream_ctx.cancel();
-    self.wg.block_wait();
   }
 }
 
