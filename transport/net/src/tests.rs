@@ -541,8 +541,17 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   // shouldn't have blocked did block.
   let t1 = trans1.clone();
   let t2 = trans2.clone();
+
+  let ctx = Arc::new(AtomicBool::new(false));
+  scopeguard::defer!(ctx.store(true, Ordering::SeqCst););
+  let ctx1 = ctx.clone();
+
+  // Kill the transports on the timeout to unblock. That means things that
+  // shouldn't have blocked did block.
   <A::Runtime as Runtime>::spawn_detach(async move {
-    <A::Runtime as Runtime>::sleep(Duration::from_secs(5)).await;
+    while !ctx1.load(Ordering::SeqCst) {
+      std::hint::spin_loop();
+    }
     t1.shutdown().await.unwrap();
     t2.shutdown().await.unwrap();
   });
