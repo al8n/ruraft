@@ -292,7 +292,11 @@ pub mod tests {
 
   use super::*;
 
-  fn make_append_req<I: Id, A: Address, D: Data>(id: I, addr: A) -> AppendEntriesRequest<I, A, D> {
+  #[doc(hidden)]
+  pub fn __make_append_req<I: Id, A: Address, D: Data>(
+    id: I,
+    addr: A,
+  ) -> AppendEntriesRequest<I, A, D> {
     AppendEntriesRequest {
       header: Header::new(ProtocolVersion::V1, id, addr),
       term: 10,
@@ -303,7 +307,8 @@ pub mod tests {
     }
   }
 
-  fn make_append_resp<I: Id, A: Address>(id: I, addr: A) -> AppendEntriesResponse<I, A> {
+  #[doc(hidden)]
+  pub fn __make_append_resp<I: Id, A: Address>(id: I, addr: A) -> AppendEntriesResponse<I, A> {
     AppendEntriesResponse {
       header: Header::new(ProtocolVersion::V1, id, addr),
       term: 4,
@@ -325,8 +330,9 @@ pub mod tests {
       Send + 'static,
   {
     let trans1_header = trans1.header();
-    let args = make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
-    let expected_resp = make_append_resp(trans1_header.id().clone(), trans1_header.addr().clone());
+    let args = __make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
+    let expected_resp =
+      __make_append_resp(trans1_header.id().clone(), trans1_header.addr().clone());
     let consumer = trans1.consumer();
     let resp = expected_resp.clone();
 
@@ -364,9 +370,9 @@ pub mod tests {
     let trans1_header = trans1.header();
 
     // Make the RPC request
-    let args = make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
+    let args = __make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
     let args1 = args.clone();
-    let resp = make_append_resp(trans1_header.id().clone(), trans1_header.addr().clone());
+    let resp = __make_append_resp(trans1_header.id().clone(), trans1_header.addr().clone());
     let resp1 = resp.clone();
 
     // Listen for a request

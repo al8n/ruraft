@@ -32,7 +32,7 @@ use std::{
   future::Future,
   net::SocketAddr,
   sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, Ordering},
     Arc,
   },
   time::{Duration, Instant},
@@ -215,7 +215,7 @@ impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W> {
 }
 
 /// Encapsulates configuration for the network transport layer.
-#[viewit::viewit]
+#[viewit::viewit(setters(prefix = "with"))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NetTransportOptions<I: Id, A: Address> {
   /// The local header of the header of the network transport.
@@ -393,8 +393,7 @@ where
   >,
   resolver: A,
   wg: AsyncWaitGroup,
-  conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, S::Stream>>,
-  conn_size: AtomicUsize,
+  conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, smallvec::SmallVec<[S::Stream; 2]>>>,
   protocol_version: ProtocolVersion,
   max_pool: usize,
   max_inflight_requests: usize,
@@ -440,7 +439,7 @@ where
     let auto_port = advertise_addr.port() == 0;
 
     let ln = stream_layer.bind(advertise_addr).await.map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", err=%e, "failed to bind listener");
+      tracing::error!(target = "ruraft.net.transport", advertise_addr=%advertise_addr, err=%e, "failed to bind listener");
       Error::IO(e)
     })?;
 
@@ -483,7 +482,6 @@ where
       resolver,
       consumer,
       conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
-      conn_size: AtomicUsize::new(0),
       protocol_version: opts.header.protocol_version(),
       local_header: opts.header,
       wg,
@@ -802,21 +800,24 @@ where
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
 {
   async fn return_conn(&self, conn: S::Stream, addr: <A as AddressResolver>::Address) {
-    if self.shutdown.load(Ordering::Acquire)
-      && self.conn_size.load(Ordering::Acquire) > self.max_pool
-    {
+    if self.shutdown.load(Ordering::Acquire) {
       return;
     }
 
     {
       let mut pool = self.conn_pool.lock().await;
-      if pool.len() >= self.max_pool {
-        return;
+      match pool.entry(addr) {
+        std::collections::hash_map::Entry::Occupied(mut entry) => {
+          let value = entry.get_mut();
+          if value.len() < self.max_pool {
+            entry.get_mut().push(conn);
+          }
+        }
+        std::collections::hash_map::Entry::Vacant(entry) => {
+          entry.insert(smallvec::smallvec![conn]);
+        }
       }
-      pool.insert(addr, conn);
     }
-
-    self.conn_size.fetch_add(1, Ordering::AcqRel);
   }
 
   async fn send(
@@ -827,12 +828,9 @@ where
     // Get a connection
     let mut conn = {
       let mut pool = self.conn_pool.lock().await;
-      match pool.remove(req.header().addr()) {
-        Some(conn) => {
-          self.conn_size.fetch_sub(1, Ordering::AcqRel);
-          conn
-        }
-        None => {
+      match pool.get_mut(req.header().addr()) {
+        Some(conns) if !conns.is_empty() => conns.pop().unwrap(),
+        _ => {
           let conn = self.stream_layer.connect(target).await?;
           if !self.timeout.is_zero() {
             conn.set_timeout(Some(self.timeout));

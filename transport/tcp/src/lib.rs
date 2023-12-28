@@ -29,29 +29,37 @@ pub mod tests {
   use futures::Future;
   use ruraft_net::{resolver::SocketAddrResolver, tests, wire::LpeWire, Header, ProtocolVersion};
   use smol_str::SmolStr;
-  use std::net::SocketAddr;
+  use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicU16, Ordering},
+  };
+
+  static PORT: AtomicU16 = AtomicU16::new(19090);
 
   fn header1() -> Header<SmolStr, SocketAddr> {
+    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
     Header::new(
       ProtocolVersion::V1,
       SmolStr::new("header1"),
-      "127.0.0.1:19090".parse().unwrap(),
+      addr.parse().unwrap(),
     )
   }
 
   fn header2() -> Header<SmolStr, SocketAddr> {
+    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
     Header::new(
       ProtocolVersion::V1,
       SmolStr::new("header2"),
-      "127.0.0.1:19091".parse().unwrap(),
+      addr.parse().unwrap(),
     )
   }
 
   fn fake_header() -> Header<SmolStr, SocketAddr> {
+    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
     Header::new(
       ProtocolVersion::V1,
       SmolStr::new("fake_header"),
-      "127.0.0.1:19092".parse().unwrap(),
+      addr.parse().unwrap(),
     )
   }
 
@@ -96,7 +104,7 @@ pub mod tests {
         where
           <R::Sleep as Future>::Output: Send + 'static,
         {
-          todo!()
+          tests::close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
         }
 
         #[doc = concat!("Test append entries for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
@@ -120,15 +128,39 @@ pub mod tests {
         where
           <R::Sleep as Future>::Output: Send + 'static,
         {
-          todo!()
+          tests::append_entries_pipeline_close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
         }
 
         #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline_max_rpc_inflight<R: Runtime>()
+        pub async fn append_entries_pipeline_max_rpc_inflight_default<R: Runtime>()
         where
           <R::Sleep as Future>::Output: Send + 'static,
         {
-          todo!()
+          tests::append_entries_pipeline_max_rpc_inflight_default::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
+        }
+
+        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
+        pub async fn append_entries_pipeline_max_rpc_inflight_0<R: Runtime>()
+        where
+          <R::Sleep as Future>::Output: Send + 'static,
+        {
+          tests::append_entries_pipeline_max_rpc_inflight_0::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
+        }
+
+        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
+        pub async fn append_entries_pipeline_max_rpc_inflight_some<R: Runtime>()
+        where
+          <R::Sleep as Future>::Output: Send + 'static,
+        {
+          tests::append_entries_pipeline_max_rpc_inflight_some::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
+        }
+
+        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
+        pub async fn append_entries_pipeline_max_rpc_inflight_one<R: Runtime>()
+        where
+          <R::Sleep as Future>::Output: Send + 'static,
+        {
+          tests::append_entries_pipeline_max_rpc_inflight_one::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
         }
 
         #[doc = concat!("Test install snapshot for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
@@ -152,7 +184,7 @@ pub mod tests {
         where
           <R::Sleep as Future>::Output: Send + 'static,
         {
-          todo!()
+          tests::pooled_conn::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
         }
       }
     };
