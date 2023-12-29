@@ -95,7 +95,7 @@ pub mod tests {
     let mut identity = vec![];
     file.read_to_end(&mut identity).unwrap();
 
-    let acceptor = TlsAcceptor::new(futures::io::Cursor::new(identity), "hello")
+    let acceptor = TlsAcceptor::new(futures::io::Cursor::new(identity), "ruraft")
       .await
       .unwrap();
     let connector = TlsConnector::new().danger_accept_invalid_certs(true);
