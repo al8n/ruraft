@@ -26,7 +26,7 @@ bincode = ["ruraft-wire/bincode"]
 # enable metrics
 metrics = ["ruraft-core/metrics", "dep:metrics"]
 
-test = ["ruraft-core/test", "smol_str"]
+test = ["ruraft-core/test", "smol_str", "wg"]
 
 [dependencies]
 arc-swap = "1"
@@ -47,7 +47,6 @@ spin = "0.9"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 viewit = { workspace = true }
-wg = { workspace = true }
 
 humantime-serde = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
@@ -56,8 +55,10 @@ metrics = { workspace = true, optional = true }
 
 # test features related dependencies
 smol_str = { workspace = true, optional = true }
+wg = { workspace = true, optional = true }
 
 [dev-dependencies]
+wg = { workspace = true }
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
 tokio = { version = "1.32", features = ["full"] }
 smol_str = { workspace = true }

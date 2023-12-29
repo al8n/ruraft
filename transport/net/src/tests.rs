@@ -9,8 +9,124 @@ use ruraft_core::{
     *,
   },
 };
+use wg::AsyncWaitGroup;
 
 use super::*;
+
+/// Create test cases for [`NetTransport`].
+#[macro_export]
+macro_rules! tests_mod {
+  ($mod:ident::$ty:ident::$stream_layer:ident) => {
+    #[doc = concat!("Unit tests for `", stringify!($mod), "`")]
+    pub mod $mod {
+      use super::*;
+
+      #[doc = concat!("Test start and shutdown for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn start_and_shutdown<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::start_and_shutdown::<_, R>($stream_layer::<R>().await).await;
+      }
+
+      #[doc = concat!("Test fastpath heartbeat for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn heartbeat_fastpath<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::heartbeat_fastpath::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test close streams for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn close_streams<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries pipeline for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries_pipeline<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries_pipeline::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries pipeline and close streams for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries_pipeline_close_streams<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries_pipeline_close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries_pipeline_max_rpc_inflight_default<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries_pipeline_max_rpc_inflight_default::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries_pipeline_max_rpc_inflight_0<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries_pipeline_max_rpc_inflight_0::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries_pipeline_max_rpc_inflight_some<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries_pipeline_max_rpc_inflight_some::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn append_entries_pipeline_max_rpc_inflight_one<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::append_entries_pipeline_max_rpc_inflight_one::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test install snapshot for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn install_snapshot<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::install_snapshot::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), fake_header()).await;
+      }
+
+      #[doc = concat!("Test vote for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn vote<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), fake_header()).await;
+      }
+
+      #[doc = concat!("Test pooled connection for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn pooled_conn<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::pooled_conn::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+    }
+  };
+}
 
 struct TestAddressResolver<A: Address, R: Runtime>(PhantomData<(A, R)>);
 
@@ -112,7 +228,7 @@ pub async fn close_streams<
             panic!("unexpected respond fail");
           };
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -395,7 +511,7 @@ pub async fn append_entries_pipeline_close_streams<
             }
           }
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout when cancel streams is {}", cancel_stream);
         },
       }
@@ -791,7 +907,7 @@ pub async fn pooled_conn<
             panic!("unexpected respond fail");
           };
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }

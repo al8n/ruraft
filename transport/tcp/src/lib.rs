@@ -27,7 +27,9 @@ pub mod net {
 pub mod tests {
   use agnostic::Runtime;
   use futures::Future;
-  use ruraft_net::{resolver::SocketAddrResolver, tests, wire::LpeWire, Header, ProtocolVersion};
+  use ruraft_net::{
+    resolver::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header, ProtocolVersion,
+  };
   use smol_str::SmolStr;
   use std::{
     net::SocketAddr,
@@ -46,11 +48,10 @@ pub mod tests {
   }
 
   fn header2() -> Header<SmolStr, SocketAddr> {
-    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
     Header::new(
       ProtocolVersion::V1,
       SmolStr::new("header2"),
-      addr.parse().unwrap(),
+      "127.0.0.1:0".parse().unwrap(),
     )
   }
 
@@ -63,131 +64,120 @@ pub mod tests {
     )
   }
 
-  fn tcp_stream_layer<R: Runtime>() -> crate::tcp::Tcp<R> {
+  async fn tcp_stream_layer<R: Runtime>() -> crate::tcp::Tcp<R> {
     crate::tcp::Tcp::new()
   }
 
-  #[cfg(feature = "native-tls")]
-  fn native_tls_stream_layer<R: Runtime>() -> crate::native_tls::NativeTls<R> {
-    todo!()
+  #[cfg(feature = "tls")]
+  fn key_path() -> std::path::PathBuf {
+    std::env::current_dir().unwrap().join("tests/server.key")
   }
 
   #[cfg(feature = "tls")]
-  fn tls_stream_layer<R: Runtime>() -> crate::tls::Tls<R> {
-    todo!()
+  fn cert_path() -> std::path::PathBuf {
+    std::env::current_dir().unwrap().join("tests/server.cert")
   }
 
-  macro_rules! tests_mod {
-    ($mod:ident::$ty:ident::$stream_layer:ident) => {
-      #[doc = concat!("Unit tests for `", stringify!($mod), "`")]
-      pub mod $mod {
-        use super::*;
+  #[cfg(feature = "native-tls")]
+  fn identity_path() -> std::path::PathBuf {
+    std::env::current_dir().unwrap().join("tests/identity.pfx")
+  }
 
-        #[doc = concat!("Test start and shutdown for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn start_and_shutdown<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::start_and_shutdown::<_, R>($stream_layer::<R>()).await;
-        }
+  #[cfg(feature = "native-tls")]
+  async fn native_tls_stream_layer<R: Runtime>() -> crate::native_tls::NativeTls<R> {
+    use std::{fs::File, io::Read};
 
-        #[doc = concat!("Test fastpath heartbeat for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn heartbeat_fastpath<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::heartbeat_fastpath::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
+    use async_native_tls::{TlsAcceptor, TlsConnector};
 
-        #[doc = concat!("Test close streams for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn close_streams<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
+    use crate::native_tls::NativeTls;
 
-        #[doc = concat!("Test append entries for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
+    let mut file = File::open(identity_path()).unwrap();
+    let mut identity = vec![];
+    file.read_to_end(&mut identity).unwrap();
 
-        #[doc = concat!("Test append entries pipeline for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries_pipeline::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
+    let acceptor = TlsAcceptor::new(futures::io::Cursor::new(identity), "hello")
+      .await
+      .unwrap();
+    let connector = TlsConnector::new().danger_accept_invalid_certs(true);
 
-        #[doc = concat!("Test append entries pipeline and close streams for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline_close_streams<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries_pipeline_close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
+    NativeTls::new("localhost".to_string(), acceptor, connector)
+  }
 
-        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline_max_rpc_inflight_default<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries_pipeline_max_rpc_inflight_default::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
-
-        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline_max_rpc_inflight_0<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries_pipeline_max_rpc_inflight_0::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
-
-        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline_max_rpc_inflight_some<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries_pipeline_max_rpc_inflight_some::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
-
-        #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn append_entries_pipeline_max_rpc_inflight_one<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::append_entries_pipeline_max_rpc_inflight_one::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
-
-        #[doc = concat!("Test install snapshot for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn install_snapshot<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::install_snapshot::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), fake_header()).await;
-        }
-
-        #[doc = concat!("Test vote for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn vote<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), fake_header()).await;
-        }
-
-        #[doc = concat!("Test pooled connection for [`", stringify!($ty), "`](", stringify!(crate::$mod::$ty), ").")]
-        pub async fn pooled_conn<R: Runtime>()
-        where
-          <R::Sleep as Future>::Output: Send + 'static,
-        {
-          tests::pooled_conn::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>(), SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>(), SocketAddrResolver::<R>::new()).await;
-        }
-      }
+  #[cfg(feature = "tls")]
+  async fn tls_stream_layer<R: Runtime>() -> crate::tls::Tls<R> {
+    use std::{
+      fs::File,
+      io::{self, BufReader},
+      path::PathBuf,
+      sync::Arc,
     };
+
+    use async_rustls::rustls::{self, Certificate, PrivateKey};
+
+    use crate::tls::Tls;
+
+    fn load_certificates_from_pem(path: PathBuf) -> std::io::Result<Vec<Certificate>> {
+      let file = File::open(path)?;
+      let mut reader = BufReader::new(file);
+      rustls_pemfile::certs(&mut reader)
+        .map(|v| {
+          v.map(|cert| Certificate(cert.to_vec()))
+            .map_err(|_| io::ErrorKind::InvalidData.into())
+        })
+        .collect()
+    }
+
+    fn load_keys(path: PathBuf) -> io::Result<Vec<PrivateKey>> {
+      rustls_pemfile::pkcs8_private_keys(&mut BufReader::new(File::open(path)?))
+        .map(|key| key.map(|keys| PrivateKey(keys.secret_pkcs8_der().to_vec())))
+        .collect()
+    }
+
+    struct SkipServerVerification;
+
+    impl SkipServerVerification {
+      fn new() -> Arc<Self> {
+        Arc::new(Self)
+      }
+    }
+
+    impl rustls::client::ServerCertVerifier for SkipServerVerification {
+      fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+      ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+      }
+    }
+
+    let certs = load_certificates_from_pem(cert_path()).unwrap();
+    let mut keys = load_keys(key_path()).unwrap();
+
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add(&certs[0]).unwrap();
+
+    let cfg = rustls::ServerConfig::builder()
+      .with_safe_defaults()
+      .with_no_client_auth()
+      .with_single_cert(certs, keys.remove(0))
+      .expect("bad certificate/key");
+    let acceptor = async_rustls::TlsAcceptor::from(Arc::new(cfg));
+
+    let cfg = rustls::ClientConfig::builder()
+      .with_safe_defaults()
+      .with_custom_certificate_verifier(SkipServerVerification::new())
+      .with_no_client_auth();
+    let connector = async_rustls::TlsConnector::from(Arc::new(cfg));
+    Tls::new(
+      rustls::ServerName::IpAddress("127.0.0.1".parse().unwrap()),
+      acceptor,
+      connector,
+    )
   }
 
   tests_mod!(tcp::TcpStreamLayer::tcp_stream_layer);

@@ -45,7 +45,6 @@ use futures::{
   AsyncRead, AsyncWriteExt, FutureExt,
 };
 use ruraft_core::Node;
-use wg::AsyncWaitGroup;
 
 pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
 
@@ -392,7 +391,6 @@ where
     LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
   >,
   resolver: A,
-  wg: AsyncWaitGroup,
   conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, smallvec::SmallVec<[S::Stream; 2]>>>,
   protocol_version: ProtocolVersion,
   max_pool: usize,
@@ -430,12 +428,6 @@ where
         .map_err(<Error<_, _, _> as TransportError>::resolver)?
     };
 
-    tracing::info!(
-      target = "ruraft.net.transport",
-      "advertise to {}",
-      advertise_addr
-    );
-
     let auto_port = advertise_addr.port() == 0;
 
     let ln = stream_layer.bind(advertise_addr).await.map_err(|e| {
@@ -451,8 +443,13 @@ where
       advertise_addr
     };
 
+    tracing::info!(
+      target = "ruraft.net.transport",
+      "advertise to {}",
+      advertise_addr
+    );
+
     let shutdown = Arc::new(AtomicBool::new(false));
-    let wg = AsyncWaitGroup::from(1);
     let (producer, consumer) = rpc();
     let heartbeat_handler = Arc::new(ArcSwapOption::from_pointee(None));
     let stream_ctx = StreamContext::new();
@@ -466,7 +463,6 @@ where
       #[cfg(not(test))]
       shutdown_rx,
       stream_ctx: stream_ctx.clone(),
-      wg: wg.clone(),
       heartbeat_handler: heartbeat_handler.clone(),
     };
     <A::Runtime as Runtime>::spawn_detach(RequestHandler::<I, A::Address, D, S>::run::<A, W>(
@@ -484,7 +480,6 @@ where
       conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
       protocol_version: opts.header.protocol_version(),
       local_header: opts.header,
-      wg,
       max_pool: opts.max_pool,
       max_inflight_requests: if opts.max_inflight_requests == 0 {
         DEFAULT_MAX_INFLIGHT_REQUESTS
@@ -785,7 +780,6 @@ where
     self.shutdown.store(true, Ordering::Release);
     self.shutdown_tx.close();
     self.stream_ctx.cancel();
-    self.wg.wait().await;
     Ok(())
   }
 }
@@ -876,7 +870,6 @@ struct RequestHandler<I, A, D, S: StreamLayer> {
   shutdown_rx: async_channel::Receiver<()>,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A>>>,
   stream_ctx: Arc<StreamContext>,
-  wg: AsyncWaitGroup,
 }
 
 impl<I, A, D, S> RequestHandler<I, A, D, S>
@@ -894,9 +887,6 @@ where
     const BASE_DELAY: Duration = Duration::from_millis(5);
     const MAX_DELAY: Duration = Duration::from_secs(1);
 
-    let wg = self.wg;
-    scopeguard::defer!(wg.done());
-
     let mut loop_delay = Duration::ZERO;
     loop {
       futures::select! {
@@ -913,7 +903,6 @@ where
               let producer = self.producer.clone();
               let shutdown_rx = self.shutdown_rx.clone();
               let local_header = self.local_header.clone();
-              let wg = wg.add(1);
               let heartbeat_handler = self.heartbeat_handler.clone();
 
               let (tx, rx) = async_channel::bounded(1);
@@ -927,7 +916,6 @@ where
                   shutdown_rx,
                   local_header
                 ).await;
-                wg.done();
               });
             }
             Err(e) => {

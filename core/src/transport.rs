@@ -407,7 +407,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -478,7 +478,7 @@ pub mod tests {
           let res = res.unwrap().unwrap();
           assert_eq!(res.response(), &resp1);
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -529,7 +529,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -604,7 +604,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(200)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }

@@ -9,7 +9,9 @@ fn run(fut: impl std::future::Future<Output = ()>) {
 mod tcp;
 
 #[path = "async_std/tls.rs"]
+#[cfg(feature = "tls")]
 mod tls;
 
 #[path = "async_std/native_tls.rs"]
+#[cfg(feature = "native-tls")]
 mod native_tls;
