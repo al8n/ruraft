@@ -68,36 +68,21 @@ pub mod tests {
     crate::tcp::Tcp::new()
   }
 
-  #[cfg(feature = "tls")]
-  fn key_path() -> std::path::PathBuf {
-    std::env::current_dir().unwrap().join("tests/server.key")
-  }
-
-  #[cfg(feature = "tls")]
-  fn cert_path() -> std::path::PathBuf {
-    std::env::current_dir().unwrap().join("tests/server.cert")
-  }
-
-  #[cfg(feature = "native-tls")]
-  fn identity_path() -> std::path::PathBuf {
-    std::env::current_dir().unwrap().join("tests/identity.pfx")
-  }
-
   #[cfg(feature = "native-tls")]
   async fn native_tls_stream_layer<R: Runtime>() -> crate::native_tls::NativeTls<R> {
-    use std::{fs::File, io::Read};
-
-    use async_native_tls::{TlsAcceptor, TlsConnector};
+    use async_native_tls::{Identity, TlsAcceptor, TlsConnector};
 
     use crate::native_tls::NativeTls;
 
-    let mut file = File::open(identity_path()).unwrap();
-    let mut identity = vec![];
-    file.read_to_end(&mut identity).unwrap();
+    let keys = test_cert_gen::gen_keys();
 
-    let acceptor = TlsAcceptor::new(futures::io::Cursor::new(identity), "ruraft")
-      .await
-      .unwrap();
+    let identity = Identity::from_pkcs12(
+      &keys.server.cert_and_key_pkcs12.pkcs12.0,
+      &keys.server.cert_and_key_pkcs12.password,
+    )
+    .unwrap();
+
+    let acceptor = TlsAcceptor::from(::native_tls::TlsAcceptor::new(identity).unwrap());
     let connector = TlsConnector::new().danger_accept_invalid_certs(true);
 
     NativeTls::new("localhost".to_string(), acceptor, connector)
@@ -105,33 +90,11 @@ pub mod tests {
 
   #[cfg(feature = "tls")]
   async fn tls_stream_layer<R: Runtime>() -> crate::tls::Tls<R> {
-    use std::{
-      fs::File,
-      io::{self, BufReader},
-      path::PathBuf,
-      sync::Arc,
-    };
+    use std::sync::Arc;
 
     use async_rustls::rustls::{self, Certificate, PrivateKey};
 
     use crate::tls::Tls;
-
-    fn load_certificates_from_pem(path: PathBuf) -> std::io::Result<Vec<Certificate>> {
-      let file = File::open(path)?;
-      let mut reader = BufReader::new(file);
-      rustls_pemfile::certs(&mut reader)
-        .map(|v| {
-          v.map(|cert| Certificate(cert.to_vec()))
-            .map_err(|_| io::ErrorKind::InvalidData.into())
-        })
-        .collect()
-    }
-
-    fn load_keys(path: PathBuf) -> io::Result<Vec<PrivateKey>> {
-      rustls_pemfile::pkcs8_private_keys(&mut BufReader::new(File::open(path)?))
-        .map(|key| key.map(|keys| PrivateKey(keys.secret_pkcs8_der().to_vec())))
-        .collect()
-    }
 
     struct SkipServerVerification;
 
@@ -155,16 +118,17 @@ pub mod tests {
       }
     }
 
-    let certs = load_certificates_from_pem(cert_path()).unwrap();
-    let mut keys = load_keys(key_path()).unwrap();
-
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.add(&certs[0]).unwrap();
+    let certs = test_cert_gen::gen_keys();
 
     let cfg = rustls::ServerConfig::builder()
       .with_safe_defaults()
       .with_no_client_auth()
-      .with_single_cert(certs, keys.remove(0))
+      .with_single_cert(
+        vec![Certificate(
+          certs.server.cert_and_key.cert.get_der().to_vec(),
+        )],
+        PrivateKey(certs.server.cert_and_key.key.get_der().to_vec()),
+      )
       .expect("bad certificate/key");
     let acceptor = async_rustls::TlsAcceptor::from(Arc::new(cfg));
 
