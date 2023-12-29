@@ -705,7 +705,7 @@ where
           Error::stable(e)
         })?;
 
-      ls.store_log(&Log::__crate_new(
+      ls.store_log(&Log::crate_new(
         1,
         1,
         LogKind::Membership(

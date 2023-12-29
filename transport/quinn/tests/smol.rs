@@ -1,6 +1,10 @@
-use super::*;
+use agnostic::{smol::SmolRuntime, Runtime};
+use ruraft_core::{tests::run as run_unit_test, unit_tests};
+use ruraft_quinn::tests::*;
 
-use ruraft_tcp::tests::tls::*;
+fn run(fut: impl std::future::Future<Output = ()>) {
+  run_unit_test(|fut| SmolRuntime::block_on(fut), fut)
+}
 
 unit_tests!(
   SmolRuntime => run(

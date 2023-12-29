@@ -17,5 +17,6 @@ unit_tests!(
     install_snapshot,
     vote,
     pooled_conn,
+    timeout_now,
   )
 );

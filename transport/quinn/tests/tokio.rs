@@ -1,10 +1,15 @@
-use super::*;
+use agnostic::tokio::TokioRuntime;
+use ruraft_core::{tests::run as run_unit_test, unit_tests};
+use ruraft_quinn::tests::*;
 
-use ruraft_tcp::tests::tls::*;
+fn run(fut: impl std::future::Future<Output = ()>) {
+  let runtime = ::tokio::runtime::Runtime::new().unwrap();
+  run_unit_test(|fut| runtime.block_on(fut), fut)
+}
 
 unit_tests!(
-  SmolRuntime => run(
-    start_and_shutdown,
+  TokioRuntime => run(
+    start_and_shutdown, // yes
     heartbeat_fastpath,
     close_streams,
     append_entries,
@@ -20,3 +25,8 @@ unit_tests!(
     timeout_now,
   )
 );
+
+#[test]
+fn test() {
+  run(append_entries::<TokioRuntime>())
+}

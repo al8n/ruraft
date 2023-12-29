@@ -24,6 +24,7 @@ pub mod net {
 
 /// Exports unit tests to let users test transport implementation based on this crate.
 #[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
 pub mod tests {
   use agnostic::Runtime;
   use futures::Future;
@@ -52,15 +53,6 @@ pub mod tests {
       ProtocolVersion::V1,
       SmolStr::new("header2"),
       "127.0.0.1:0".parse().unwrap(),
-    )
-  }
-
-  fn fake_header() -> Header<SmolStr, SocketAddr> {
-    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
-    Header::new(
-      ProtocolVersion::V1,
-      SmolStr::new("fake_header"),
-      addr.parse().unwrap(),
     )
   }
 

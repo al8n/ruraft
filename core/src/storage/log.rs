@@ -245,16 +245,22 @@ impl<I, A, D> Log<I, A, D> {
   }
 
   /// Only used for testing.
-  #[cfg(any(feature = "test", test))]
   #[inline]
-  #[doc(hidden)]
-  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
     Self {
       index,
       term,
       kind,
       appended_at: None,
     }
+  }
+
+  /// Only used for testing.
+  #[cfg(any(feature = "test", test))]
+  #[inline]
+  #[doc(hidden)]
+  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+    Self::crate_new(term, index, kind)
   }
 }
 

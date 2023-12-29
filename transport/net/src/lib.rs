@@ -17,6 +17,7 @@
 
 /// Exports unit tests to let users test transport implementation based on this crate.
 #[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
 pub mod tests;
 
 /// Stream layer abstraction.
@@ -27,6 +28,8 @@ use nodecraft::CheapClone;
 use ruraft_utils::io::LimitedReader;
 use stream::{Connection, Listener, StreamLayer};
 
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 use std::{
   collections::HashMap,
   future::Future,
@@ -35,7 +38,7 @@ use std::{
     atomic::{AtomicBool, Ordering},
     Arc,
   },
-  time::{Duration, Instant},
+  time::Duration,
 };
 
 use agnostic::Runtime;
@@ -840,7 +843,6 @@ where
         <<Self as Transport>::Error as TransportError>::wire(<W as Wire>::Error::io(e))
       })?;
     conn.flush().await?;
-
     Ok(conn)
   }
 }
@@ -1093,6 +1095,7 @@ where
           local_header,
           handle,
           shutdown_rx,
+          #[cfg(feature = "metrics")]
           respond_label,
         )
         .await
@@ -1118,9 +1121,16 @@ where
     metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
 
     // Wait for response
-    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label)
-      .await
-      .map(|_| reader)
+    Self::wait_and_send_response(
+      writer,
+      local_header,
+      handle,
+      shutdown_rx,
+      #[cfg(feature = "metrics")]
+      respond_label,
+    )
+    .await
+    .map(|_| reader)
   }
 
   async fn wait_and_send_response<

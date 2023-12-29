@@ -106,7 +106,7 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::install_snapshot::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), fake_header()).await;
+        tests::install_snapshot::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test vote for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -114,7 +114,15 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), fake_header()).await;
+        tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+      }
+
+      #[doc = concat!("Test timeout now for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
+      pub async fn timeout_now<R: Runtime>()
+      where
+        <R::Sleep as Future>::Output: Send + 'static,
+      {
+        tests::timeout_now::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test pooled connection for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -797,7 +805,6 @@ pub async fn vote<
   header2: Header<I, A::Address>,
   stream_layer2: S,
   resolver2: A,
-  fake_target: Header<I, A::Address>,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
@@ -809,7 +816,35 @@ pub async fn vote<
     .await
     .unwrap();
 
-  ruraft_core::tests::transport::vote(trans1, trans2, fake_target).await;
+  ruraft_core::tests::transport::vote(trans1, trans2).await;
+}
+
+/// Test [`NetTransport::timeout_now`](Transport::timeout_now) implementation.
+pub async fn timeout_now<
+  I: Id,
+  A: AddressResolver<ResolvedAddress = SocketAddr>,
+  D: Data,
+  S: StreamLayer,
+  W: Wire<Id = I, Address = A::Address, Data = D>,
+>(
+  header1: Header<I, A::Address>,
+  stream_layer1: S,
+  resolver1: A,
+  header2: Header<I, A::Address>,
+  stream_layer2: S,
+  resolver2: A,
+) where
+  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+{
+  let trans1 =
+    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
+      .await
+      .unwrap();
+  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
+    .await
+    .unwrap();
+
+  ruraft_core::tests::transport::timeout_now(trans1, trans2).await;
 }
 
 /// Test [`NetTransport::install_snapshot`](Transport::install_snapshot) implementation.
@@ -826,7 +861,6 @@ pub async fn install_snapshot<
   header2: Header<I, A::Address>,
   stream_layer2: S,
   resolver2: A,
-  fake_target: Header<I, A::Address>,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
@@ -838,7 +872,7 @@ pub async fn install_snapshot<
     .await
     .unwrap();
 
-  ruraft_core::tests::transport::install_snapshot(trans1, trans2, fake_target).await;
+  ruraft_core::tests::transport::install_snapshot(trans1, trans2).await;
 }
 
 /// Test [`NetTransport`] pooled connection functionality.

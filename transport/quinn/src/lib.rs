@@ -6,7 +6,7 @@
 
 use std::{
   io,
-  net::SocketAddr,
+  net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
   pin::Pin,
   sync::{atomic::Ordering, Arc},
   task::{Context, Poll},
@@ -26,8 +26,8 @@ pub type QuinnTransport<I, A, D, W> =
 
 /// Quinn stream layer
 pub struct Quinn<R> {
-  endpoint: Endpoint,
   client_config: ClientConfig,
+  server_config: ServerConfig,
   server_name: String,
   _marker: std::marker::PhantomData<R>,
 }
@@ -36,24 +36,15 @@ impl<R: Runtime> Quinn<R> {
   /// Create a new Quinn transport
   pub fn new(
     server_name: String,
-    addr: SocketAddr,
-    endpoint_config: EndpointConfig,
     client_config: ClientConfig,
     server_config: ServerConfig,
-  ) -> io::Result<Self> {
-    let socket = std::net::UdpSocket::bind(addr)?;
-    Endpoint::new(
-      endpoint_config,
-      Some(server_config),
-      socket,
-      Arc::new(<<R::Net as Net>::Quinn as Default>::default()),
-    )
-    .map(|endpoint| Self {
-      server_name,
-      endpoint,
+  ) -> Self {
+    Self {
       client_config,
+      server_config,
+      server_name,
       _marker: std::marker::PhantomData,
-    })
+    }
   }
 }
 
@@ -63,13 +54,20 @@ impl<R: Runtime> StreamLayer for Quinn<R> {
   type Stream = QuinnStream<R>;
 
   async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
-    match self
-      .endpoint
+    let local_addr = if addr.is_ipv4() {
+      SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+    } else {
+      SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
+    };
+    let mut enp = Endpoint::client(local_addr)?;
+    enp.set_default_client_config(self.client_config.clone());
+
+    match enp
       .connect_with(self.client_config.clone(), addr, &self.server_name)
       .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?
       .await
     {
-      Ok(conn) => match conn.accept_bi().await {
+      Ok(conn) => match conn.open_bi().await {
         Ok((s, r)) => Ok(QuinnStream::new(r, s)),
         Err(e) => Err(io::Error::new(io::ErrorKind::ConnectionRefused, e)),
       },
@@ -77,9 +75,16 @@ impl<R: Runtime> StreamLayer for Quinn<R> {
     }
   }
 
-  async fn bind(&mut self, _addr: SocketAddr) -> io::Result<Self::Listener> {
-    Ok(QuinnListener {
-      endpoint: self.endpoint.clone(),
+  async fn bind(&mut self, bind_addr: SocketAddr) -> io::Result<Self::Listener> {
+    let socket = std::net::UdpSocket::bind(bind_addr)?;
+    Endpoint::new(
+      EndpointConfig::default(),
+      Some(self.server_config.clone()),
+      socket,
+      Arc::new(<<R::Net as Net>::Quinn as Default>::default()),
+    )
+    .map(|endpoint| Self::Listener {
+      endpoint,
       _marker: std::marker::PhantomData,
     })
   }
@@ -312,4 +317,111 @@ impl<R: Runtime> Connection for QuinnStream<R> {
   fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
     (self.recv_stream, self.write_stream)
   }
+}
+
+/// Exports unit tests to let users test transport implementation based on this crate.
+#[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
+pub mod tests {
+  pub use super::testcases::quinn::*;
+}
+
+#[cfg(any(feature = "test", test))]
+mod testcases {
+  use super::*;
+  use ::quinn::{ClientConfig, ServerConfig};
+  use futures::Future;
+  use ruraft_net::{
+    resolver::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header, ProtocolVersion,
+  };
+  use smol_str::SmolStr;
+  use std::{
+    error::Error,
+    net::SocketAddr,
+    sync::{
+      atomic::{AtomicU16, Ordering},
+      Arc,
+    },
+  };
+
+  static PORT: AtomicU16 = AtomicU16::new(19090);
+
+  fn header1() -> Header<SmolStr, SocketAddr> {
+    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
+    Header::new(
+      ProtocolVersion::V1,
+      SmolStr::new("header1"),
+      addr.parse().unwrap(),
+    )
+  }
+
+  fn header2() -> Header<SmolStr, SocketAddr> {
+    Header::new(
+      ProtocolVersion::V1,
+      SmolStr::new("header2"),
+      "127.0.0.1:0".parse().unwrap(),
+    )
+  }
+
+  struct SkipServerVerification;
+
+  impl SkipServerVerification {
+    fn new() -> Arc<Self> {
+      Arc::new(Self)
+    }
+  }
+
+  impl rustls::client::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+      &self,
+      _end_entity: &rustls::Certificate,
+      _intermediates: &[rustls::Certificate],
+      _server_name: &rustls::ServerName,
+      _scts: &mut dyn Iterator<Item = &[u8]>,
+      _ocsp_response: &[u8],
+      _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+      Ok(rustls::client::ServerCertVerified::assertion())
+    }
+  }
+
+  fn configures() -> Result<(ServerConfig, ClientConfig), Box<dyn Error>> {
+    let (server_config, _server_cert) = configure_server()?;
+    let client_config = configure_client();
+    Ok((server_config, client_config))
+  }
+
+  fn configure_client() -> ClientConfig {
+    let crypto = rustls::ClientConfig::builder()
+      .with_safe_defaults()
+      .with_custom_certificate_verifier(SkipServerVerification::new())
+      .with_no_client_auth();
+
+    ClientConfig::new(Arc::new(crypto))
+  }
+
+  fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert_der = cert.serialize_der().unwrap();
+    let priv_key = cert.serialize_private_key_der();
+    let priv_key = rustls::PrivateKey(priv_key);
+    let cert_chain = vec![rustls::Certificate(cert_der.clone())];
+
+    let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
+    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    transport_config.max_concurrent_uni_streams(0_u8.into());
+
+    Ok((server_config, cert_der))
+  }
+
+  #[allow(unused)]
+  const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+
+  async fn stream_layer<R: Runtime>() -> Quinn<R> {
+    let server_name = "localhost".to_string();
+    let (server_config, client_config) = configures().unwrap();
+    Quinn::new(server_name, client_config, server_config)
+  }
+
+  tests_mod!(quinn::Quinn::stream_layer);
 }
