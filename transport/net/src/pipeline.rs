@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use super::{stream::Connection, *};
 
+#[derive(Debug, Copy, Clone)]
 struct Event {
   /// The term of the request
   term: u64,
@@ -65,7 +66,7 @@ where
     }
     let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
     let (inprogress_tx, inprogress_rx) = async_channel::bounded(max_inflight - 2);
-    let (finish_tx, finish_rx) = async_channel::bounded(max_inflight - 2);
+    let (finish_tx, finish_rx) = async_channel::unbounded();
 
     let (reader, writer) = conn.into_split();
 

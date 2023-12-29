@@ -17,26 +17,36 @@ serde = ["dep:serde", "humantime-serde", "ruraft-core/serde"]
 # enable DNS node address resolver
 dns = ["agnostic/dns", "nodecraft/dns"]
 
+# enable rmp encoding/decoding 
+rmp = ["ruraft-wire/rmp"]
+
+# enable bincode encoding/decoding
+bincode = ["ruraft-wire/bincode"]
+
+# enable metrics
 metrics = ["ruraft-core/metrics", "dep:metrics"]
 
-test = ["ruraft-core/test", "tempfile"]
+test = ["ruraft-core/test", "smol_str", "wg"]
 
 [dependencies]
 arc-swap = "1"
 agnostic = { workspace = true }
 async-channel = { workspace = true }
 async-lock = { workspace = true }
+concurrent-queue = "2"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pollster = { workspace = true }
 pin-project = { workspace = true }
 ruraft-core = { path = "../../core" }
 ruraft-utils = { path = "../../utils", features = ["io"] }
+ruraft-wire = { path = "../../wire" }
 scopeguard = "1.1"
+smallvec = "1"
+spin = "0.9"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 viewit = { workspace = true }
-wg = { workspace = true }
 
 humantime-serde = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
@@ -44,8 +54,11 @@ serde = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
 # test features related dependencies
-tempfile = { version = "3", optional = true }
+smol_str = { workspace = true, optional = true }
+wg = { workspace = true, optional = true }
 
 [dev-dependencies]
+wg = { workspace = true }
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
 tokio = { version = "1.32", features = ["full"] }
+smol_str = { workspace = true }

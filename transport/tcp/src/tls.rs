@@ -10,11 +10,10 @@ use agnostic::{
   net::{Net, TcpListener, TcpStream},
   Runtime,
 };
-pub use async_rustls::{client, server, TlsAcceptor, TlsConnector};
+pub use async_rustls::{client, rustls::ServerName, server, TlsAcceptor, TlsConnector};
 use futures::{AsyncRead, AsyncWrite};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};
-use rustls::ServerName;
 
 /// Tls transport based on `rustls`
 pub type TlsTransport<I, A, D, W> = NetTransport<I, A, D, Tls<<A as AddressResolver>::Runtime>, W>;

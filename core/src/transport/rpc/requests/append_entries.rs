@@ -7,7 +7,7 @@ use super::*;
 /// The command used to append entries to the
 /// replicated log.
 #[viewit::viewit]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AppendEntriesRequest<I, A, D> {
   /// The header of the request
@@ -75,6 +75,19 @@ pub struct AppendEntriesRequest<I, A, D> {
     setter(attrs(doc = "Set the commit index of the leader of the append request"),)
   )]
   leader_commit: u64,
+}
+
+impl<I: Clone, A: Clone, D> Clone for AppendEntriesRequest<I, A, D> {
+  fn clone(&self) -> Self {
+    Self {
+      header: self.header.clone(),
+      term: self.term,
+      prev_log_entry: self.prev_log_entry,
+      prev_log_term: self.prev_log_term,
+      entries: self.entries.clone(),
+      leader_commit: self.leader_commit,
+    }
+  }
 }
 
 impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq
@@ -286,29 +299,29 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
       prev_log_entry: 2,
       prev_log_term: 2,
       entries: vec![
-        Log::crate_new(3, 2, LogKind::Noop),
-        Log::crate_new(4, 2, LogKind::Barrier),
-        Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-        Log::crate_new(6, 2, LogKind::Noop),
-        Log::crate_new(7, 2, LogKind::Barrier),
-        Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-        Log::crate_new(9, 2, LogKind::Noop),
-        Log::crate_new(10, 2, LogKind::Barrier),
+        Log::__crate_new(3, 2, LogKind::Noop),
+        Log::__crate_new(4, 2, LogKind::Barrier),
+        Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(6, 2, LogKind::Noop),
+        Log::__crate_new(7, 2, LogKind::Barrier),
+        Log::__crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(9, 2, LogKind::Noop),
+        Log::__crate_new(10, 2, LogKind::Barrier),
         {
-          let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+          let mut l = Log::__crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
           l.appended_at = Some(std::time::SystemTime::now());
           l
         },
-        Log::crate_new(3, 2, LogKind::Noop),
-        Log::crate_new(4, 2, LogKind::Barrier),
-        Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-        Log::crate_new(6, 2, LogKind::Noop),
-        Log::crate_new(7, 2, LogKind::Barrier),
-        Log::crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
-        Log::crate_new(9, 2, LogKind::Noop),
-        Log::crate_new(10, 2, LogKind::Barrier),
+        Log::__crate_new(3, 2, LogKind::Noop),
+        Log::__crate_new(4, 2, LogKind::Barrier),
+        Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(6, 2, LogKind::Noop),
+        Log::__crate_new(7, 2, LogKind::Barrier),
+        Log::__crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(9, 2, LogKind::Noop),
+        Log::__crate_new(10, 2, LogKind::Barrier),
         {
-          let mut l = Log::crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+          let mut l = Log::__crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
           l.appended_at = Some(std::time::SystemTime::now());
           l
         },
@@ -328,9 +341,9 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
       prev_log_entry: 2,
       prev_log_term: 2,
       entries: vec![
-        Log::crate_new(3, 2, LogKind::Noop),
-        Log::crate_new(4, 2, LogKind::Barrier),
-        Log::crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(3, 2, LogKind::Noop),
+        Log::__crate_new(4, 2, LogKind::Barrier),
+        Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
       ],
       leader_commit: 3,
     }

@@ -10,11 +10,12 @@ rust-version.workspace = true
 description = "QUIC (quinn) transport layer implementation for ruraft"
 
 [dependencies]
-agnostic = { workspace = true, features = ["quinn"] }
+agnostic = { workspace = true, features = ["quinn", "tokio", "async-std", "smol", "net", "dns"] }
 atomic-time = "0.1"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pin-project = { workspace = true }
 ruraft-net = { path = "../net" }
 ruraft-utils = { path = "../../utils" }
+tokio = { version = "1", features = ["full"] }
 quinn = "0.10"

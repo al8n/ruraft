@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use agnostic::Runtime;
 use futures::{AsyncRead, AsyncWrite, Stream};
@@ -11,7 +11,7 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-use crate::{options::ProtocolVersion, Data, HeartbeatHandler, Node};
+use crate::{options::ProtocolVersion, Data, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -126,6 +126,19 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Gracefully closes the pipeline and terminates any in-flight requests.
   fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
+
+/// Represents the header used for fastpath heartbeat.
+pub type HeartbeatHandler<I, A> = Arc<
+  dyn Fn(
+      Header<I, A>,
+      HeartbeatRequest<I, A>,
+      RpcResponseSender<I, A>,
+    ) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>>
+    + Send
+    + Sync
+    + 'static,
+>;
+
 /// Defines the capabilities and requirements for communication with other nodes across a network.
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
@@ -277,7 +290,331 @@ pub trait Transport: Send + Sync + 'static {
   fn shutdown(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-#[cfg(feature = "test")]
-pub(super) mod tests {
-  // pub use super::net::tests::*;
+/// Exports unit tests to let users test transport implementation.
+#[cfg(any(feature = "test", test))]
+pub mod tests {
+  use std::{future::Future, time::Duration};
+
+  use futures::{FutureExt, StreamExt};
+
+  use crate::{
+    membership::{MembershipBuilder, Server, ServerSuffrage},
+    options::SnapshotVersion,
+    storage::{Log, LogKind},
+  };
+
+  use super::*;
+
+  #[doc(hidden)]
+  pub fn __make_append_req<I: Id, A: Address, D: Data>(
+    id: I,
+    addr: A,
+  ) -> AppendEntriesRequest<I, A, D> {
+    AppendEntriesRequest {
+      header: Header::new(ProtocolVersion::V1, id, addr),
+      term: 10,
+      prev_log_entry: 100,
+      prev_log_term: 4,
+      entries: vec![Log::__crate_new(101, 4, LogKind::Noop)],
+      leader_commit: 90,
+    }
+  }
+
+  #[doc(hidden)]
+  pub fn __make_append_resp<I: Id, A: Address>(id: I, addr: A) -> AppendEntriesResponse<I, A> {
+    AppendEntriesResponse {
+      header: Header::new(ProtocolVersion::V1, id, addr),
+      term: 4,
+      last_log: 90,
+      success: true,
+      no_retry_backoff: false,
+    }
+  }
+
+  /// Test [`Transport::set_heartbeat_handler`](Transport::set_heartbeat_handler).
+  pub async fn heartbeat_fastpath<T: Transport>(t1: T, t2: T)
+  where
+    T::Data: core::fmt::Debug + PartialEq,
+  {
+    let args = HeartbeatRequest {
+      header: t2.header().clone(),
+      term: 10,
+    };
+    let args1 = args.clone();
+    let resp = HeartbeatResponse {
+      header: t1.header().clone(),
+      success: true,
+    };
+    let resp1 = resp.clone();
+
+    let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let invoked1 = invoked.clone();
+
+    let fast_path = Arc::new(
+      move |_header,
+            req,
+            tx: RpcResponseSender<T::Id, <T::Resolver as AddressResolver>::Address>| {
+        let argsx = args1.clone();
+        let respx = resp1.clone();
+        let invokedx = invoked1.clone();
+        async move {
+          // Verify the command
+          assert_eq!(req, argsx);
+
+          let Ok(_) = tx.respond(Response::heartbeat(respx)) else {
+            panic!("unexpected respond fail");
+          };
+          invokedx.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        .boxed()
+      },
+    );
+
+    t1.set_heartbeat_handler(Some(fast_path));
+
+    let res = t2.heartbeat(t1.header().from(), args).await.unwrap();
+
+    // Verify the response
+    assert_eq!(res, resp, "resp mismatch");
+
+    // Ensure fast-path is used
+    assert!(
+      invoked.load(std::sync::atomic::Ordering::SeqCst),
+      "fast-path not used"
+    );
+  }
+
+  /// Test [`Transport::append_entries`](Transport::append_entries).
+  pub async fn append_entries<T: Transport>(trans1: T, trans2: T)
+  where
+    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+      Send + 'static,
+  {
+    let trans1_header = trans1.header();
+    let args = __make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
+    let expected_resp =
+      __make_append_resp(trans1_header.id().clone(), trans1_header.addr().clone());
+    let consumer = trans1.consumer();
+    let resp = expected_resp.clone();
+
+    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+      futures::pin_mut!(consumer);
+
+      futures::select! {
+        req = consumer.next().fuse() => {
+          let req = req.unwrap();
+          let Ok(_) = req.respond(Response::append_entries(resp)) else {
+            panic!("unexpected respond fail");
+          };
+        },
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+          panic!("timeout");
+        },
+      }
+    });
+
+    let res = trans2
+      .append_entries(trans1_header.from(), args)
+      .await
+      .unwrap();
+    assert_eq!(res, expected_resp);
+  }
+
+  /// Test [`Transport::append_entries_pipeline`](Transport::append_entries_pipeline).
+  pub async fn append_entries_pipeline<T: Transport>(trans1: T, trans2: T)
+  where
+    T::Data: core::fmt::Debug + PartialEq,
+    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+      Send + 'static,
+  {
+    let trans1_consumer = trans1.consumer();
+    let trans1_header = trans1.header();
+
+    // Make the RPC request
+    let args = __make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
+    let args1 = args.clone();
+    let resp = __make_append_resp(trans1_header.id().clone(), trans1_header.addr().clone());
+    let resp1 = resp.clone();
+
+    // Listen for a request
+    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+      futures::pin_mut!(trans1_consumer);
+      for _ in 0..10 {
+        futures::select! {
+          req = trans1_consumer.next().fuse() => {
+            let req = req.unwrap();
+            // Verify the command
+            if let Request::AppendEntries(req) = req.request() {
+              assert_eq!(req, &args);
+            } else {
+              panic!("unexpected request");
+            }
+            let Ok(_) = req.respond(Response::append_entries(resp.clone())) else {
+              panic!("unexpected respond fail");
+            };
+          },
+          _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(12200)).fuse() => {
+            panic!("timeout");
+          },
+        }
+      }
+    });
+
+    // Transport 2 makes outbound request
+    let mut pipeline = trans2
+      .append_entries_pipeline(trans1_header.from().clone())
+      .await
+      .unwrap();
+
+    for _ in 0..10 {
+      pipeline.append_entries(args1.clone()).await.unwrap();
+    }
+
+    let pc = pipeline.consumer();
+    futures::pin_mut!(pc);
+    for _ in 0..10 {
+      futures::select! {
+        res = pc.next().fuse() => {
+          let res = res.unwrap().unwrap();
+          assert_eq!(res.response(), &resp1);
+        },
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+          panic!("timeout");
+        },
+      }
+    }
+    pipeline.close().await.unwrap();
+  }
+
+  /// Test [`Transport::vote`](Transport::vote).
+  pub async fn vote<T: Transport>(
+    trans1: T,
+    trans2: T,
+    fake_vote_target: Header<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) where
+    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+      Send + 'static,
+  {
+    let trans1_consumer = trans1.consumer();
+
+    let args = VoteRequest {
+      header: fake_vote_target.clone(),
+      term: 20,
+      last_log_index: 100,
+      last_log_term: 19,
+      leadership_transfer: false,
+    };
+    let args1 = args.clone();
+
+    let resp = VoteResponse {
+      header: trans1.header().clone(),
+      term: 100,
+      granted: false,
+    };
+    let resp1 = resp.clone();
+
+    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+      futures::pin_mut!(trans1_consumer);
+      futures::select! {
+        req = trans1_consumer.next().fuse() => {
+          let req = req.unwrap();
+          // Verify the command
+          if let Request::Vote(req) = req.request() {
+            assert_eq!(req, &args);
+          } else {
+            panic!("unexpected request");
+          }
+
+          let Ok(_) = req.respond(Response::vote(resp.clone())) else {
+            panic!("unexpected respond fail");
+          };
+        },
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+          panic!("timeout");
+        },
+      }
+    });
+
+    let res = trans2.vote(trans1.header().from(), args1).await.unwrap();
+    assert_eq!(res, resp1);
+  }
+
+  /// Test [`Transport::install_snapshot`](Transport::install_snapshot).
+  pub async fn install_snapshot<T: Transport>(
+    trans1: T,
+    trans2: T,
+    fake_target: Header<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) where
+    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+      Send + 'static,
+  {
+    use futures::AsyncReadExt;
+
+    let trans1_consumer = trans1.consumer();
+
+    let args = InstallSnapshotRequest {
+      header: fake_target.clone(),
+      term: 10,
+      last_log_index: 100,
+      last_log_term: 9,
+      size: 10,
+      snapshot_version: SnapshotVersion::V1,
+      membership: {
+        let mut builder = MembershipBuilder::new();
+        builder
+          .insert(Server::from_node(
+            fake_target.from().clone(),
+            ServerSuffrage::Voter,
+          ))
+          .unwrap();
+        builder.build().unwrap()
+      },
+      membership_index: 1,
+    };
+    let args1 = args.clone();
+
+    let resp = InstallSnapshotResponse {
+      header: trans1.header().clone(),
+      term: 10,
+      success: true,
+    };
+    let resp1 = resp.clone();
+
+    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+      futures::pin_mut!(trans1_consumer);
+      futures::select! {
+        req = trans1_consumer.next().fuse() => {
+          let mut req = req.unwrap();
+          // Verify the command
+          if let Request::InstallSnapshot(req) = req.request() {
+            assert_eq!(req, &args);
+          } else {
+            panic!("unexpected request");
+          }
+
+          // Try to read the bytes
+          let mut buf = [0; 10];
+          let reader = req.reader_mut().unwrap();
+          reader.read_exact(&mut buf).await.unwrap();
+
+          // Compare
+          assert_eq!(buf, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+          let Ok(_) = req.respond(Response::install_snapshot(resp.clone())) else {
+            panic!("unexpected respond fail");
+          };
+        },
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+          panic!("timeout");
+        },
+      }
+    });
+
+    let buf: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let resp = trans2
+      .install_snapshot(trans1.header().from(), args1, futures::io::Cursor::new(buf))
+      .await
+      .unwrap();
+    assert_eq!(resp, resp1);
+  }
 }

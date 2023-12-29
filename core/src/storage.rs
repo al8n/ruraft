@@ -388,9 +388,9 @@ pub(super) mod tests {
       TestCase {
         name: "simple case",
         logs: vec![
-          Log::crate_new(1, 1234, LogKind::Noop),
-          Log::crate_new(1, 1235, LogKind::Noop),
-          Log::crate_new(2, 1236, LogKind::Noop),
+          Log::__crate_new(1, 1234, LogKind::Noop),
+          Log::__crate_new(1, 1235, LogKind::Noop),
+          Log::__crate_new(2, 1236, LogKind::Noop),
         ],
         want_idx: 1234,
         want_err: false,
