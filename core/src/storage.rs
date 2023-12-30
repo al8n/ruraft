@@ -108,8 +108,8 @@ pub trait Storage: Send + Sync + 'static {
     Runtime = Self::Runtime,
   >;
 
-  /// Membership storage
-  type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;
+  // /// Membership storage
+  // type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;
 
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
@@ -123,8 +123,8 @@ pub trait Storage: Send + Sync + 'static {
   /// Returns a reference to the snapshot storage.
   fn snapshot_store(&self) -> &Self::Snapshot;
 
-  /// Returns a reference to the membership storage.
-  fn membership_store(&self) -> Option<&Self::Membership>;
+  // /// Returns a reference to the membership storage.
+  // fn membership_store(&self) -> Option<&Self::Membership>;
 }
 
 pub(crate) async fn compact_logs<S: Storage>(

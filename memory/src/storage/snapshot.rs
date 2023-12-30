@@ -24,7 +24,7 @@ use ruraft_core::{
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug)]
-pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
+pub struct MemorySnapshotStorage<I, A, R> {
   latest: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   has_snapshot: AtomicBool,
   _runtime: std::marker::PhantomData<R>,
@@ -32,8 +32,8 @@ pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
 
 impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
-  I: Id + Unpin,
-  A: Address + Unpin,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   type Error = io::Error;
@@ -142,7 +142,7 @@ where
 }
 
 #[derive(Debug)]
-struct MemorySnapshot<I: Id, A: Address> {
+struct MemorySnapshot<I, A> {
   meta: SnapshotMeta<I, A>,
   contents: Vec<u8>,
 }
@@ -151,7 +151,7 @@ struct MemorySnapshot<I: Id, A: Address> {
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
+pub struct MemorySnapshotSink<I, A, R> {
   snap: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   id: SnapshotId,
   _runtime: std::marker::PhantomData<R>,
@@ -159,8 +159,8 @@ pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
 
 impl<I: Id, A: Address, R: Runtime> AsyncWrite for MemorySnapshotSink<I, A, R>
 where
-  I: Id + Unpin,
-  A: Address + Unpin,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
@@ -222,8 +222,8 @@ pub struct MemorySnapshotSource<I: Id, A: Address, R: Runtime> {
 
 impl<I, A, R> AsyncRead for MemorySnapshotSource<I, A, R>
 where
-  I: Id + Unpin,
-  A: Address + Unpin,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   fn poll_read(

@@ -111,7 +111,7 @@ impl TryFrom<u8> for SnapshotVersion {
 #[viewit::viewit(
   vis_all = "pub(crate)",
   getters(vis_all = "pub"),
-  setters(vis_all = "pub")
+  setters(vis_all = "pub", prefix = "with")
 )]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

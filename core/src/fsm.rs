@@ -5,6 +5,9 @@ use nodecraft::{Address, Id};
 
 use crate::{membership::Membership, storage::SnapshotSink, Data};
 
+mod log;
+pub use log::*;
+
 /// Represents a snapshot of the finate state machine.
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
@@ -44,94 +47,6 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
   /// Returns the index of the newly applied log entry.
   fn index(&self) -> u64;
 }
-
-/// Logs can be handled by the finate state machine.
-#[derive(Debug)]
-pub enum FinateStateMachineLogKind<I, A, D> {
-  /// A normal log entry.
-  Log(Arc<D>),
-  /// A membership change log entry.
-  Membership(Membership<I, A>),
-}
-
-impl<I, A, D> Clone for FinateStateMachineLogKind<I, A, D> {
-  fn clone(&self) -> Self {
-    match self {
-      Self::Log(data) => Self::Log(data.clone()),
-      Self::Membership(membership) => Self::Membership(membership.clone()),
-    }
-  }
-}
-
-impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq
-  for FinateStateMachineLogKind<I, A, D>
-{
-  fn eq(&self, other: &Self) -> bool {
-    match (self, other) {
-      (Self::Log(data), Self::Log(other_data)) => data == other_data,
-      (Self::Membership(membership), Self::Membership(other_membership)) => {
-        membership == other_membership
-      }
-      _ => false,
-    }
-  }
-}
-
-impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for FinateStateMachineLogKind<I, A, D> {}
-
-/// A log entry that can be applied to the finate state machine.
-#[viewit::viewit(setters(prefix = "with"))]
-pub struct FinateStateMachineLog<I, A, D> {
-  /// The index of the log entry.
-  #[viewit(
-    getter(const, attrs(doc = "Returns the index of the log entry."),),
-    setter(attrs(doc = "Sets the index of the log entry."),)
-  )]
-  index: u64,
-  /// The term of the log entry.
-  #[viewit(
-    getter(const, attrs(doc = "Returns the term of the log entry."),),
-    setter(attrs(doc = "Sets the term of the log entry."),)
-  )]
-  term: u64,
-  /// The kind of the log entry.
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Returns the kind of the log entry."),
-    ),
-    setter(attrs(doc = "Sets the kind of the log entry."),)
-  )]
-  kind: FinateStateMachineLogKind<I, A, D>,
-}
-
-impl<I, A, D> FinateStateMachineLog<I, A, D> {
-  /// Creates a new log entry.
-  pub fn new(term: u64, index: u64, kind: FinateStateMachineLogKind<I, A, D>) -> Self {
-    Self { index, term, kind }
-  }
-}
-
-impl<I, A, D> Clone for FinateStateMachineLog<I, A, D> {
-  fn clone(&self) -> Self {
-    Self {
-      index: self.index,
-      term: self.term,
-      kind: self.kind.clone(),
-    }
-  }
-}
-
-impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq
-  for FinateStateMachineLog<I, A, D>
-{
-  fn eq(&self, other: &Self) -> bool {
-    self.index == other.index && self.term == other.term && self.kind == other.kind
-  }
-}
-
-impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for FinateStateMachineLog<I, A, D> {}
 
 /// Implemented by clients to make use of the replicated log.
 pub trait FinateStateMachine: Send + Sync + 'static {
@@ -179,7 +94,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// method if that method was called on the same Raft node as the FSM.
   fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>>,
+    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>> + Send,
   ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to
@@ -201,6 +116,6 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// state before restoring the snapshot.
   fn restore(
     &self,
-    snapshot: impl AsyncRead + Unpin,
+    snapshot: impl AsyncRead + Send + Unpin,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
