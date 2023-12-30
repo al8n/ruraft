@@ -16,7 +16,7 @@ test = ["ruraft-core/test", "smol_str"]
 rmp = ["rmp-serde", "serde"]
 
 # enable bincode based wire implementation
-bincode = ["dep:bincode", "serde", "byteorder"]
+bincode = ["dep:bincode", "serde", "byteorder", "async-bincode"]
 
 serde = ["dep:serde", "ruraft-core/serde", "smol_str?/serde"]
 

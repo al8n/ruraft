@@ -14,6 +14,9 @@ default = ["dns"]
 
 serde = ["ruraft-net/serde"]
 
+bincode = ["ruraft-net/bincode"]
+rmp = ["ruraft-net/rmp"]
+
 # enable DNS node address resolver
 dns = ["ruraft-net/dns"]
 
@@ -24,7 +27,7 @@ dangerous_configuration = ["async-rustls?/dangerous_configuration"]
 
 metrics = ["ruraft-net/metrics"]
 
-test = ["ruraft-net/test", "smol_str", "rustls-pemfile", "async-rustls/dangerous_configuration", "async-native-tls/vendored", "dep:native-tls", "test-cert-gen"]
+test = ["ruraft-net/test", "smol_str", "rustls-pemfile", "async-rustls/dangerous_configuration", "async-native-tls/vendored", "dep:native-tls", "test-cert-gen", "ruraft-net/bincode", "ruraft-net/rmp"]
 
 [dependencies]
 agnostic = { workspace = true, features = ["net"] }
@@ -46,7 +49,7 @@ test-cert-gen = { version = "0.9", optional = true }
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
 ruraft-core = { path = "../../core", features = ["test"] }
-ruraft-net = { path = "../net", features = ["test"] }
+ruraft-net = { path = "../net", features = ["test", "bincode", "rmp"] }
 async-rustls = { version = "0.4", features = ["dangerous_configuration"] }
 async-native-tls = { version = "0.5", features = ["vendored"] }
 tokio = { version = "1.32", features = ["full"] }

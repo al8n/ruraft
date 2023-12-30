@@ -51,7 +51,12 @@ pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
 /// Re-exports [`ruraft-wire`](ruraft_wire).
 pub mod wire {
   pub use ruraft_core::transport::{Wire, WireError};
-  pub use ruraft_wire::*;
+  pub use ruraft_wire::{Error as LpeWireError, ErrorKind as LpeWireErrorKind, LpeWire};
+
+  #[cfg(feature = "bincode")]
+  pub use ruraft_wire::bincode::{BincodeWire, Error as BincodeWireError};
+  #[cfg(feature = "rmp")]
+  pub use ruraft_wire::rmp::{Error as RmpWireError, RmpWire};
 }
 
 /// Re-exports [`nodecraft`]'s address resolver.
