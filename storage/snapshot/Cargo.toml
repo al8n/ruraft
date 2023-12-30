@@ -12,6 +12,8 @@ rust-version.workspace = true
 test = ["tempfile", "scopeguard", "smol_str", "ruraft-core/test"]
 serde = ["dep:serde", "smol_str?/serde", "ruraft-core/serde"]
 
+metrics = ["ruraft-core/metrics"]
+
 [dependencies]
 agnostic = { workspace = true }
 byteorder = { workspace = true }

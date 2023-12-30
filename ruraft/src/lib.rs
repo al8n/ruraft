@@ -9,11 +9,13 @@ pub mod transport;
 mod api;
 pub use api::*;
 
+/// All unit test fns are exported in the `tests` module.
+/// This module is used for users want to use other async runtime,
+/// and want to use the test if ruraft also works with their runtime.
+///
 #[cfg(any(feature = "test", test))]
-pub mod tests {
-  pub use ruraft_core::tests::*;
-  pub use ruraft_memory::tests::*;
-}
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
+pub mod tests;
 
 /// Re-exports [`ruraft-memory`](ruraft_memory) crate.
 pub mod memory {

@@ -38,10 +38,8 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
 {
   /// Returns the current state of the reloadable fields in Raft's
   /// options. This is useful for programs to discover the current state for
@@ -56,6 +54,16 @@ where
   /// Returns the current options in use by the Raft instance.
   pub fn options(&self) -> Options {
     self.inner.options.apply(self.reloadable_options())
+  }
+
+  /// Provides the local unique identifier, helping in distinguishing this node from its peers.
+  pub fn local_id(&self) -> &T::Id {
+    self.inner.transport.local_id()
+  }
+
+  /// Provides the local address, helping in distinguishing this node from its peers.
+  pub fn local_addr(&self) -> &<T::Resolver as AddressResolver>::Address {
+    self.inner.transport.local_addr()
   }
 
   /// Returns the latest membership. This may not yet be
@@ -133,7 +141,29 @@ where
   pub fn leadership_change_watcher(&self) -> LeaderWatcher {
     LeaderWatcher(self.inner.leadership_change_rx.clone())
   }
+}
 
+
+impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
+  >,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
+{
   /// Used to apply a command to the [`FinateStateMachine`] in a highly consistent
   /// manner. This returns a future that can be used to wait on the application.
   ///

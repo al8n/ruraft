@@ -19,7 +19,7 @@ smol = ["agnostic/smol"]
 # enable DNS node address resolver
 dns = ["agnostic/dns"]
 
-metrics = ["ruraft-core/metrics", "ruraft-memory/metrics"]
+metrics = ["ruraft-core/metrics", "ruraft-memory/metrics", "ruraft-snapshot/metrics"]
 
 test = ["ruraft-core/test", "ruraft-memory/test", "tempfile", "smol_str"]
 
@@ -36,6 +36,7 @@ once_cell = "1.18"
 pin-project = "1"
 ruraft-core = { path = "../core" }
 ruraft-memory = { path = "../memory" }
+ruraft-snapshot = { path = "../storage/snapshot" }
 ruraft-wire = { path = "../wire" }
 rand = "0.8"
 scopeguard = { workspace = true }

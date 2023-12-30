@@ -352,7 +352,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -373,7 +372,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -400,7 +398,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
