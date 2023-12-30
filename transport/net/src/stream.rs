@@ -52,6 +52,12 @@ pub trait Connection: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static {
 
   /// Splits the connection into separate read and write halves.
   fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf);
+
+  // /// Read
+  // fn read_exact(&mut self, buf: &mut [u8]) -> impl Future<Output = io::Result<()>> + Send;
+
+  // /// Write
+  // fn write_all(&mut self, buf: &mut [u8]) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// A trait defining the necessary components for a stream-based network layer.

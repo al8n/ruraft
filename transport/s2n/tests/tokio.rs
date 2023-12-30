@@ -1,6 +1,6 @@
 use agnostic::tokio::TokioRuntime;
 use ruraft_core::{tests::run as run_unit_test, unit_tests};
-use ruraft_quinn::tests::*;
+use ruraft_s2n::tests::*;
 
 fn run(fut: impl std::future::Future<Output = ()>) {
   let runtime = ::tokio::runtime::Runtime::new().unwrap();

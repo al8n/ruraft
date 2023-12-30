@@ -6,7 +6,7 @@
 
 use std::{
   io,
-  net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+  net::SocketAddr,
   pin::Pin,
   sync::{atomic::Ordering, Arc},
   task::{Context, Poll},
@@ -26,9 +26,10 @@ pub type QuinnTransport<I, A, D, W> =
 
 /// Quinn stream layer
 pub struct Quinn<R> {
-  client_config: ClientConfig,
   server_config: ServerConfig,
   server_name: String,
+  client: Endpoint,
+  client_config: ClientConfig,
   _marker: std::marker::PhantomData<R>,
 }
 
@@ -36,15 +37,22 @@ impl<R: Runtime> Quinn<R> {
   /// Create a new Quinn transport
   pub fn new(
     server_name: String,
+    client_bind_addr: SocketAddr,
     client_config: ClientConfig,
     server_config: ServerConfig,
-  ) -> Self {
-    Self {
+  ) -> io::Result<Self> {
+    let enp = Endpoint::client(client_bind_addr)?;
+    let c = enp.clone();
+    R::spawn_detach(async move {
+      c.wait_idle().await;
+    });
+    Ok(Self {
+      client: enp,
       client_config,
       server_config,
       server_name,
       _marker: std::marker::PhantomData,
-    }
+    })
   }
 }
 
@@ -54,15 +62,7 @@ impl<R: Runtime> StreamLayer for Quinn<R> {
   type Stream = QuinnStream<R>;
 
   async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
-    let local_addr = if addr.is_ipv4() {
-      SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
-    } else {
-      SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)
-    };
-    let mut enp = Endpoint::client(local_addr)?;
-    enp.set_default_client_config(self.client_config.clone());
-
-    match enp
+    match self.client
       .connect_with(self.client_config.clone(), addr, &self.server_name)
       .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?
       .await
@@ -83,9 +83,15 @@ impl<R: Runtime> StreamLayer for Quinn<R> {
       socket,
       Arc::new(<<R::Net as Net>::Quinn as Default>::default()),
     )
-    .map(|endpoint| Self::Listener {
-      endpoint,
-      _marker: std::marker::PhantomData,
+    .map(|endpoint| {
+      let c = endpoint.clone();
+      R::spawn_detach(async move {
+        c.wait_idle().await;
+      });
+      Self::Listener {
+        endpoint,
+        _marker: std::marker::PhantomData,
+      }
     })
   }
 }
@@ -332,7 +338,7 @@ mod testcases {
   use ::quinn::{ClientConfig, ServerConfig};
   use futures::Future;
   use ruraft_net::{
-    resolver::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header, ProtocolVersion,
+    resolver::SocketAddrResolver, tests, tests_mod, wire::{LpeWire, BincodeWire}, Header, ProtocolVersion,
   };
   use smol_str::SmolStr;
   use std::{
@@ -420,7 +426,7 @@ mod testcases {
   async fn stream_layer<R: Runtime>() -> Quinn<R> {
     let server_name = "localhost".to_string();
     let (server_config, client_config) = configures().unwrap();
-    Quinn::new(server_name, client_config, server_config)
+    Quinn::new(server_name, "127.0.0.1:0".parse().unwrap(), client_config, server_config).unwrap()
   }
 
   tests_mod!(quinn::Quinn::stream_layer);

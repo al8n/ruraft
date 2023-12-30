@@ -131,4 +131,16 @@ impl<R: Runtime> Connection for TcpStream<R> {
   fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
     self.0.into_split()
   }
+
+  // async fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+  //   use futures::AsyncReadExt;
+
+  //   self.0.read_exact(buf).await
+  // }
+
+  // async fn write_all(&mut self, buf: &mut [u8]) -> io::Result<()> {
+  //   use futures::AsyncWriteExt;
+
+  //   self.0.write_all(buf).await
+  // }
 }

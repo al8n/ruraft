@@ -13,7 +13,7 @@ description = "QUIC (quinn) transport layer implementation for ruraft"
 default = []
 metrics = ["ruraft-net/metrics"]
 
-test = ["smol_str", "ruraft-net/test", "rcgen", "rustls"]
+test = ["smol_str", "ruraft-net/test", "ruraft-net/bincode", "rcgen", "rustls"]
 
 [dependencies]
 agnostic = { workspace = true, features = ["quinn"] }
@@ -21,7 +21,7 @@ atomic-time = "0.1"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["async", "resolver", "agnostic"] }
 pin-project = { workspace = true }
-ruraft-net = { path = "../net" }
+ruraft-net = { path = "../net", features = ["bincode"] }
 ruraft-utils = { path = "../../utils" }
 quinn = { version = "0.10", default-features = false, features = ["tls-rustls", "native-certs", "log"] }
 tracing = { workspace = true }
@@ -33,7 +33,7 @@ rustls = { version = "=0.21.10", optional = true, features = ["dangerous_configu
 [dev-dependencies]
 agnostic = { workspace = true, features = ["quinn", "tokio", "async-std", "smol"] }
 ruraft-core = { path = "../../core", features = ["test"] }
-ruraft-net = { path = "../net", features = ["test"] }
+ruraft-net = { path = "../net", features = ["test", "bincode"] }
 rcgen = "0.12"
 rustls = { version = "=0.21.10", features = ["dangerous_configuration"] }
 smol_str = { workspace = true }

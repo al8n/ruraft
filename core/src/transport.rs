@@ -494,10 +494,8 @@ pub mod tests {
     <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
       Send + 'static,
   {
-    let trans1_consumer = trans1.consumer();
-
     let args = VoteRequest {
-      header: trans2.header().clone(),
+      header: trans1.header().clone(),
       term: 20,
       last_log_index: 100,
       last_log_term: 19,
@@ -505,6 +503,7 @@ pub mod tests {
     };
     let args1 = args.clone();
 
+    let trans1_header = trans1.header().clone();
     let resp = VoteResponse {
       header: trans1.header().clone(),
       term: 100,
@@ -513,6 +512,7 @@ pub mod tests {
     let resp1 = resp.clone();
 
     <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+      let trans1_consumer = trans1.consumer();
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -534,7 +534,7 @@ pub mod tests {
       }
     });
 
-    let res = trans2.vote(trans1.header().from(), args1).await.unwrap();
+    let res = trans2.vote(trans1_header.from(), args1).await.unwrap();
     assert_eq!(res, resp1);
   }
 

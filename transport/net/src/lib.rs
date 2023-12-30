@@ -54,7 +54,11 @@ pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
 /// Re-exports [`ruraft-wire`](ruraft_wire).
 pub mod wire {
   pub use ruraft_core::transport::{Wire, WireError};
-  pub use ruraft_wire::*;
+  pub use ruraft_wire::LpeWire;
+  #[cfg(feature = "bincode")]
+  pub use ruraft_wire::bincode::{BincodeWire, Error as BincodeWireError};
+  #[cfg(feature = "rmp")]
+  pub use ruraft_wire::rmp::{Error as RmpWireError, RmpWire};
 }
 
 /// Re-exports [`nodecraft`]'s address resolver.
@@ -653,11 +657,13 @@ where
       .map_err(<Self::Error as TransportError>::resolver)?;
     let req = Request::vote(req);
     let mut conn = BufReader::new(self.send(addr, req).await?);
+    tracing::error!("DEBUG: finish send req");
     let resp = <Self::Wire as Wire>::decode_response_from_reader(&mut conn)
       .await
       .map_err(|e| {
         <Self::Error as TransportError>::wire(<<Self::Wire as Wire>::Error as WireError>::io(e))
       })?;
+    tracing::error!("DEBUG: finish read response");
     match resp {
       Response::Error(err) => Err(Error::Remote(err.error)),
       Response::Vote(resp) => {

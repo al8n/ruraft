@@ -29,33 +29,52 @@ pub use s2n_quic::{Client, Server};
 /// [`s2n-quic`][s2n_quic] transport, which only support `tokio` async runtime.
 pub type S2nTransport<I, A, D, W> = NetTransport<I, A, D, S2n<<A as AddressResolver>::Runtime>, W>;
 
+
+
+/// Options for [`S2n`] stream layer.
+#[derive(Clone)]
+pub struct S2nOptions {
+  server_name: String,
+  // tls_server_config: quic::provider::tls::default::rustls::rustls::ServerConfig,
+  // tls_client_config: quic::provider::tls::rustls::rustls::ClientConfig,
+}
+
+impl S2nOptions {
+  /// Create a new S2nOptions
+  pub fn new(name: impl Into<String>) -> Self {
+    Self {
+      server_name: name.into(),
+    }
+  }
+}
+
+
 /// s2n stream layer implementation
 pub struct S2n<R> {
-  server: Option<Server>,
+  opts: S2nOptions,
   client: Client,
-  server_name: String,
   _marker: std::marker::PhantomData<R>,
 }
 
 impl<R> S2n<R> {
   /// Create a new `s2n`] stream layer.
-  pub fn new(server_name: impl Into<String>, server: Server, client: Client) -> io::Result<Self> {
+  pub fn new(opts: S2nOptions) -> io::Result<Self> {
     Ok(Self {
-      server_name: server_name.into(),
-      server: Some(server),
-      client,
+      opts,
+      client: Client::builder().with_io("0.0.0.0:0").map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?.start().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
       _marker: std::marker::PhantomData,
     })
   }
 }
 
-impl<R: Runtime> StreamLayer for S2n<R> {
+impl<R: Runtime> StreamLayer for S2n<R>
+{
   type Listener = S2nListener<R>;
 
   type Stream = S2nStream<R>;
 
   async fn connect(&self, addr: SocketAddr) -> io::Result<Self::Stream> {
-    let connect = Connect::new(addr).with_server_name(self.server_name.as_str());
+    let connect = Connect::new(addr).with_server_name(self.opts.server_name.as_str());
     let mut conn = self
       .client
       .connect(connect)
@@ -78,10 +97,12 @@ impl<R: Runtime> StreamLayer for S2n<R> {
     })
   }
 
-  async fn bind(&mut self, _addr: SocketAddr) -> io::Result<Self::Listener> {
-    let srv = self.server.take();
-    let srv =
-      srv.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "already bind to s2n server"))?;
+  async fn bind(&mut self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    let srv = Server::builder()
+      // .with_tls(self.options.tls_server_config.clone())?
+      .with_io(addr).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+      .start()
+      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(S2nListener {
       server: srv,
       _marker: std::marker::PhantomData,
@@ -324,4 +345,50 @@ impl<R: Runtime> Connection for S2nStream<R> {
   fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
     (self.read_stream, self.write_stream)
   }
+}
+
+/// Exports unit tests to let users test transport implementation based on this crate.
+#[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
+pub mod tests {
+  pub use super::testcases::quinn::*;
+}
+
+#[cfg(any(feature = "test", test))]
+mod testcases {
+  use super::*;
+  use futures::Future;
+  use ruraft_net::{
+    resolver::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header, ProtocolVersion,
+  };
+  use smol_str::SmolStr;
+  use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicU16, Ordering},
+  };
+
+  static PORT: AtomicU16 = AtomicU16::new(19090);
+
+  fn header1() -> Header<SmolStr, SocketAddr> {
+    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
+    Header::new(
+      ProtocolVersion::V1,
+      SmolStr::new("header1"),
+      addr.parse().unwrap(),
+    )
+  }
+
+  fn header2() -> Header<SmolStr, SocketAddr> {
+    Header::new(
+      ProtocolVersion::V1,
+      SmolStr::new("header2"),
+      "127.0.0.1:0".parse().unwrap(),
+    )
+  }
+
+  async fn stream_layer<R: Runtime>() -> S2n<R> {
+    S2n::<R>::new(S2nOptions::new("localhost")).unwrap()
+  }
+
+  tests_mod!(quinn::Quinn::stream_layer);
 }

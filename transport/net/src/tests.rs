@@ -114,7 +114,7 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        tests::vote::<_, _, Vec<u8>, _, BincodeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test timeout now for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]

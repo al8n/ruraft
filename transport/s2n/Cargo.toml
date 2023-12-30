@@ -9,8 +9,24 @@ rust-version.workspace = true
 metadata.workspace = true
 description = "QUIC (s2n-quic) transport layer implementation for ruraft"
 
+[features]
+default = []
+metrics = ["ruraft-net/metrics"]
+
+provider-address-token-default = [
+  "s2n-quic/provider-address-token-default"
+]
+provider-event-console-perf = [
+  "s2n-quic/provider-event-console-perf"
+]
+provider-event-tracing = ["s2n-quic/provider-event-tracing"]
+provider-tls-default = ["s2n-quic/provider-tls-default"]
+provider-tls-rustls = ["s2n-quic/provider-tls-rustls"]
+provider-tls-s2n = ["s2n-quic/provider-tls-s2n"]
+
+test = ["smol_str", "ruraft-net/test"]
+
 [dependencies]
-arc-swap = "1.6"
 agnostic = { workspace = true, features = ["net"] }
 atomic-time = "0.1"
 bytes = { workspace = true }
@@ -20,3 +36,15 @@ pin-project = { workspace = true }
 ruraft-net = { path = "../net" }
 ruraft-utils = { path = "../../utils" }
 s2n-quic = "1.31"
+
+# test dependencies
+smol_str = { workspace = true, optional = true }
+
+
+[dev-dependencies]
+agnostic = { workspace = true, features = ["quinn", "tokio", "async-std", "smol"] }
+ruraft-core = { path = "../../core", features = ["test"] }
+ruraft-net = { path = "../net", features = ["test", "bincode"] }
+rcgen = "0.12"
+smol_str = { workspace = true }
+tokio = { version = "1", features = ["full"] }

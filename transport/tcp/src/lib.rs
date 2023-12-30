@@ -29,7 +29,7 @@ pub mod tests {
   use agnostic::Runtime;
   use futures::Future;
   use ruraft_net::{
-    resolver::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header, ProtocolVersion,
+    resolver::SocketAddrResolver, tests, tests_mod, wire::{LpeWire, bincode::BincodeWire}, Header, ProtocolVersion,
   };
   use smol_str::SmolStr;
   use std::{

@@ -195,4 +195,16 @@ impl<R: Runtime> Connection for NativeTlsStream<R> {
       NativeTlsStreamOwnedWriteHalf { inner: w },
     )
   }
+
+  // async fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+  //   use futures::AsyncReadExt;
+
+  //   self.stream.read_exact(buf).await
+  // }
+
+  // async fn write_all(&mut self, buf: &mut [u8]) -> io::Result<()> {
+  //   use futures::AsyncWriteExt;
+
+  //   self.stream.write_all(buf).await
+  // }
 }
