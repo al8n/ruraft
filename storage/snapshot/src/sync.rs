@@ -125,7 +125,6 @@ impl FileSnapshotStorageOptions {
 
 /// Implements the [`SnapshotStorage`] trait and allows
 /// snapshots to be made on the local disk.
-#[derive(Clone)]
 pub struct FileSnapshotStorage<I, A, R> {
   path: Arc<PathBuf>,
   retain: usize,
@@ -136,6 +135,18 @@ pub struct FileSnapshotStorage<I, A, R> {
   no_sync: bool,
 
   _runtime: std::marker::PhantomData<(I, A, R)>,
+}
+
+impl<I, A, R> Clone for FileSnapshotStorage<I, A, R> {
+  fn clone(&self) -> Self {
+    Self {
+      path: self.path.clone(),
+      retain: self.retain,
+      #[cfg(any(feature = "test", test))]
+      no_sync: self.no_sync,
+      _runtime: std::marker::PhantomData,
+    }
+  }
 }
 
 impl<I, A, R> FileSnapshotStorage<I, A, R>
@@ -560,7 +571,8 @@ where
       return Poll::Ready(Err(e));
     }
 
-    if cfg!(any(feature = "test", test)) {
+    #[cfg(any(feature = "test", test))]
+    {
       if !self.no_sync {
         if let Some(parent) = self.dir.parent() {
           match fs::File::open(parent) {
@@ -582,23 +594,28 @@ where
           }
         }
       }
-    } else if let Some(parent) = self.dir.parent() {
-      match fs::File::open(parent) {
-        Ok(parent_fd) => {
-          if let Err(e) = parent_fd.sync_all() {
-            tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed syncing parent directory");
+    }
+
+    #[cfg(not(any(feature = "test", test)))]
+    {
+      if let Some(parent) = self.dir.parent() {
+        match fs::File::open(parent) {
+          Ok(parent_fd) => {
+            if let Err(e) = parent_fd.sync_all() {
+              tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed syncing parent directory");
+              return Poll::Ready(Err(e));
+            }
+          }
+          Err(e) => {
+            tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed to open snapshot parent directory");
             return Poll::Ready(Err(e));
           }
         }
-        Err(e) => {
-          tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed to open snapshot parent directory");
+
+        // Reap any old snapshots
+        if let Err(e) = self.store.reap_snapshots() {
           return Poll::Ready(Err(e));
         }
-      }
-
-      // Reap any old snapshots
-      if let Err(e) = self.store.reap_snapshots() {
-        return Poll::Ready(Err(e));
       }
     }
 
@@ -617,11 +634,15 @@ where
     self.file.flush()?;
 
     // sync to force fsync to disk
-    if cfg!(any(feature = "test", test)) {
+    #[cfg(any(feature = "test", test))]
+    {
       if !self.no_sync {
         self.file.get_mut().inner_mut().sync_all()?;
       }
-    } else {
+    }
+
+    #[cfg(not(any(feature = "test", test)))]
+    {
       self.file.get_mut().inner_mut().sync_all()?;
     }
 
@@ -644,12 +665,16 @@ where
     meta.encode_to_writer(&mut fh)?;
     fh.flush()?;
 
-    if cfg!(any(feature = "test", test)) {
+    #[cfg(any(feature = "test", test))]
+    {
       if !no_sync {
         return fh.get_mut().sync_all();
       }
       Ok(())
-    } else {
+    }
+
+    #[cfg(not(any(feature = "test", test)))]
+    {
       fh.get_mut().sync_all()
     }
   }

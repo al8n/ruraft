@@ -18,7 +18,7 @@ use crate::{
   },
   transport::{TimeoutNowRequest, TransportError},
   utils::override_notify_bool,
-  Observed,
+  Observation,
 };
 
 mod commitment;
@@ -599,7 +599,7 @@ where
         repl.stop_tx.close();
         let id = id.clone();
         futs.push(async move {
-          observe(&self.observers, Observed::Peer { id, removed: true }).await;
+          observe(&self.observers, Observation::Peer { id, removed: true }).await;
         });
         false
       }

@@ -1,5 +1,6 @@
 use std::{
   collections::HashMap,
+  marker::PhantomData,
   sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -42,16 +43,60 @@ impl core::fmt::Debug for ObserverId {
 }
 
 /// ObservationFilter is a function that can be registered in order to filter observations.
-pub trait ObservationFilter<I, A>: Fn(&Observed<I, A>) -> bool + Send + Sync + 'static {}
+pub trait ObservationFilter<I, A>: Send + Sync + 'static {
+  /// Returns true if the observation should be observed.
+  fn filter(&self, o: &Observation<I, A>) -> bool;
+}
 
-impl<I, A, F> ObservationFilter<I, A> for F where
-  F: Fn(&Observed<I, A>) -> bool + Send + Sync + 'static
+impl<I, A, F> ObservationFilter<I, A> for F
+where
+  F: Fn(&Observation<I, A>) -> bool + Send + Sync + 'static,
 {
+  #[inline]
+  fn filter(&self, o: &Observation<I, A>) -> bool {
+    (self)(o)
+  }
+}
+
+/// ObserveAll is a filter that allows all observations.
+pub struct ObserveAll<I, A>(PhantomData<(I, A)>);
+
+impl<I, A> Default for ObserveAll<I, A> {
+  #[inline]
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<I, A> Clone for ObserveAll<I, A> {
+  #[inline]
+  fn clone(&self) -> Self {
+    *self
+  }
+}
+
+impl<I, A> Copy for ObserveAll<I, A> {}
+
+impl<I, A> ObserveAll<I, A> {
+  /// Returns a new ObserveAll filter.
+  #[inline]
+  pub const fn new() -> Self {
+    Self(PhantomData)
+  }
+}
+
+impl<I: Send + Sync + 'static, A: Send + Sync + 'static> ObservationFilter<I, A>
+  for ObserveAll<I, A>
+{
+  #[inline]
+  fn filter(&self, _o: &Observation<I, A>) -> bool {
+    true
+  }
 }
 
 /// Observation-specific data
 #[derive(Clone)]
-pub enum Observed<I, A> {
+pub enum Observation<I, A> {
   /// Used for the data when leadership changes.
   Leader(Option<Node<I, A>>),
   /// Sent to observers when peers change.
@@ -76,7 +121,7 @@ pub enum Observed<I, A> {
   RequestVote(VoteRequest<I, A>),
 }
 
-impl<I: CheapClone, A: CheapClone> CheapClone for Observed<I, A> {
+impl<I: CheapClone, A: CheapClone> CheapClone for Observation<I, A> {
   fn cheap_clone(&self) -> Self {
     match self {
       Self::Leader(l) => Self::Leader(l.cheap_clone()),
@@ -96,14 +141,14 @@ impl<I: CheapClone, A: CheapClone> CheapClone for Observed<I, A> {
 }
 
 struct Inner<I, A> {
-  // numObserved and numDropped are performance counters for this observer.
+  // numObservation and numDropped are performance counters for this observer.
   num_observed: AtomicU64,
   num_dropped: AtomicU64,
 
   /// channel receives observations.
-  tx: async_channel::Sender<Observed<I, A>>,
+  tx: async_channel::Sender<Observation<I, A>>,
 
-  rx: async_channel::Receiver<Observed<I, A>>,
+  rx: async_channel::Receiver<Observation<I, A>>,
 
   /// Will be called to determine if an observation should be sent to
   /// the channel.
@@ -157,7 +202,7 @@ impl<I, A> Observer<I, A> {
 #[derive(Clone)]
 pub struct Observable<I, A> {
   #[pin]
-  rx: async_channel::Receiver<Observed<I, A>>,
+  rx: async_channel::Receiver<Observation<I, A>>,
   id: ObserverId,
 }
 
@@ -171,24 +216,24 @@ impl<I, A> Observable<I, A> {
   }
 
   /// Receives an [`Observation`].
-  pub async fn recv(&mut self) -> Result<Observed<I, A>, RecvError> {
+  pub async fn recv(&mut self) -> Result<Observation<I, A>, RecvError> {
     self.rx.recv().await
   }
 
   /// Attempts to receive an [`Observation`] without blocking.
-  pub fn try_recv(&mut self) -> Result<Observed<I, A>, TryRecvError> {
+  pub fn try_recv(&mut self) -> Result<Observation<I, A>, TryRecvError> {
     self.rx.try_recv()
   }
 }
 
 impl<I, A> Stream for Observable<I, A> {
-  type Item = <async_channel::Receiver<Observed<I, A>> as Stream>::Item;
+  type Item = <async_channel::Receiver<Observation<I, A>> as Stream>::Item;
 
   fn poll_next(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
   ) -> std::task::Poll<Option<Self::Item>> {
-    <async_channel::Receiver<Observed<I, A>> as Stream>::poll_next(self.project().rx, cx)
+    <async_channel::Receiver<Observation<I, A>> as Stream>::poll_next(self.project().rx, cx)
   }
 }
 
@@ -207,7 +252,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -259,9 +303,9 @@ where
   }
 }
 
-pub(crate) async fn observe<I: CheapClone, A: CheapClone>(
+pub(crate) async fn observe<I: CheapClone + 'static, A: CheapClone + 'static>(
   observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
-  o: Observed<I, A>,
+  o: Observation<I, A>,
 ) {
   // In general observers should not block. But in any case this isn't
   // disastrous as we only hold a read lock, which merely prevents
@@ -271,7 +315,7 @@ pub(crate) async fn observe<I: CheapClone, A: CheapClone>(
     observers
       .iter()
       .filter_map(|(_, or)| match or.inner.filter.as_ref() {
-        Some(f) if !f(&o) => None,
+        Some(f) if !f.filter(&o) => None,
         _ => {
           let o = o.cheap_clone();
           Some(async move {

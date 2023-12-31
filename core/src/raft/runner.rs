@@ -37,7 +37,7 @@ use crate::{
     RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest,
     VoteResponse,
   },
-  FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
+  FinateStateMachine, LastSnapshot, Node, Observation, Role, State,
 };
 
 #[cfg(feature = "metrics")]
@@ -550,7 +550,7 @@ where
       start.elapsed().as_millis() as f64
     ));
 
-    observe(&self.observers, Observed::RequestVote(req.clone())).await;
+    observe(&self.observers, Observation::RequestVote(req.clone())).await;
 
     // Setup a response
     let mut resp = VoteResponse {

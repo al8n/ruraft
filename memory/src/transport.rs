@@ -491,6 +491,20 @@ where
   protocol_version: ProtocolVersion,
 }
 
+impl<I, A, D, W> core::fmt::Debug for MemoryTransport<I, A, D, W>
+where
+  I: Id,
+  A: AddressResolver,
+  W: Wire,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("MemoryTransportInner")
+      .field("local_id", &self.local_id)
+      .field("local_address", &self.local_address)
+      .finish()
+  }
+}
+
 impl<I, A, D, W> Clone for MemoryTransport<I, A, D, W>
 where
   I: Id,
@@ -538,6 +552,11 @@ where
       producer: tx,
       protocol_version: opts.version,
     })
+  }
+
+  /// Update the local id for the transport.
+  pub fn set_local_id(&mut self, id: I) {
+    self.local_id = id;
   }
 }
 

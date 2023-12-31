@@ -341,6 +341,7 @@ where
 }
 
 /// A [`Storage`] implementation adapter which consists of any kinds of [`LogStorage`], [`StableStorage`] and [`SnapshotStorage`] impelementation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RaftStorage<L, ST, S> {
   log: L,
   stable: ST,

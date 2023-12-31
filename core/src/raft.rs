@@ -184,7 +184,11 @@ impl<I, A> Leader<I, A> {
   }
 }
 
-impl<I: CheapClone + PartialEq, A: CheapClone + PartialEq> Leader<I, A> {
+impl<
+    I: CheapClone + PartialEq + Send + Sync + 'static,
+    A: CheapClone + PartialEq + Send + Sync + 'static,
+  > Leader<I, A>
+{
   async fn set(
     &self,
     leader: Option<Node<I, A>>,
@@ -195,14 +199,14 @@ impl<I: CheapClone + PartialEq, A: CheapClone + PartialEq> Leader<I, A> {
     match (new, old) {
       (None, None) => {}
       (None, Some(_)) => {
-        observe(observers, Observed::Leader(None)).await;
+        observe(observers, Observation::Leader(None)).await;
       }
       (Some(new), None) => {
-        observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
+        observe(observers, Observation::Leader(Some(new.as_ref().clone()))).await;
       }
       (Some(new), Some(old)) => {
         if old.addr() != new.addr() || old.id() != new.id() {
-          observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
+          observe(observers, Observation::Leader(Some(new.as_ref().clone()))).await;
         }
       }
     }
@@ -235,7 +239,10 @@ impl Shutdown {
     self.shutdown.load(Ordering::Acquire)
   }
 
-  async fn shutdown<I: CheapClone, A: CheapClone>(
+  async fn shutdown<
+    I: CheapClone + Send + Sync + 'static,
+    A: CheapClone + Send + Sync + 'static,
+  >(
     &self,
     state: &State,
     observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,

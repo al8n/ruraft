@@ -3,11 +3,9 @@
 use core::panic;
 use std::{
   borrow::Cow,
-  collections::{HashMap, HashSet},
+  collections::HashSet,
   io,
   marker::PhantomData,
-  net::SocketAddr,
-  path::PathBuf,
   sync::Arc,
   time::{Duration, Instant},
 };
@@ -16,30 +14,33 @@ use agnostic::{Delay, Runtime, Sleep};
 use async_lock::Mutex;
 use futures::{AsyncWriteExt, Future, FutureExt};
 use ruraft_core::{
-  membership::Membership,
+  membership::{Membership, MembershipBuilder, Server, ServerSuffrage},
   options::Options,
   sidecar::NoopSidecar,
-  transport::{Address, Id, Transformable, Transport, Wire},
-  FinateStateMachine, FinateStateMachineError, FinateStateMachineLog, FinateStateMachineLogKind,
+  storage::RaftStorage,
+  transport::{Transformable, Transport, Wire},
+  FinateStateMachine, FinateStateMachineError, FinateStateMachineLog,
   FinateStateMachineLogTransformError, FinateStateMachineResponse, FinateStateMachineSnapshot,
-  ObservationFilter, Observed, Observer, RaftCore, Role,
+  Observation, ObservationFilter, ObserveAll, RaftCore, Role,
 };
 use ruraft_memory::{
-  storage::{
-    log::MemoryLogStorage, snapshot::MemorySnapshotSink, stable::MemoryStableStorage, MemoryStorage,
-  },
-  transport::{MemoryAddressResolver, MemoryTransport},
+  storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
+  transport::{MemoryAddress, MemoryAddressResolver, MemoryTransport, MemoryTransportOptions},
 };
 
-use ruraft_snapshot::sync::{FileSnapshotStorage, FileSnapshotStorageOptions};
+use ruraft_snapshot::sync::{FileSnapshotSink, FileSnapshotStorage, FileSnapshotStorageOptions};
 use smol_str::SmolStr;
 use tempfile::TempDir;
 
 type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 type Raft<W, R> = RaftCore<
   MockFSM<R>,
-  MemoryStorage<SmolStr, SocketAddr, Vec<u8>, R>,
-  MemoryTransport<SmolStr, MemoryAddressResolver<SocketAddr, R>, Vec<u8>, W>,
+  RaftStorage<
+    MemoryLogStorage<SmolStr, MemoryAddress, Vec<u8>, R>,
+    MemoryStableStorage<SmolStr, MemoryAddress, R>,
+    FileSnapshotStorage<SmolStr, MemoryAddress, R>,
+  >,
+  MemoryTransport<SmolStr, MemoryAddressResolver<MemoryAddress, R>, Vec<u8>, W>,
   NoopSidecar<R>,
   R,
 >;
@@ -47,7 +48,7 @@ type Raft<W, R> = RaftCore<
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
 pub enum MockFSMErrorKind {
   IO(io::Error),
-  Transform(FinateStateMachineLogTransformError<SmolStr, SocketAddr, Vec<u8>>),
+  Transform(FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>),
 }
 
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
@@ -77,10 +78,10 @@ impl<R: Runtime> From<io::Error> for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> From<FinateStateMachineLogTransformError<SmolStr, SocketAddr, Vec<u8>>>
+impl<R: Runtime> From<FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
   for MockFSMError<R>
 {
-  fn from(err: FinateStateMachineLogTransformError<SmolStr, SocketAddr, Vec<u8>>) -> Self {
+  fn from(err: FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>) -> Self {
     Self {
       kind: Arc::new(MockFSMErrorKind::Transform(err)),
       messages: Vec::new(),
@@ -131,9 +132,10 @@ impl FinateStateMachineResponse for MockFSMResponse {
   }
 }
 
+#[derive(Debug)]
 struct MockFSMInner {
-  logs: Vec<FinateStateMachineLog<SmolStr, SocketAddr, Vec<u8>>>,
-  memberships: Vec<Membership<SmolStr, SocketAddr>>,
+  logs: Vec<FinateStateMachineLog<SmolStr, MemoryAddress, Vec<u8>>>,
+  memberships: Vec<Membership<SmolStr, MemoryAddress>>,
 }
 
 /// MockFSM is an implementation of the [`FinateStateMachine`] trait, and just stores
@@ -143,6 +145,12 @@ struct MockFSMInner {
 pub struct MockFSM<R> {
   inner: Arc<Mutex<MockFSMInner>>,
   _runtime: PhantomData<R>,
+}
+
+impl<R> core::fmt::Debug for MockFSM<R> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "MockFSM")
+  }
 }
 
 impl<R> Clone for MockFSM<R> {
@@ -171,13 +179,13 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
 
   type Snapshot = MockFSMSnapshot<R>;
 
-  type SnapshotSink = MemorySnapshotSink<SmolStr, SocketAddr, R>;
+  type SnapshotSink = FileSnapshotSink<SmolStr, MemoryAddress, R>;
 
   type Response = MockFSMResponse;
 
   type Id = SmolStr;
 
-  type Address = SocketAddr;
+  type Address = MemoryAddress;
 
   type Data = Vec<u8>;
 
@@ -234,7 +242,7 @@ pub struct MockFSMMembershipStore<R> {
 
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
 pub struct MockFSMSnapshot<R> {
-  logs: Vec<FinateStateMachineLog<SmolStr, SocketAddr, Vec<u8>>>,
+  logs: Vec<FinateStateMachineLog<SmolStr, MemoryAddress, Vec<u8>>>,
   max_index: u64,
   _runtime: PhantomData<R>,
 }
@@ -242,7 +250,7 @@ pub struct MockFSMSnapshot<R> {
 impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
   type Error = MockFSMError<R>;
 
-  type Sink = MemorySnapshotSink<SmolStr, SocketAddr, R>;
+  type Sink = FileSnapshotSink<SmolStr, MemoryAddress, R>;
 
   type Runtime = R;
 
@@ -272,21 +280,26 @@ struct MakeClusterOptions {
 
 struct Cluster<W, R>
 where
-  W: Wire<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>,
+  W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
   R: Runtime,
   <R::Sleep as futures::Future>::Output: Send + 'static,
 {
-  root_dir: TempDir,
-  dirs: Vec<PathBuf>,
-  stores: Vec<Arc<MemoryStorage<SmolStr, SocketAddr, Vec<u8>, R>>>,
+  dirs: Vec<Arc<TempDir>>,
+  stores: Vec<
+    RaftStorage<
+      MemoryLogStorage<SmolStr, MemoryAddress, Vec<u8>, R>,
+      MemoryStableStorage<SmolStr, MemoryAddress, R>,
+      FileSnapshotStorage<SmolStr, MemoryAddress, R>,
+    >,
+  >,
   fsms: Vec<MockFSM<R>>,
-  snaps: Vec<Arc<FileSnapshotStorage<SmolStr, SocketAddr, R>>>,
+  snaps: Vec<FileSnapshotStorage<SmolStr, MemoryAddress, R>>,
   rafts: Vec<Raft<W, R>>,
 
-  trans: Vec<Arc<MemoryTransport<SmolStr, MemoryAddressResolver<SocketAddr, R>, Vec<u8>, W>>>,
+  trans: Vec<MemoryTransport<SmolStr, MemoryAddressResolver<MemoryAddress, R>, Vec<u8>, W>>,
 
-  observation_tx: async_channel::Sender<Observed<SmolStr, SocketAddr>>,
-  observation_rx: async_channel::Receiver<Observed<SmolStr, SocketAddr>>,
+  observation_tx: async_channel::Sender<Observation<SmolStr, MemoryAddress>>,
+  observation_rx: async_channel::Receiver<Observation<SmolStr, MemoryAddress>>,
 
   opts: Options,
   propagate_timeout: Duration,
@@ -300,9 +313,10 @@ where
 
 impl<W, R> Cluster<W, R>
 where
-  W: Wire<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>,
+  W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
   R: Runtime,
   <R::Sleep as futures::Future>::Output: Send + 'static,
+  <<R as Runtime>::Interval as futures::Stream>::Item: Send,
 {
   // async fn make_cluster(n: usize, opts: MakeClusterOptions) -> Result<Self, DynError> {
   //   opts.options.get_or_insert(inmem_config());
@@ -341,10 +355,6 @@ where
 
     futures::future::join_all(self.rafts.iter().map(|r| r.shutdown())).await;
 
-    for d in &self.dirs {
-      let _ = std::fs::remove_dir_all(d);
-    }
-
     d.cancel().await;
   }
 
@@ -352,11 +362,14 @@ where
   /// or a timeout occurs. It is possible to set a filter to look for specific
   /// observations. Setting timeout to 0 means that it will wait forever until a
   /// non-filtered observation is made.
-  fn wait_event_rx(
+  fn wait_event_rx<F>(
     &self,
     ctx: async_channel::Receiver<()>,
-    f: Option<impl ObservationFilter<SmolStr, SocketAddr>>,
-  ) -> async_channel::Receiver<()> {
+    f: Option<F>,
+  ) -> async_channel::Receiver<()>
+  where
+    F: ObservationFilter<SmolStr, MemoryAddress>,
+  {
     let (tx, rx) = async_channel::bounded(1);
     let observation_rx = self.observation_rx.clone();
     R::spawn_detach(async move {
@@ -369,7 +382,7 @@ where
               return;
             }
 
-            if f.as_ref().unwrap()(&o.unwrap()) {
+            if f.as_ref().unwrap().filter(&o.unwrap()) {
               return;
             }
           }
@@ -385,7 +398,7 @@ where
   // non-filtered observation is made or a test failure is signaled.
   async fn wait_event(
     &self,
-    f: Option<impl ObservationFilter<SmolStr, SocketAddr>>,
+    f: Option<impl ObservationFilter<SmolStr, MemoryAddress>>,
     timeout: Duration,
   ) {
     let (ctx_tx, ctx_rx) = async_channel::bounded(1);
@@ -415,8 +428,8 @@ where
       let mut delay = R::delay(self.long_stop_timeout, async move {
         ctx_tx.close();
       });
-      let f = |_observed: &Observed<SmolStr, SocketAddr>| true;
-      let rx = self.wait_event_rx(ctx_rx, Some(f));
+      let rx = self.wait_event_rx::<ObserveAll<SmolStr, MemoryAddress>>(ctx_rx, None);
+
       futures::select! {
         _ = limit.fuse() => {
           panic!("timed out waiting for replication");
@@ -502,8 +515,8 @@ where
       }
 
       // Filter will wake up whenever we observe a RequestVote.
-      let filter = |ob: &Observed<SmolStr, SocketAddr>| -> bool {
-        matches!(ob, Observed::Role(_) | Observed::RequestVote(_))
+      let filter = |ob: &Observation<SmolStr, MemoryAddress>| -> bool {
+        matches!(ob, Observation::Role(_) | Observation::RequestVote(_))
       };
       let (ctx_tx, ctx_rx) = async_channel::bounded(1);
       scopeguard::defer!(ctx_tx.close(););
@@ -551,19 +564,11 @@ where
 
   /// Connects all the transports together.
   async fn fully_connect(&self) {
-    tracing::debug!("fully connecting");
-    for t1 in self.trans.iter() {
-      for t2 in self.trans.iter() {
-        if t1.header() != t2.header() {
-          t1.connect(*t2.local_addr(), t2.as_ref().clone()).await;
-          t2.connect(*t1.local_addr(), t1.as_ref().clone()).await;
-        }
-      }
-    }
+    fully_connect(&self.trans).await
   }
 
   /// Disconnects all transports from the given address.
-  async fn disconnect(&self, a: &SocketAddr) {
+  async fn disconnect(&self, a: &MemoryAddress) {
     tracing::debug!(address = %a, "disconnecting");
     for t in self.trans.iter() {
       if t.local_addr().eq(a) {
@@ -576,7 +581,7 @@ where
 
   /// Keeps the given list of addresses connected but isolates them
   /// from the other members of the cluster.
-  async fn partition(&self, far: &[SocketAddr]) {
+  async fn partition(&self, far: &[MemoryAddress]) {
     tracing::debug!(addresses = ?far, "partitioning");
 
     // Gather the set of nodes on the "near" side of the partition (we
@@ -624,7 +629,7 @@ where
 
   /// Checks that ALL the nodes think the leader is the given expected
   /// leader.
-  fn ensure_leader(&self, expect: Option<SocketAddr>) {
+  fn ensure_leader(&self, expect: Option<MemoryAddress>) {
     // We assume c.Leader() has been called already; now check all the rafts
     // think the leader is correct
     let mut fail = false;
@@ -655,7 +660,7 @@ where
     let limit = Instant::now() + self.long_stop_timeout;
     let first = &self.fsms[0];
 
-    let f = |_: &Observed<SmolStr, SocketAddr>| true;
+    let f = |_: &Observation<SmolStr, MemoryAddress>| true;
     'outer: loop {
       let first = first.inner.lock().await;
 
@@ -725,7 +730,7 @@ where
 
   /// Returns the configuration of the given Raft instance, or
   /// fails the test if there's an error
-  fn get_membership(&self, r: &Raft<W, R>) -> Membership<SmolStr, SocketAddr> {
+  fn get_membership(&self, r: &Raft<W, R>) -> Membership<SmolStr, MemoryAddress> {
     r.latest_membership().membership().clone()
   }
 
@@ -745,7 +750,7 @@ where
           if Instant::now() > limit {
             panic!("timed out waiting for peers to converge");
           } else {
-            let f = |_: &Observed<SmolStr, SocketAddr>| true;
+            let f = |_: &Observation<SmolStr, MemoryAddress>| true;
             self.wait_event(Some(f), self.opts.commit_timeout()).await;
             continue 'outer;
           }
@@ -771,11 +776,14 @@ where
       Duration::from_secs(5)
     };
 
-    let (fail_tx, fail_rx) = async_channel::bounded(1);
+    let (failed_tx, failed_rx) = async_channel::bounded(1);
 
     let mut dirs = Vec::new();
     let mut stores = Vec::new();
     let mut fsms = Vec::new();
+    let mut transs = Vec::new();
+    let mut snaps = Vec::new();
+    let mut membership_builder = MembershipBuilder::new();
     // Setup the stores and transports
     for i in 0..opts.peers {
       let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
@@ -783,8 +791,83 @@ where
       let stable_store = MemoryStableStorage::new();
       let log_store = MemoryLogStorage::new();
       let (dir2, snapshot_store) = file_snapshot().await;
+      snaps.push(snapshot_store.clone());
       dirs.push(dir2);
       fsms.push(MockFSM::default());
+      stores.push(RaftStorage::new(log_store, stable_store, snapshot_store));
+
+      let mut trans =
+        MemoryTransport::<SmolStr, MemoryAddressResolver<MemoryAddress, R>, Vec<u8>, W>::new(
+          MemoryAddressResolver::<MemoryAddress, R>::new(),
+          MemoryTransportOptions::new("".into()),
+        )
+        .await?;
+
+      let addr = trans.local_addr();
+      let local_id = format!("server-{addr}").into();
+      trans.set_local_id(local_id);
+      transs.push(trans);
+
+      membership_builder.insert(Server::from_node(
+        trans.header().from().clone(),
+        ServerSuffrage::Voter,
+      ))?;
+    }
+
+    fully_connect(transs.as_slice()).await;
+
+    // Create all the rafts
+    let mut rafts = Vec::new();
+    let start_time = Instant::now();
+
+    for i in 0..opts.peers {
+      let storage = stores[i].clone();
+      let fsm = fsms[i].clone();
+      let trans = transs[i].clone();
+
+      let raft = RaftCore::new(fsm, storage, trans, *raft_opts).await?;
+
+      let observer = raft
+        .register_observer::<ObserveAll<SmolStr, MemoryAddress>>(false, None)
+        .await;
+
+      rafts.push(raft);
+    }
+
+    Ok(Self {
+      dirs: dirs.into_iter().map(Arc::new).collect(),
+      stores,
+      fsms,
+      snaps,
+      rafts,
+      trans: transs,
+      observation_tx,
+      observation_rx,
+      opts: *raft_opts,
+      propagate_timeout,
+      long_stop_timeout,
+      start_time,
+      failed: Mutex::new(false),
+      failed_tx,
+      failed_rx,
+    })
+  }
+}
+
+async fn fully_connect<W, R>(
+  trans: &[MemoryTransport<SmolStr, MemoryAddressResolver<MemoryAddress, R>, Vec<u8>, W>],
+) where
+  W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
+  R: Runtime,
+  <R::Sleep as futures::Future>::Output: Send + 'static,
+{
+  tracing::debug!("fully connecting");
+  for t1 in trans.iter() {
+    for t2 in trans.iter() {
+      if t1.header() != t2.header() {
+        t1.connect(*t2.local_addr(), t2.clone()).await;
+        t2.connect(*t1.local_addr(), t1.clone()).await;
+      }
     }
   }
 }
@@ -837,12 +920,12 @@ impl DurationExt for Duration {
   }
 }
 
-async fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, SocketAddr, R>) {
+async fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
   // Create a test dir
   let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
 
   let opts = FileSnapshotStorageOptions::new(dir.path(), 3, true);
-  let snap = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(opts)
+  let snap = FileSnapshotStorage::<SmolStr, MemoryAddress, R>::new(opts)
     .await
     .unwrap();
   (dir, snap)

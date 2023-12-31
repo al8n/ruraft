@@ -28,7 +28,7 @@ use crate::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
   },
-  FinateStateMachine, LastSnapshot, Observed, Observer, ObserverId,
+  FinateStateMachine, LastSnapshot, Observation, Observer, ObserverId,
 };
 
 const MAX_FAILURE_SCALE: u64 = 12;
@@ -130,7 +130,7 @@ where
     leader_state.repl_state.insert(peer_id.clone(), repl);
     observe(
       &self.observers,
-      Observed::Peer {
+      Observation::Peer {
         id: remote.id().clone(),
         removed: false,
       },
@@ -991,7 +991,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
           if failures > 0 {
             observe(
               &observers,
-              Observed::HeartbeatResumed(resp.header.from().id().clone()),
+              Observation::HeartbeatResumed(resp.header.from().id().clone()),
             )
             .await;
           }
@@ -1019,7 +1019,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
           tracing::error!(target = "ruraft.repl", remote=%remote, backoff_time = %humantime::Duration::from(next_backoff_time), err=%e, "failed to heartbeat");
           observe(
             &observers,
-            Observed::HeartbeatFailed {
+            Observation::HeartbeatFailed {
               id: remote.id().clone(),
               last_contact: last_contact.get(),
             },

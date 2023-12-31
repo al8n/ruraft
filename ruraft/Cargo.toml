@@ -21,7 +21,7 @@ dns = ["agnostic/dns"]
 
 metrics = ["ruraft-core/metrics", "ruraft-memory/metrics", "ruraft-snapshot/metrics"]
 
-test = ["ruraft-core/test", "ruraft-memory/test", "tempfile", "smol_str", "humantime"]
+test = ["ruraft-core/test", "ruraft-memory/test", "ruraft-snapshot/test", "tempfile", "smol_str", "humantime"]
 
 serde = ["dep:serde", "ruraft-core/serde", "ruraft-memory/serde"]
 
