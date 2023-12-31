@@ -30,6 +30,23 @@ pub struct MemorySnapshotStorage<I, A, R> {
   _runtime: std::marker::PhantomData<R>,
 }
 
+impl<I, A, R> Default for MemorySnapshotStorage<I, A, R> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<I, A, R> MemorySnapshotStorage<I, A, R> {
+  /// Create a new memory snapshot storage
+  pub fn new() -> Self {
+    Self {
+      latest: Arc::new(RwLock::new(Default::default())),
+      has_snapshot: AtomicBool::new(false),
+      _runtime: std::marker::PhantomData,
+    }
+  }
+}
+
 impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
   I: Id,
@@ -39,21 +56,9 @@ where
   type Error = io::Error;
   type Sink = MemorySnapshotSink<Self::Id, Self::Address, R>;
   type Source = MemorySnapshotSource<Self::Id, Self::Address, R>;
-  type Options = ();
   type Runtime = R;
   type Id = I;
   type Address = A;
-
-  async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
-  where
-    Self: Sized,
-  {
-    Ok(Self {
-      latest: Arc::new(RwLock::new(Default::default())),
-      has_snapshot: AtomicBool::new(false),
-      _runtime: std::marker::PhantomData,
-    })
-  }
 
   async fn create(
     &self,

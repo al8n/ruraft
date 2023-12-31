@@ -164,9 +164,7 @@ pub mod tests {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
     use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
 
-    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new(())
-      .await
-      .unwrap();
+    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
     // check no snapshots
     let snaps = snap.list().await.unwrap();
@@ -217,9 +215,7 @@ pub mod tests {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
     use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
 
-    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new(())
-      .await
-      .unwrap();
+    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
     // create a new sink
     let mut sink = snap

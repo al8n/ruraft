@@ -26,6 +26,26 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   // fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+macro_rules! impl_finish_state_machine_snapshot_for_wrapper {
+  ($($ty: ident), +$(,)?) => {
+    $(
+      const _: () = {
+        impl<F: FinateStateMachineSnapshot> FinateStateMachineSnapshot for $ty<F> {
+          type Error = F::Error;
+          type Sink = F::Sink;
+          type Runtime = F::Runtime;
+
+          fn persist(&self, sink: Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send {
+            (**self).persist(sink)
+          }
+        }
+      };
+    )*
+  };
+}
+
+impl_finish_state_machine_snapshot_for_wrapper!(Box, Arc);
+
 /// Represents a comprehensive set of errors arising from operations within the [`FinateStateMachine`] trait.
 ///
 /// This trait encapsulates a range of error types, providing a structured approach to categorizing
@@ -119,3 +139,49 @@ pub trait FinateStateMachine: Send + Sync + 'static {
     snapshot: impl AsyncRead + Send + Unpin,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
+
+macro_rules! impl_finate_state_machine_wrapper {
+  ($($ty:ident), +$(,)?) => {
+    $(
+      const _: () = {
+        impl<T: FinateStateMachine> FinateStateMachine for $ty<T> {
+          type Error = T::Error;
+          type Snapshot = T::Snapshot;
+          type SnapshotSink = T::SnapshotSink;
+          type Response = T::Response;
+          type Id = T::Id;
+          type Address = T::Address;
+          type Data = T::Data;
+          type Runtime = T::Runtime;
+
+          fn apply(
+            &self,
+            log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
+          ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send {
+            (**self).apply(log)
+          }
+
+          fn apply_batch(
+            &self,
+            logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>> + Send,
+          ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send {
+            (**self).apply_batch(logs)
+          }
+
+          fn snapshot(&self) -> impl Future<Output = Result<Self::Snapshot, Self::Error>> + Send {
+            (**self).snapshot()
+          }
+
+          fn restore(
+            &self,
+            snapshot: impl AsyncRead + Send + Unpin,
+          ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+            (**self).restore(snapshot)
+          }
+        }
+      };
+    )+
+  };
+}
+
+impl_finate_state_machine_wrapper!(Box, Arc);

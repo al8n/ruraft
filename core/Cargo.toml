@@ -18,6 +18,7 @@ serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "ruraft-utils/ser
 
 [dependencies]
 arc-swap = "1.6"
+auto_impl = "1"
 agnostic = { workspace = true }
 async-lock = { workspace = true }
 async-channel = { workspace = true }

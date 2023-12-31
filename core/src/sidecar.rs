@@ -5,21 +5,17 @@ use crate::raft::Role;
 mod autopilot;
 pub use autopilot::*;
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Represents a sidecar that can be run alongside the Raft according
 /// to the different [`Role`].
 ///
 /// e.g. [`Autopilot`](crate::sidecar::Autopilot) will be run alongside when the Raft node
 /// becomes the leader.
 pub trait Sidecar: Send + Sync + 'static {
-  /// The options type used to construct the sidecar.
-  type Options: Send + Sync + 'static;
   /// The error type returned by the sidecar.
   type Error: std::error::Error + Send + Sync + 'static;
   /// The async runtime used by the sidecar.
   type Runtime: agnostic::Runtime;
-
-  /// Returns a new sidecar.
-  fn new(options: Self::Options) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Runs the sidecar.
   ///
@@ -51,13 +47,8 @@ impl<R> NoopSidecar<R> {
 }
 
 impl<R: agnostic::Runtime> Sidecar for NoopSidecar<R> {
-  type Options = ();
   type Error = Infallible;
   type Runtime = R;
-
-  async fn new(_options: Self::Options) -> Result<(), Self::Error> {
-    Ok(())
-  }
 
   async fn run(&self, _role: Role) -> Result<(), Self::Error> {
     Ok(())

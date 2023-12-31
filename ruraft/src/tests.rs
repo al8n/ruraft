@@ -25,12 +25,15 @@ use ruraft_core::{
   ObservationFilter, Observed, Observer, RaftCore, Role,
 };
 use ruraft_memory::{
-  storage::{snapshot::MemorySnapshotSink, MemoryStorage},
+  storage::{
+    log::MemoryLogStorage, snapshot::MemorySnapshotSink, stable::MemoryStableStorage, MemoryStorage,
+  },
   transport::{MemoryAddressResolver, MemoryTransport},
 };
 
-use ruraft_snapshot::sync::FileSnapshotStorage;
+use ruraft_snapshot::sync::{FileSnapshotStorage, FileSnapshotStorageOptions};
 use smol_str::SmolStr;
+use tempfile::TempDir;
 
 type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 type Raft<W, R> = RaftCore<
@@ -151,6 +154,18 @@ impl<R> Clone for MockFSM<R> {
   }
 }
 
+impl<R> Default for MockFSM<R> {
+  fn default() -> Self {
+    Self {
+      inner: Arc::new(Mutex::new(MockFSMInner {
+        logs: Vec::new(),
+        memberships: Vec::new(),
+      })),
+      _runtime: PhantomData,
+    }
+  }
+}
+
 impl<R: Runtime> FinateStateMachine for MockFSM<R> {
   type Error = MockFSMError<R>;
 
@@ -261,6 +276,7 @@ where
   R: Runtime,
   <R::Sleep as futures::Future>::Output: Send + 'static,
 {
+  root_dir: TempDir,
   dirs: Vec<PathBuf>,
   stores: Vec<Arc<MemoryStorage<SmolStr, SocketAddr, Vec<u8>, R>>>,
   fsms: Vec<MockFSM<R>>,
@@ -739,6 +755,38 @@ where
       return;
     }
   }
+
+  /// Return a cluster with the given config and number of peers.
+  /// If bootstrap is true, the servers will know about each other before starting,
+  /// otherwise their transports will be wired up but they won't yet have configured
+  /// each other.
+  async fn make_cluster(mut opts: MakeClusterOptions) -> Result<Self, DynError> {
+    let raft_opts = opts.options.get_or_insert(inmem_config());
+
+    let (observation_tx, observation_rx) = async_channel::bounded(1024);
+    let propagate_timeout = raft_opts.heartbeat_timeout() * 2 + raft_opts.commit_timeout();
+    let long_stop_timeout = if opts.longstop_timeout > Duration::ZERO {
+      opts.longstop_timeout
+    } else {
+      Duration::from_secs(5)
+    };
+
+    let (fail_tx, fail_rx) = async_channel::bounded(1);
+
+    let mut dirs = Vec::new();
+    let mut stores = Vec::new();
+    let mut fsms = Vec::new();
+    // Setup the stores and transports
+    for i in 0..opts.peers {
+      let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
+      dirs.push(dir);
+      let stable_store = MemoryStableStorage::new();
+      let log_store = MemoryLogStorage::new();
+      let (dir2, snapshot_store) = file_snapshot().await;
+      dirs.push(dir2);
+      fsms.push(MockFSM::default());
+    }
+  }
 }
 
 fn inmem_config() -> Options {
@@ -787,4 +835,15 @@ impl DurationExt for Duration {
   fn readable(&self) -> humantime::Duration {
     humantime::Duration::from(*self)
   }
+}
+
+async fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, SocketAddr, R>) {
+  // Create a test dir
+  let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
+
+  let opts = FileSnapshotStorageOptions::new(dir.path(), 3, true);
+  let snap = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(opts)
+    .await
+    .unwrap();
+  (dir, snap)
 }

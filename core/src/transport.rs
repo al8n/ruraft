@@ -139,6 +139,7 @@ pub type HeartbeatHandler<I, A> = Arc<
     + 'static,
 >;
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Defines the capabilities and requirements for communication with other nodes across a network.
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
