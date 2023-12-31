@@ -41,6 +41,14 @@ impl core::fmt::Debug for ObserverId {
   }
 }
 
+/// ObservationFilter is a function that can be registered in order to filter observations.
+pub trait ObservationFilter<I, A>: Fn(&Observed<I, A>) -> bool + Send + Sync + 'static {}
+
+impl<I, A, F> ObservationFilter<I, A> for F where
+  F: Fn(&Observed<I, A>) -> bool + Send + Sync + 'static
+{
+}
+
 /// Observation-specific data
 #[derive(Clone)]
 pub enum Observed<I, A> {
@@ -99,7 +107,7 @@ struct Inner<I, A> {
 
   /// Will be called to determine if an observation should be sent to
   /// the channel.
-  filter: Option<Box<dyn Fn(&Observed<I, A>) -> bool + Send + Sync + 'static>>,
+  filter: Option<Box<dyn ObservationFilter<I, A>>>,
 }
 
 /// Observer describes what to do with a given observation.
@@ -214,10 +222,7 @@ where
     filter: Option<Filter>,
   ) -> Observer<T::Id, <T::Resolver as AddressResolver>::Address>
   where
-    Filter: for<'a> Fn(&'a Observed<T::Id, <T::Resolver as AddressResolver>::Address>) -> bool
-      + Send
-      + Sync
-      + 'static,
+    Filter: ObservationFilter<T::Id, <T::Resolver as AddressResolver>::Address>,
   {
     let id = ObserverId(NEXT_OBSERVER_ID.fetch_add(1, Ordering::AcqRel));
     let (tx, rx) = async_channel::unbounded();
@@ -227,13 +232,7 @@ where
       tx,
       rx,
       filter: filter.map(|f| {
-        Box::new(f)
-          as Box<
-            dyn Fn(&Observed<T::Id, <T::Resolver as AddressResolver>::Address>) -> bool
-              + Send
-              + Sync
-              + 'static,
-          >
+        Box::new(f) as Box<dyn ObservationFilter<T::Id, <T::Resolver as AddressResolver>::Address>>
       }),
     });
 

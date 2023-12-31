@@ -21,7 +21,7 @@ dns = ["agnostic/dns"]
 
 metrics = ["ruraft-core/metrics", "ruraft-memory/metrics", "ruraft-snapshot/metrics"]
 
-test = ["ruraft-core/test", "ruraft-memory/test", "tempfile", "smol_str"]
+test = ["ruraft-core/test", "ruraft-memory/test", "tempfile", "smol_str", "humantime"]
 
 serde = ["dep:serde", "ruraft-core/serde", "ruraft-memory/serde"]
 
@@ -48,7 +48,9 @@ viewit = { workspace = true }
 # test features related dependencies
 tempfile = { version = "3", optional = true }
 smol_str = { version = "0.2", optional = true }
+humantime = { version = "2", optional = true }
 
 [dev-dependencies]
 agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
 tokio = { version = "1.32", features = ["full"] }
+humantime = "2"

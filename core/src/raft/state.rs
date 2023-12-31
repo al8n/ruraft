@@ -32,6 +32,12 @@ pub enum Role {
   Shutdown,
 }
 
+impl core::fmt::Display for Role {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", self.as_str())
+  }
+}
+
 impl Role {
   /// Returns the str of the role.
   #[inline]

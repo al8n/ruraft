@@ -358,6 +358,28 @@ where
   inner: Arc<Inner<F, S, T, SC, R>>,
 }
 
+impl<F, S, T, SC, R> core::fmt::Debug for RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", self.inner.transport.header().from())
+  }
+}
+
 impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
 where
   F: FinateStateMachine<

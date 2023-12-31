@@ -66,9 +66,21 @@ where
     self.inner.transport.local_addr()
   }
 
+  /// Returns the current role of the node.
+  pub fn role(&self) -> Role {
+    self.inner.state.role()
+  }
+
+  /// Returns the current term the node.
+  pub fn current_term(&self) -> u64 {
+    self.inner.state.current_term()
+  }
+
   /// Returns the latest membership. This may not yet be
   /// committed.
-  pub fn membership(&self) -> LatestMembership<T::Id, <T::Resolver as AddressResolver>::Address> {
+  pub fn latest_membership(
+    &self,
+  ) -> LatestMembership<T::Id, <T::Resolver as AddressResolver>::Address> {
     let membership = self.inner.memberships.latest();
     LatestMembership {
       index: membership.0,
@@ -142,7 +154,6 @@ where
     LeaderWatcher(self.inner.leadership_change_rx.clone())
   }
 }
-
 
 impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
 where
@@ -614,7 +625,7 @@ where
   pub async fn stats(&self) -> RaftStats<T::Id, <T::Resolver as AddressResolver>::Address> {
     let last_log = self.inner.state.last_log();
     let last_snapshot = self.inner.state.last_snapshot();
-    let membership = self.membership();
+    let membership = self.latest_membership();
 
     let mut num_peers = 0;
     let mut has_us = false;
@@ -1050,6 +1061,11 @@ impl<I, A> LatestMembership<I, A> {
   /// Returns the latest membership in use by Raft.
   pub fn membership(&self) -> &Membership<I, A> {
     &self.membership
+  }
+
+  /// Consumes the `LatestMembership` and returns the membership and the index.
+  pub fn into_components(self) -> (u64, Membership<I, A>) {
+    (self.index, self.membership)
   }
 }
 
