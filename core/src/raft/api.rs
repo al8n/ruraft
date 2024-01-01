@@ -28,7 +28,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -161,7 +160,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -669,7 +667,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<

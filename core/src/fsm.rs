@@ -9,42 +9,23 @@ mod log;
 pub use log::*;
 
 /// Represents a snapshot of the finate state machine.
+#[auto_impl::auto_impl(Box)]
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
   type Error: std::error::Error;
-
-  /// The sink type used by the finate state machine snapshot.
-  type Sink: SnapshotSink;
 
   /// The async runtime used by the finate state machine snapshot.
   type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
-  fn persist(&self, sink: Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  fn persist(
+    &self,
+    sink: impl SnapshotSink,
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-  // /// Release is invoked when we are finished with the snapshot.
-  // fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  /// Release is invoked when we are finished with the snapshot.
+  fn release(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
-
-macro_rules! impl_finish_state_machine_snapshot_for_wrapper {
-  ($($ty: ident), +$(,)?) => {
-    $(
-      const _: () = {
-        impl<F: FinateStateMachineSnapshot> FinateStateMachineSnapshot for $ty<F> {
-          type Error = F::Error;
-          type Sink = F::Sink;
-          type Runtime = F::Runtime;
-
-          fn persist(&self, sink: Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send {
-            (**self).persist(sink)
-          }
-        }
-      };
-    )*
-  };
-}
-
-impl_finish_state_machine_snapshot_for_wrapper!(Box, Arc);
 
 /// Represents a comprehensive set of errors arising from operations within the [`FinateStateMachine`] trait.
 ///
@@ -69,15 +50,13 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
 }
 
 /// Implemented by clients to make use of the replicated log.
+#[auto_impl::auto_impl(Box, Arc)]
 pub trait FinateStateMachine: Send + Sync + 'static {
   /// Errors returned by the finate state machine.
   type Error: FinateStateMachineError<Snapshot = Self::Snapshot>;
 
   /// The snapshot type used by the finate state machine.
-  type Snapshot: FinateStateMachineSnapshot<Sink = Self::SnapshotSink, Runtime = Self::Runtime>;
-
-  /// The sink type used by the finate state machine snapshot.
-  type SnapshotSink: SnapshotSink;
+  type Snapshot: FinateStateMachineSnapshot<Runtime = Self::Runtime>;
 
   /// The response type returned by the finate state machine after apply.
   type Response: FinateStateMachineResponse;
@@ -139,49 +118,3 @@ pub trait FinateStateMachine: Send + Sync + 'static {
     snapshot: impl AsyncRead + Send + Unpin,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
-
-macro_rules! impl_finate_state_machine_wrapper {
-  ($($ty:ident), +$(,)?) => {
-    $(
-      const _: () = {
-        impl<T: FinateStateMachine> FinateStateMachine for $ty<T> {
-          type Error = T::Error;
-          type Snapshot = T::Snapshot;
-          type SnapshotSink = T::SnapshotSink;
-          type Response = T::Response;
-          type Id = T::Id;
-          type Address = T::Address;
-          type Data = T::Data;
-          type Runtime = T::Runtime;
-
-          fn apply(
-            &self,
-            log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
-          ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send {
-            (**self).apply(log)
-          }
-
-          fn apply_batch(
-            &self,
-            logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>> + Send,
-          ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send {
-            (**self).apply_batch(logs)
-          }
-
-          fn snapshot(&self) -> impl Future<Output = Result<Self::Snapshot, Self::Error>> + Send {
-            (**self).snapshot()
-          }
-
-          fn restore(
-            &self,
-            snapshot: impl AsyncRead + Send + Unpin,
-          ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-            (**self).restore(snapshot)
-          }
-        }
-      };
-    )+
-  };
-}
-
-impl_finate_state_machine_wrapper!(Box, Arc);

@@ -96,7 +96,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -177,7 +176,6 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Data = T::Data,
     Runtime = R,
   >,
@@ -204,7 +202,6 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Data = T::Data,
     Runtime = R,
   >,
