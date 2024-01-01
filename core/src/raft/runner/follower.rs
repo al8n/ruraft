@@ -215,7 +215,7 @@ where
                 }
               } else {
                 #[cfg(feature = "metrics")]
-                metrics::increment_counter!("ruraft.transition.heartbeat_timeout");
+                metrics::counter!("ruraft.transition.heartbeat_timeout").increment(1);
                 if has_vote {
                   if let Some(last_leader) = last_leader {
                     tracing::warn!(target = "ruraft.follower", last_leader_id = %last_leader.id(), last_leader_addr=%last_leader.addr(), "heartbeat timeout reached, starting election");

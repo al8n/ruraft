@@ -36,7 +36,7 @@ bytes = "1.5"
 byteorder = "1.5"
 futures = "0.3"
 humantime-serde = "1.1"
-nodecraft = "0.2"
+nodecraft = { version = "0.2", features = ["transformable"] }
 pin-project = "1.1"
 pollster = "0.3"
 smol_str = { version = "0.2" }
@@ -44,6 +44,7 @@ scopeguard = "1.1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 tracing = { version = "0.1" }
-metrics = { version = "0.21" }
+metrics = { version = "0.22" }
 viewit = { version = "0.1.5" }
 wg = { version = "0.4", features = ["async"] }
+

@@ -671,9 +671,9 @@ where
           let id = remote.id().to_string();
           metrics::histogram!(
             "ruraft.repl.install_snapshot",
-            start.elapsed().as_millis() as f64,
             "peer_id" => id,
-          );
+          )
+          .record(start.elapsed().as_millis() as f64);
         }
 
         // Check for a newer term, stop running
@@ -1002,9 +1002,9 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
             let id = remote.id().to_string();
             metrics::histogram!(
               "ruraft.repl.heartbeat",
-              start.elapsed().as_millis() as f64,
               "peer_id" => id,
-            );
+            )
+            .record(start.elapsed().as_millis() as f64);
           }
 
           Replication::notify_all(&notify_all, resp.success).await;
@@ -1047,13 +1047,13 @@ fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
 
   metrics::histogram!(
     "ruraft.repl.append_entries.rpc",
-    start.elapsed().unwrap().as_millis() as f64,
     "peer_id" => id1,
-  );
+  )
+  .record(start.elapsed().unwrap().as_millis() as f64);
 
   metrics::counter!(
     "ruraft.repl.append_entries.logs",
-    logs,
     "peer_id" => id,
-  );
+  )
+  .increment(logs);
 }

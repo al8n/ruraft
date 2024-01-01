@@ -399,10 +399,10 @@ pub(crate) async fn compact_logs<S: Storage>(
   let start = std::time::Instant::now();
 
   #[cfg(feature = "metrics")]
-  scopeguard::defer!(metrics::histogram!(
-    "ruraft.snapshot.compact_logs",
-    start.elapsed().as_millis() as f64
-  ));
+  scopeguard::defer!({
+    let histogram = metrics::histogram!("ruraft.snapshot.compact_logs",);
+    histogram.record(start.elapsed().as_millis() as f64);
+  });
 
   let last_log = state.last_log();
   compact_logs_with_trailing::<S>(ls, snap_idx, last_log.index, trailing_logs).await
@@ -460,10 +460,10 @@ pub(crate) async fn remove_old_logs<S: Storage>(ls: &S::Log) -> Result<(), S::Er
   let start = std::time::Instant::now();
 
   #[cfg(feature = "metrics")]
-  scopeguard::defer!(metrics::histogram!(
-    "ruraft.snapshot.remove_old_logs",
-    start.elapsed().as_millis() as f64
-  ));
+  scopeguard::defer!({
+    let histogram = metrics::histogram!("ruraft.snapshot.remove_old_logs");
+    histogram.record(start.elapsed().as_millis() as f64);
+  });
 
   match ls.last_index().await {
     Ok(None) | Ok(Some(0)) => Ok(()),

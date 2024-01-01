@@ -406,7 +406,9 @@ pub(crate) trait LogStorageExt: LogStorage {
                 }
               }
             }
-            metrics::gauge!("ruraft.log.oldest.ms", age_ms as f64);
+
+            let gauge = metrics::gauge!("ruraft.log.oldest.ms");
+            gauge.set(age_ms as f64);
           },
           _ = stop_rx.recv().fuse() => return,
         }

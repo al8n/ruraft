@@ -256,7 +256,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.verify_leader");
+    metrics::counter!("ruraft.verify_leader").increment(1);
 
     let (tx, rx) = oneshot::channel();
     match self.inner.verify_tx.send(tx).await {
@@ -690,7 +690,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.apply");
+    metrics::counter!("ruraft.apply").increment(1);
 
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
@@ -730,7 +730,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.barrier");
+    metrics::counter!("ruraft.barrier").increment(1);
 
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
@@ -770,7 +770,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.membership_change");
+    metrics::counter!("ruraft.membership_change").increment(1);
 
     let (tx, rx) = oneshot::channel();
     let req = MembershipChangeRequest { cmd, tx };
@@ -807,7 +807,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.snapshot");
+    metrics::counter!("ruraft.snapshot").increment(1);
 
     let (tx, rx) = oneshot::channel();
 
@@ -846,7 +846,7 @@ where
     self.is_shutdown_error()?;
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.restore");
+    metrics::counter!("ruraft.restore").increment(1);
 
     let (tx, rx) = oneshot::channel();
 
