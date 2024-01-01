@@ -59,7 +59,7 @@ mod state;
 pub use state::*;
 
 /// A Raft node in the cluster.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node<I, A> {
   id: I,
@@ -97,10 +97,22 @@ impl<I, A> Node<I, A> {
     &self.id
   }
 
+  /// Sets the id of the Node.
+  #[inline]
+  pub fn set_id(&mut self, id: I) {
+    self.id = id;
+  }
+
   /// Returns the address of the leader.
   #[inline]
   pub const fn addr(&self) -> &A {
     &self.addr
+  }
+
+  /// Sets the address of the Node.
+  #[inline]
+  pub fn set_addr(&mut self, addr: A) {
+    self.addr = addr;
   }
 
   /// Creates a new node.

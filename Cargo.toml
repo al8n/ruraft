@@ -2,6 +2,7 @@
 members = [
   "autopilot",
   "core",
+  "ffi/python",
   "memory",
   "ruraft",
   "storage/snapshot",
