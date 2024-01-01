@@ -8,6 +8,7 @@ use ruraft_core::{
   CheapClone, Data,
 };
 
+#[derive(Debug)]
 struct Inner<I, A, D> {
   low_index: u64,
   high_index: u64,
@@ -39,6 +40,16 @@ pub enum MemoryLogStorageError {
 pub struct MemoryLogStorage<I, A, D, R> {
   store: Arc<Mutex<Inner<I, A, D>>>,
   _runtime: core::marker::PhantomData<R>,
+}
+
+impl<I: core::fmt::Debug, A: core::fmt::Debug, D: core::fmt::Debug, R> core::fmt::Debug
+  for MemoryLogStorage<I, A, D, R>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_tuple("MemoryLogStorage")
+      .field(&self.store)
+      .finish()
+  }
 }
 
 impl<I, A, D, R> Default for MemoryLogStorage<I, A, D, R> {

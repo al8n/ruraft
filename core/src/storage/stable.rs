@@ -4,6 +4,7 @@ use nodecraft::{Address, Id};
 
 use crate::Node;
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Used to provide stable storage
 /// of key configurations to ensure safety.
 /// e.g. votes are persisted to this storage.

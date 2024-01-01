@@ -19,3 +19,8 @@ unit_tests!(
     vote,
   )
 );
+
+#[test]
+fn test() {
+  run(heartbeat_fastpath::<TokioRuntime>());
+}

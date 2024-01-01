@@ -7,14 +7,8 @@
 #![deny(missing_docs, warnings)]
 #![forbid(unsafe_code)]
 
-/// Memory based [`SnapshotStorage`](ruraft_core::storage::SnapshotStorage) implementor.
-pub mod snapshot;
-
-/// Memory based [`StableStorage`](ruraft_core::storage::StableStorage) implementor.
-pub mod stable;
-
-/// Memory based [`LogStorage`](ruraft_core::storage::LogStorage) implementor.
-pub mod log;
+/// Memory based [`Storage`](ruraft_core::storage::Storage) implementor.
+pub mod storage;
 
 /// Memory based [`Transport`](ruraft_core::transport::Transport) implementor.
 pub mod transport;
@@ -32,9 +26,9 @@ pub mod tests {
   use smol_str::SmolStr;
 
   use crate::{
-    log::MemoryLogStorage,
-    snapshot::MemorySnapshotStorage,
-    stable::MemoryStableStorage,
+    storage::{
+      log::MemoryLogStorage, snapshot::MemorySnapshotStorage, stable::MemoryStableStorage,
+    },
     transport::{MemoryAddress, MemoryAddressResolver},
   };
 
@@ -170,9 +164,7 @@ pub mod tests {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
     use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
 
-    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new(())
-      .await
-      .unwrap();
+    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
     // check no snapshots
     let snaps = snap.list().await.unwrap();
@@ -223,9 +215,7 @@ pub mod tests {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
     use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
 
-    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new(())
-      .await
-      .unwrap();
+    let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
     // create a new sink
     let mut sink = snap

@@ -156,10 +156,10 @@ where
     let start = Instant::now();
 
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.snapshot.take_snapshot",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!({
+      let histogram = metrics::histogram!("ruraft.snapshot.take_snapshot",);
+      histogram.record(start.elapsed().as_millis() as f64);
+    });
 
     let (tx, rx) = oneshot::channel();
 
@@ -240,7 +240,11 @@ where
             };
 
             #[cfg(feature = "metrics")]
-            metrics::histogram!("ruraft.snapshot.create", create_start.elapsed().as_millis() as f64);
+            {
+              let histogram = metrics::histogram!("ruraft.snapshot.create");
+              histogram.record(create_start.elapsed().as_millis() as f64);
+            }
+
 
             // Try to persist the snapshot
             #[cfg(feature = "metrics")]
@@ -251,7 +255,10 @@ where
             }
 
             #[cfg(feature = "metrics")]
-            metrics::histogram!("ruraft.snapshot.persist", persist_start.elapsed().as_millis() as f64);
+            {
+              let histogram = metrics::histogram!("ruraft.snapshot.persist");
+              histogram.record(persist_start.elapsed().as_millis() as f64);
+            }
 
             // Update the last stable snapshot info.
             self.state.set_last_snapshot(LastSnapshot::new(snap.index, snap.term));

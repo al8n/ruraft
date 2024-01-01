@@ -22,7 +22,7 @@ use super::{
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
-  observe,
+  observer::{observe, Observation},
   options::{Options, ReloadableOptions},
   options::{ProtocolVersion, SnapshotVersion},
   raft::snapshot::SnapshotRestoreMonitor,
@@ -37,7 +37,7 @@ use crate::{
     RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest,
     VoteResponse,
   },
-  FinateStateMachine, LastSnapshot, Node, Observed, Role, State,
+  FinateStateMachine, LastSnapshot, Node, Role, State,
 };
 
 #[cfg(feature = "metrics")]
@@ -71,10 +71,10 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.rpc.process_heartbeat",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!({
+      let h = metrics::histogram!("ruraft.rpc.process_heartbeat");
+      h.record(start.elapsed().as_millis() as f64);
+    });
 
     handle_heartbeat_request(
       header,
@@ -329,10 +329,10 @@ where
     let start = Instant::now();
 
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.rpc.append_entries",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!({
+      let h = metrics::histogram!("ruraft.rpc.append_entries");
+      h.record(start.elapsed().as_millis() as f64);
+    });
 
     // Setup a response
     let mut resp = AppendEntriesResponse {
@@ -475,10 +475,8 @@ where
       }
 
       #[cfg(feature = "metrics")]
-      metrics::histogram!(
-        "ruraft.follower.append_entries",
-        start.elapsed().as_millis() as f64
-      );
+      metrics::histogram!("ruraft.follower.append_entries")
+        .record(start.elapsed().as_millis() as f64);
     }
 
     // Update the commit index
@@ -495,10 +493,8 @@ where
       self.process_logs(idx, None).await;
 
       #[cfg(feature = "metrics")]
-      metrics::histogram!(
-        "ruraft.follower.commit_index",
-        start.elapsed().as_millis() as f64
-      );
+      metrics::histogram!("ruraft.follower.commit_index")
+        .record(start.elapsed().as_millis() as f64);
     }
 
     // Everything went well, set success
@@ -545,12 +541,11 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.rpc.vote_request",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!(
+      metrics::histogram!("ruraft.rpc.vote_request").record(start.elapsed().as_millis() as f64)
+    );
 
-    observe(&self.observers, Observed::RequestVote(req.clone())).await;
+    observe(&self.observers, Observation::RequestVote(req.clone())).await;
 
     // Setup a response
     let mut resp = VoteResponse {
@@ -666,10 +661,9 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::gauge!(
-      "ruraft.rpc.install_snapshot",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!(
+      metrics::histogram!("ruraft.rpc.install_snapshot").record(start.elapsed().as_millis() as f64)
+    );
 
     let req_size = *req.size();
 
@@ -918,10 +912,9 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.rpc.heartbeat",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!(
+      metrics::histogram!("ruraft.rpc.heartbeat").record(start.elapsed().as_millis() as f64)
+    );
 
     handle_heartbeat_request::<_, _>(
       self.transport.header(),

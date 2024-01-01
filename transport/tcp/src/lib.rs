@@ -55,15 +55,6 @@ pub mod tests {
     )
   }
 
-  fn fake_header() -> Header<SmolStr, SocketAddr> {
-    let addr = format!("127.0.0.1:{}", PORT.fetch_add(1, Ordering::SeqCst));
-    Header::new(
-      ProtocolVersion::V1,
-      SmolStr::new("fake_header"),
-      addr.parse().unwrap(),
-    )
-  }
-
   async fn tcp_stream_layer<R: Runtime>() -> crate::tcp::Tcp<R> {
     crate::tcp::Tcp::new()
   }

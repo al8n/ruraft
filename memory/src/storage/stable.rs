@@ -8,6 +8,7 @@ use ruraft_core::{
   Node,
 };
 
+#[derive(Debug)]
 struct Inner<I, A> {
   last_vote_cand: Option<Node<I, A>>,
   last_vote_term: Option<u64>,
@@ -31,6 +32,16 @@ impl<I, A> Default for Inner<I, A> {
 pub struct MemoryStableStorage<I, A, R> {
   store: Arc<Mutex<Inner<I, A>>>,
   _runtime: core::marker::PhantomData<R>,
+}
+
+impl<I: core::fmt::Debug, A: core::fmt::Debug, R> core::fmt::Debug
+  for MemoryStableStorage<I, A, R>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_tuple("MemoryStableStorage")
+      .field(&self.store)
+      .finish()
+  }
 }
 
 impl<I, A, R> Default for MemoryStableStorage<I, A, R> {

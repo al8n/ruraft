@@ -41,7 +41,7 @@ where
     tracing::info!(target = "ruraft", id=%local_id, addr=%local_addr, term = %term, "entering candidate state");
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.state.candidate");
+    metrics::counter!("ruraft.state.candidate").increment(1);
 
     // Start vote for us, and set a timeout
     let (votes_needed, vote_rx) = self.elect_self(local_id, local_addr).await;
@@ -356,7 +356,7 @@ where
             }
 
             #[cfg(feature = "metrics")]
-            metrics::histogram!("ruraft.candidate.elect_self", start.elapsed().as_millis() as f64);
+            metrics::histogram!("ruraft.candidate.elect_self").record(start.elapsed().as_millis() as f64);
           });
         })
       }

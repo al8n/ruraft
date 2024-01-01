@@ -139,6 +139,7 @@ pub type HeartbeatHandler<I, A> = Arc<
     + 'static,
 >;
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Defines the capabilities and requirements for communication with other nodes across a network.
 pub trait Transport: Send + Sync + 'static {
   /// Errors that the transport can potentially return during operations.
@@ -487,18 +488,15 @@ pub mod tests {
   }
 
   /// Test [`Transport::vote`](Transport::vote).
-  pub async fn vote<T: Transport>(
-    trans1: T,
-    trans2: T,
-    fake_vote_target: Header<T::Id, <T::Resolver as AddressResolver>::Address>,
-  ) where
+  pub async fn vote<T: Transport>(trans1: T, trans2: T)
+  where
     <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
       Send + 'static,
   {
     let trans1_consumer = trans1.consumer();
 
     let args = VoteRequest {
-      header: fake_vote_target.clone(),
+      header: trans2.header().clone(),
       term: 20,
       last_log_index: 100,
       last_log_term: 19,
@@ -539,12 +537,56 @@ pub mod tests {
     assert_eq!(res, resp1);
   }
 
+  /// Test [`Transport::timeout_now`](Transport::timeout_now).
+  pub async fn timeout_now<T: Transport>(trans1: T, trans2: T)
+  where
+    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+      Send + 'static,
+  {
+    let trans1_consumer = trans1.consumer();
+
+    let args = TimeoutNowRequest {
+      header: trans2.header().clone(),
+    };
+    let args1 = args.clone();
+
+    let resp = TimeoutNowResponse {
+      header: trans1.header().clone(),
+    };
+    let resp1 = resp.clone();
+
+    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+      futures::pin_mut!(trans1_consumer);
+      futures::select! {
+        req = trans1_consumer.next().fuse() => {
+          let req = req.unwrap();
+          // Verify the command
+          if let Request::TimeoutNow(req) = req.request() {
+            assert_eq!(req, &args);
+          } else {
+            panic!("unexpected request");
+          }
+
+          let Ok(_) = req.respond(Response::timeout_now(resp.clone())) else {
+            panic!("unexpected respond fail");
+          };
+        },
+        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+          panic!("timeout");
+        },
+      }
+    });
+
+    let res = trans2
+      .timeout_now(trans1.header().from(), args1)
+      .await
+      .unwrap();
+    assert_eq!(res, resp1);
+  }
+
   /// Test [`Transport::install_snapshot`](Transport::install_snapshot).
-  pub async fn install_snapshot<T: Transport>(
-    trans1: T,
-    trans2: T,
-    fake_target: Header<T::Id, <T::Resolver as AddressResolver>::Address>,
-  ) where
+  pub async fn install_snapshot<T: Transport>(trans1: T, trans2: T)
+  where
     <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
       Send + 'static,
   {
@@ -553,7 +595,7 @@ pub mod tests {
     let trans1_consumer = trans1.consumer();
 
     let args = InstallSnapshotRequest {
-      header: fake_target.clone(),
+      header: trans2.header().clone(),
       term: 10,
       last_log_index: 100,
       last_log_term: 9,
@@ -563,7 +605,7 @@ pub mod tests {
         let mut builder = MembershipBuilder::new();
         builder
           .insert(Server::from_node(
-            fake_target.from().clone(),
+            trans2.header().from().clone(),
             ServerSuffrage::Voter,
           ))
           .unwrap();

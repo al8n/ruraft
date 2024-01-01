@@ -23,37 +23,52 @@ use ruraft_core::{
 /// retains only the most recent snapshot
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
-#[derive(Debug)]
-pub struct MemorySnapshotStorage<I: Id, A: Address, R: Runtime> {
+pub struct MemorySnapshotStorage<I, A, R> {
   latest: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   has_snapshot: AtomicBool,
   _runtime: std::marker::PhantomData<R>,
 }
 
+impl<I: core::fmt::Debug, A: core::fmt::Debug, R> core::fmt::Debug
+  for MemorySnapshotStorage<I, A, R>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("MemorySnapshotStorage")
+      .field("latest", &self.latest)
+      .field("has_snapshot", &self.has_snapshot)
+      .finish()
+  }
+}
+
+impl<I, A, R> Default for MemorySnapshotStorage<I, A, R> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<I, A, R> MemorySnapshotStorage<I, A, R> {
+  /// Create a new memory snapshot storage
+  pub fn new() -> Self {
+    Self {
+      latest: Arc::new(RwLock::new(Default::default())),
+      has_snapshot: AtomicBool::new(false),
+      _runtime: std::marker::PhantomData,
+    }
+  }
+}
+
 impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
-  I: Id + Unpin,
-  A: Address + Unpin,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   type Error = io::Error;
   type Sink = MemorySnapshotSink<Self::Id, Self::Address, R>;
   type Source = MemorySnapshotSource<Self::Id, Self::Address, R>;
-  type Options = ();
   type Runtime = R;
   type Id = I;
   type Address = A;
-
-  async fn new(_opts: Self::Options) -> Result<Self, Self::Error>
-  where
-    Self: Sized,
-  {
-    Ok(Self {
-      latest: Arc::new(RwLock::new(Default::default())),
-      has_snapshot: AtomicBool::new(false),
-      _runtime: std::marker::PhantomData,
-    })
-  }
 
   async fn create(
     &self,
@@ -142,7 +157,7 @@ where
 }
 
 #[derive(Debug)]
-struct MemorySnapshot<I: Id, A: Address> {
+struct MemorySnapshot<I, A> {
   meta: SnapshotMeta<I, A>,
   contents: Vec<u8>,
 }
@@ -151,7 +166,7 @@ struct MemorySnapshot<I: Id, A: Address> {
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
+pub struct MemorySnapshotSink<I, A, R> {
   snap: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   id: SnapshotId,
   _runtime: std::marker::PhantomData<R>,
@@ -159,8 +174,8 @@ pub struct MemorySnapshotSink<I: Id, A: Address, R: Runtime> {
 
 impl<I: Id, A: Address, R: Runtime> AsyncWrite for MemorySnapshotSink<I, A, R>
 where
-  I: Id + Unpin,
-  A: Address + Unpin,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
@@ -222,8 +237,8 @@ pub struct MemorySnapshotSource<I: Id, A: Address, R: Runtime> {
 
 impl<I, A, R> AsyncRead for MemorySnapshotSource<I, A, R>
 where
-  I: Id + Unpin,
-  A: Address + Unpin,
+  I: Id,
+  A: Address,
   R: Runtime,
 {
   fn poll_read(

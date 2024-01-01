@@ -11,8 +11,10 @@ use nodecraft::{resolver::AddressResolver, CheapClone};
 use parking_lot::Mutex;
 
 use crate::{
-  membership::Membership, observe, storage::SnapshotMeta, transport::Transport, Observed, Observer,
-  ObserverId,
+  membership::Membership,
+  observer::{observe, Observation, Observer, ObserverId},
+  storage::SnapshotMeta,
+  transport::Transport,
 };
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,
@@ -30,6 +32,12 @@ pub enum Role {
   Leader,
   /// The terminal state of a Raft node.
   Shutdown,
+}
+
+impl core::fmt::Display for Role {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", self.as_str())
+  }
 }
 
 impl Role {
@@ -110,14 +118,14 @@ impl State {
     self.role.load(Ordering::SeqCst)
   }
 
-  pub(crate) async fn set_role<I: CheapClone, A: CheapClone>(
+  pub(crate) async fn set_role<I: CheapClone + 'static, A: CheapClone + 'static>(
     &self,
     role: Role,
     observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
   ) {
     let old = self.role.swap(role, Ordering::Release);
     if old != role {
-      observe::<I, A>(observers, Observed::Role(role)).await;
+      observe::<I, A>(observers, Observation::Role(role)).await;
     }
   }
 

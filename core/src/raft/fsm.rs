@@ -218,7 +218,7 @@ where
                 match fsm.snapshot().await {
                   Ok(snapshot) => {
                     #[cfg(feature = "metrics")]
-                    metrics::histogram!("ruraft.fsm.snapshot", start.elapsed().as_millis() as f64);
+                    metrics::histogram!("ruraft.fsm.snapshot").record(start.elapsed().as_millis() as f64);
 
                     let resp = FSMSnapshot {
                       term: last_term,
@@ -232,7 +232,7 @@ where
                   },
                   Err(e) => {
                     #[cfg(feature = "metrics")]
-                    metrics::histogram!("ruraft.fsm.snapshot", start.elapsed().as_millis() as f64);
+                    metrics::histogram!("ruraft.fsm.snapshot").record(start.elapsed().as_millis() as f64);
 
                     if tx.send(Err(Error::fsm(e))).is_err() {
                       tracing::error!(target = "ruraft.fsm.runner", "failed to send finate state machine snapshot response, receiver closed");
@@ -270,12 +270,10 @@ where
       Ok(_) => {
         #[cfg(feature = "metrics")]
         {
-          metrics::histogram!("ruraft.fsm.restore", start.elapsed().as_millis() as f64);
+          metrics::histogram!("ruraft.fsm.restore").record(start.elapsed().as_millis() as f64);
 
-          metrics::gauge!(
-            "ruraft.fsm.last_restore_duration",
-            start.elapsed().as_millis() as f64
-          );
+          metrics::gauge!("ruraft.fsm.last_restore_duration")
+            .set(start.elapsed().as_millis() as f64);
         }
         monitor.stop_and_wait().await;
         Ok(())
@@ -332,9 +330,9 @@ where
 
           #[cfg(feature = "metrics")]
           {
-            metrics::histogram!("raft.fsm.apply_batch", start.elapsed().as_millis() as f64);
+            metrics::histogram!("raft.fsm.apply_batch").record(start.elapsed().as_millis() as f64);
 
-            metrics::counter!("raft.fsm.apply_batch_num", len as u64);
+            metrics::counter!("raft.fsm.apply_batch_num").increment(len as u64);
           }
 
           for (tx, resp) in futs.into_iter().zip(resps.into_iter()) {
@@ -351,9 +349,9 @@ where
         Err(e) => {
           #[cfg(feature = "metrics")]
           {
-            metrics::histogram!("raft.fsm.apply_batch", start.elapsed().as_millis() as f64);
+            metrics::histogram!("raft.fsm.apply_batch").record(start.elapsed().as_millis() as f64);
 
-            metrics::counter!("raft.fsm.apply_batch_num", len as u64);
+            metrics::counter!("raft.fsm.apply_batch_num").increment(len as u64);
           }
 
           for tx in futs.into_iter().flatten() {
@@ -393,7 +391,7 @@ where
           .await;
 
         #[cfg(feature = "metrics")]
-        metrics::histogram!("ruraft.fsm.apply", start.elapsed().as_millis() as f64);
+        metrics::histogram!("ruraft.fsm.apply").record(start.elapsed().as_millis() as f64);
 
         if let Some(tx) = commit.tx {
           if tx.respond_fsm(resp.map_err(Error::fsm)).is_err() {
@@ -415,7 +413,7 @@ where
           })
           .await;
         #[cfg(feature = "metrics")]
-        metrics::histogram!("ruraft.fsm.apply", start.elapsed().as_millis() as f64);
+        metrics::histogram!("ruraft.fsm.apply").record(start.elapsed().as_millis() as f64);
 
         if let Some(tx) = commit.tx {
           if tx.respond_fsm(resp.map_err(Error::fsm)).is_err() {

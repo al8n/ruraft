@@ -11,14 +11,13 @@ use smallvec::SmallVec;
 
 use super::*;
 use crate::{
-  observe,
+  observer::{observe, Observation},
   raft::{ApplyRequest, ApplySender, LastSnapshot},
   storage::{
     remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotSource, StorageError,
   },
   transport::{TimeoutNowRequest, TransportError},
   utils::override_notify_bool,
-  Observed,
 };
 
 mod commitment;
@@ -142,7 +141,7 @@ where
     tracing::info!(target = "ruraft", id=%local_id, addr=%local_addr, "entering leader state");
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.state.leader");
+    metrics::counter!("ruraft.state.leader").increment(1);
 
     override_notify_bool(&self.leader_tx, &self.leader_rx, true).await;
 
@@ -195,7 +194,7 @@ where
         .await;
     }
     #[cfg(feature = "metrics")]
-    metrics::gauge!("ruraft.peers", latest.len() as f64);
+    metrics::gauge!("ruraft.peers").set(latest.len() as f64);
 
     // Dispatch a no-op log entry first. This gets this leader up to the latest
     // possible commit index, even in the absence of client commands. This used
@@ -599,7 +598,7 @@ where
         repl.stop_tx.close();
         let id = id.clone();
         futs.push(async move {
-          observe(&self.observers, Observed::Peer { id, removed: true }).await;
+          observe(&self.observers, Observation::Peer { id, removed: true }).await;
         });
         false
       }
@@ -609,7 +608,7 @@ where
 
     // Update peers metric
     #[cfg(feature = "metrics")]
-    metrics::gauge!("ruraft.peers", latest.len() as f64);
+    metrics::gauge!("ruraft.peers").set(latest.len() as f64);
   }
 
   async fn handle_leader_transfer(
@@ -876,10 +875,8 @@ where
         } else {
           num_commits += 1;
           #[cfg(feature = "metrics")]
-          metrics::histogram!(
-            "ruraft.leader.commit_time",
-            inf.dispatch.elapsed().as_millis() as f64
-          );
+          metrics::histogram!("ruraft.leader.commit_time",)
+            .record(inf.dispatch.elapsed().as_millis() as f64);
           group_futs.insert(idx, inf);
           last_idx_in_group = idx;
           None
@@ -896,11 +893,11 @@ where
 
     // Measure the time to enqueue batch of logs for FSM to apply
     #[cfg(feature = "metrics")]
-    metrics::histogram!("ruraft.fsm.enqueue", start.elapsed().as_millis() as f64);
+    metrics::histogram!("ruraft.fsm.enqueue").record(start.elapsed().as_millis() as f64);
 
     // Count the number of logs enqueued
     #[cfg(feature = "metrics")]
-    metrics::gauge!("ruraft.leader.commit_num_logs", num_commits as f64);
+    metrics::gauge!("ruraft.leader.commit_num_logs").set(num_commits as f64);
 
     false
   }
@@ -921,10 +918,8 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      "ruraft.leader.restore_user_snapshot",
-      start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!(metrics::histogram!("ruraft.leader.restore_user_snapshot",)
+      .record(start.elapsed().as_millis() as f64));
 
     // We don't support snapshots while there's a config change
     // outstanding since the snapshot doesn't have a means to
@@ -1155,7 +1150,7 @@ where
     let appended_at = std::time::SystemTime::now();
     #[cfg(feature = "metrics")]
     scopeguard::defer! {
-      metrics::histogram!("ruraft.leader.dispatch_logs", now.elapsed().as_millis() as f64);
+      metrics::histogram!("ruraft.leader.dispatch_logs").record(now.elapsed().as_millis() as f64);
     }
 
     let term = self.current_term();
@@ -1166,7 +1161,7 @@ where
     let mut logs = SmallVec::<[_; NUM_INLINED]>::with_capacity(n);
 
     #[cfg(feature = "metrics")]
-    metrics::gauge!("ruraft.leader.dispatch_num_logs", n as f64);
+    metrics::gauge!("ruraft.leader.dispatch_num_logs").set(n as f64);
 
     for req in reqs {
       let log = Log {
@@ -1267,7 +1262,7 @@ where
       }
 
       #[cfg(feature = "metrics")]
-      metrics::histogram!("ruraft.leader.last_contact", diff.as_millis() as f64);
+      metrics::histogram!("ruraft.leader.last_contact").record(diff.as_millis() as f64);
     }
 
     // Verify we can contact a quorum
@@ -1278,7 +1273,7 @@ where
       );
       self.state.set_role(Role::Follower, &self.observers).await;
       #[cfg(feature = "metrics")]
-      metrics::increment_counter!("ruraft.transition.leader_lease_timeout");
+      metrics::counter!("ruraft.transition.leader_lease_timeout").increment(1);
     }
     max_diff
   }

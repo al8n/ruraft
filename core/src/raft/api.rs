@@ -38,10 +38,8 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
 {
   /// Returns the current state of the reloadable fields in Raft's
   /// options. This is useful for programs to discover the current state for
@@ -58,9 +56,31 @@ where
     self.inner.options.apply(self.reloadable_options())
   }
 
+  /// Provides the local unique identifier, helping in distinguishing this node from its peers.
+  pub fn local_id(&self) -> &T::Id {
+    self.inner.transport.local_id()
+  }
+
+  /// Provides the local address, helping in distinguishing this node from its peers.
+  pub fn local_addr(&self) -> &<T::Resolver as AddressResolver>::Address {
+    self.inner.transport.local_addr()
+  }
+
+  /// Returns the current role of the node.
+  pub fn role(&self) -> Role {
+    self.inner.state.role()
+  }
+
+  /// Returns the current term the node.
+  pub fn current_term(&self) -> u64 {
+    self.inner.state.current_term()
+  }
+
   /// Returns the latest membership. This may not yet be
   /// committed.
-  pub fn membership(&self) -> LatestMembership<T::Id, <T::Resolver as AddressResolver>::Address> {
+  pub fn latest_membership(
+    &self,
+  ) -> LatestMembership<T::Id, <T::Resolver as AddressResolver>::Address> {
     let membership = self.inner.memberships.latest();
     LatestMembership {
       index: membership.0,
@@ -133,7 +153,28 @@ where
   pub fn leadership_change_watcher(&self) -> LeaderWatcher {
     LeaderWatcher(self.inner.leadership_change_rx.clone())
   }
+}
 
+impl<F, S, T, SC, R> RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
+  >,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+  <R::Sleep as std::future::Future>::Output: Send,
+{
   /// Used to apply a command to the [`FinateStateMachine`] in a highly consistent
   /// manner. This returns a future that can be used to wait on the application.
   ///
@@ -215,7 +256,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.verify_leader");
+    metrics::counter!("ruraft.verify_leader").increment(1);
 
     let (tx, rx) = oneshot::channel();
     match self.inner.verify_tx.send(tx).await {
@@ -584,7 +625,7 @@ where
   pub async fn stats(&self) -> RaftStats<T::Id, <T::Resolver as AddressResolver>::Address> {
     let last_log = self.inner.state.last_log();
     let last_snapshot = self.inner.state.last_snapshot();
-    let membership = self.membership();
+    let membership = self.latest_membership();
 
     let mut num_peers = 0;
     let mut has_us = false;
@@ -649,7 +690,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.apply");
+    metrics::counter!("ruraft.apply").increment(1);
 
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
@@ -689,7 +730,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.barrier");
+    metrics::counter!("ruraft.barrier").increment(1);
 
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
@@ -729,7 +770,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.membership_change");
+    metrics::counter!("ruraft.membership_change").increment(1);
 
     let (tx, rx) = oneshot::channel();
     let req = MembershipChangeRequest { cmd, tx };
@@ -766,7 +807,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.snapshot");
+    metrics::counter!("ruraft.snapshot").increment(1);
 
     let (tx, rx) = oneshot::channel();
 
@@ -805,7 +846,7 @@ where
     self.is_shutdown_error()?;
 
     #[cfg(feature = "metrics")]
-    metrics::increment_counter!("ruraft.restore");
+    metrics::counter!("ruraft.restore").increment(1);
 
     let (tx, rx) = oneshot::channel();
 
@@ -1020,6 +1061,11 @@ impl<I, A> LatestMembership<I, A> {
   /// Returns the latest membership in use by Raft.
   pub fn membership(&self) -> &Membership<I, A> {
     &self.membership
+  }
+
+  /// Consumes the `LatestMembership` and returns the membership and the index.
+  pub fn into_components(self) -> (u64, Membership<I, A>) {
+    (self.index, self.membership)
   }
 }
 

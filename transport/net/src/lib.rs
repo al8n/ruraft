@@ -51,7 +51,12 @@ pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
 /// Re-exports [`ruraft-wire`](ruraft_wire).
 pub mod wire {
   pub use ruraft_core::transport::{Wire, WireError};
-  pub use ruraft_wire::*;
+  pub use ruraft_wire::{Error as LpeWireError, ErrorKind as LpeWireErrorKind, LpeWire};
+
+  #[cfg(feature = "bincode")]
+  pub use ruraft_wire::bincode::{BincodeWire, Error as BincodeWireError};
+  #[cfg(feature = "rmp")]
+  pub use ruraft_wire::rmp::{Error as RmpWireError, RmpWire};
 }
 
 /// Re-exports [`nodecraft`]'s address resolver.
@@ -1053,7 +1058,7 @@ where
     #[cfg(feature = "metrics")]
     {
       let decode_label = req.decode_label();
-      metrics::histogram!(decode_label, decode_start.elapsed().as_millis() as f64);
+      metrics::histogram!(decode_label).record(decode_start.elapsed().as_millis() as f64);
     }
 
     #[cfg(feature = "metrics")]
@@ -1115,7 +1120,7 @@ where
     }
 
     #[cfg(feature = "metrics")]
-    metrics::histogram!(enqueue_label, process_start.elapsed().as_millis() as f64);
+    metrics::histogram!(enqueue_label).record(process_start.elapsed().as_millis() as f64);
 
     // Wait for response
     Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label)
@@ -1140,10 +1145,9 @@ where
     #[cfg(feature = "metrics")]
     let resp_wait_start = Instant::now();
     #[cfg(feature = "metrics")]
-    scopeguard::defer!(metrics::histogram!(
-      respond_label,
-      resp_wait_start.elapsed().as_millis() as f64
-    ));
+    scopeguard::defer!(
+      metrics::histogram!(respond_label).record(resp_wait_start.elapsed().as_millis() as f64)
+    );
 
     let resp = futures::select! {
       res = handle.fuse() => {

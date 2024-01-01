@@ -20,7 +20,7 @@ use wg::AsyncWaitGroup;
 use super::{super::super::spawn_local, Commitment, Node, State, Verify};
 use crate::{
   error::{Error, RaftError},
-  observe,
+  observer::{observe, Observation, Observer, ObserverId},
   options::ReloadableOptions,
   raft::Contact,
   storage::{LogStorage, SnapshotSource, SnapshotStorage, Storage},
@@ -28,7 +28,7 @@ use crate::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
   },
-  FinateStateMachine, LastSnapshot, Observed, Observer, ObserverId,
+  FinateStateMachine, LastSnapshot,
 };
 
 const MAX_FAILURE_SCALE: u64 = 12;
@@ -130,7 +130,7 @@ where
     leader_state.repl_state.insert(peer_id.clone(), repl);
     observe(
       &self.observers,
-      Observed::Peer {
+      Observation::Peer {
         id: remote.id().clone(),
         removed: false,
       },
@@ -671,9 +671,9 @@ where
           let id = remote.id().to_string();
           metrics::histogram!(
             "ruraft.repl.install_snapshot",
-            start.elapsed().as_millis() as f64,
             "peer_id" => id,
-          );
+          )
+          .record(start.elapsed().as_millis() as f64);
         }
 
         // Check for a newer term, stop running
@@ -991,7 +991,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
           if failures > 0 {
             observe(
               &observers,
-              Observed::HeartbeatResumed(resp.header.from().id().clone()),
+              Observation::HeartbeatResumed(resp.header.from().id().clone()),
             )
             .await;
           }
@@ -1002,9 +1002,9 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
             let id = remote.id().to_string();
             metrics::histogram!(
               "ruraft.repl.heartbeat",
-              start.elapsed().as_millis() as f64,
               "peer_id" => id,
-            );
+            )
+            .record(start.elapsed().as_millis() as f64);
           }
 
           Replication::notify_all(&notify_all, resp.success).await;
@@ -1019,7 +1019,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
           tracing::error!(target = "ruraft.repl", remote=%remote, backoff_time = %humantime::Duration::from(next_backoff_time), err=%e, "failed to heartbeat");
           observe(
             &observers,
-            Observed::HeartbeatFailed {
+            Observation::HeartbeatFailed {
               id: remote.id().clone(),
               last_contact: last_contact.get(),
             },
@@ -1047,13 +1047,13 @@ fn append_stats<I: nodecraft::Id, A: nodecraft::Address>(
 
   metrics::histogram!(
     "ruraft.repl.append_entries.rpc",
-    start.elapsed().unwrap().as_millis() as f64,
     "peer_id" => id1,
-  );
+  )
+  .record(start.elapsed().unwrap().as_millis() as f64);
 
   metrics::counter!(
     "ruraft.repl.append_entries.logs",
-    logs,
     "peer_id" => id,
-  );
+  )
+  .increment(logs);
 }

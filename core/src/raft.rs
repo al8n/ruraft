@@ -46,8 +46,9 @@ pub use api::*;
 
 mod fsm;
 
-mod observer;
-pub use observer::*;
+/// Observer the Raft.
+pub mod observer;
+use observer::*;
 
 mod runner;
 
@@ -184,7 +185,11 @@ impl<I, A> Leader<I, A> {
   }
 }
 
-impl<I: CheapClone + PartialEq, A: CheapClone + PartialEq> Leader<I, A> {
+impl<
+    I: CheapClone + PartialEq + Send + Sync + 'static,
+    A: CheapClone + PartialEq + Send + Sync + 'static,
+  > Leader<I, A>
+{
   async fn set(
     &self,
     leader: Option<Node<I, A>>,
@@ -195,14 +200,14 @@ impl<I: CheapClone + PartialEq, A: CheapClone + PartialEq> Leader<I, A> {
     match (new, old) {
       (None, None) => {}
       (None, Some(_)) => {
-        observe(observers, Observed::Leader(None)).await;
+        observe(observers, Observation::Leader(None)).await;
       }
       (Some(new), None) => {
-        observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
+        observe(observers, Observation::Leader(Some(new.as_ref().clone()))).await;
       }
       (Some(new), Some(old)) => {
         if old.addr() != new.addr() || old.id() != new.id() {
-          observe(observers, Observed::Leader(Some(new.as_ref().clone()))).await;
+          observe(observers, Observation::Leader(Some(new.as_ref().clone()))).await;
         }
       }
     }
@@ -235,7 +240,10 @@ impl Shutdown {
     self.shutdown.load(Ordering::Acquire)
   }
 
-  async fn shutdown<I: CheapClone, A: CheapClone>(
+  async fn shutdown<
+    I: CheapClone + Send + Sync + 'static,
+    A: CheapClone + Send + Sync + 'static,
+  >(
     &self,
     state: &State,
     observers: &async_lock::RwLock<HashMap<ObserverId, Observer<I, A>>>,
@@ -352,11 +360,32 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
   inner: Arc<Inner<F, S, T, SC, R>>,
+}
+
+impl<F, S, T, SC, R> core::fmt::Debug for RaftCore<F, S, T, SC, R>
+where
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
+  S: Storage<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Data = T::Data,
+    Runtime = R,
+  >,
+  T: Transport<Runtime = R>,
+  SC: Sidecar<Runtime = R>,
+  R: Runtime,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", self.inner.transport.header().from())
+  }
 }
 
 impl<F, S, T, SC, R> Clone for RaftCore<F, S, T, SC, R>
@@ -373,7 +402,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
 {
@@ -400,7 +428,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   <R::Interval as futures::Stream>::Item: Send + 'static,
@@ -705,7 +732,7 @@ where
           Error::stable(e)
         })?;
 
-      ls.store_log(&Log::__crate_new(
+      ls.store_log(&Log::crate_new(
         1,
         1,
         LogKind::Membership(

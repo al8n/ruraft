@@ -82,6 +82,7 @@ pub trait MembershipStorage: Send + Sync + 'static {
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Storage is a trait that must be implemented by the user to provide the persistent storage for the Raft.
 pub trait Storage: Send + Sync + 'static {
   /// Errors returned by the storage.
@@ -108,8 +109,8 @@ pub trait Storage: Send + Sync + 'static {
     Runtime = Self::Runtime,
   >;
 
-  /// Membership storage
-  type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;
+  // /// Membership storage
+  // type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;
 
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
@@ -123,8 +124,269 @@ pub trait Storage: Send + Sync + 'static {
   /// Returns a reference to the snapshot storage.
   fn snapshot_store(&self) -> &Self::Snapshot;
 
-  /// Returns a reference to the membership storage.
-  fn membership_store(&self) -> Option<&Self::Membership>;
+  // /// Returns a reference to the membership storage.
+  // fn membership_store(&self) -> Option<&Self::Membership>;
+}
+
+/// Error kind for [`RaftStorageError`].
+pub enum RaftStorageErrorKind<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  /// Log storage error
+  Log(<L as LogStorage>::Error),
+  /// Stable storage error
+  Stable(<ST as StableStorage>::Error),
+  /// Snapshot storage error
+  Snapshot(<S as SnapshotStorage>::Error),
+  /// IO error
+  IO(std::io::Error),
+  /// Custom error
+  Custom(String),
+}
+
+impl<L, ST, S> std::fmt::Display for RaftStorageErrorKind<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      RaftStorageErrorKind::Log(e) => write!(f, "log storage error: {}", e),
+      RaftStorageErrorKind::Stable(e) => write!(f, "stable storage error: {}", e),
+      RaftStorageErrorKind::Snapshot(e) => write!(f, "snapshot storage error: {}", e),
+      RaftStorageErrorKind::IO(e) => write!(f, "io error: {}", e),
+      RaftStorageErrorKind::Custom(e) => write!(f, "{}", e),
+    }
+  }
+}
+
+impl<L, ST, S> std::fmt::Debug for RaftStorageErrorKind<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      RaftStorageErrorKind::Log(e) => write!(f, "log storage error: {:?}", e),
+      RaftStorageErrorKind::Stable(e) => write!(f, "stable storage error: {:?}", e),
+      RaftStorageErrorKind::Snapshot(e) => write!(f, "snapshot storage error: {:?}", e),
+      RaftStorageErrorKind::IO(e) => write!(f, "io error: {:?}", e),
+      RaftStorageErrorKind::Custom(e) => write!(f, "{}", e),
+    }
+  }
+}
+
+/// [`StorageError`] implementation for [`RaftStorage`].
+pub struct RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  kind: RaftStorageErrorKind<L, ST, S>,
+  messages: Vec<Cow<'static, str>>,
+}
+
+impl<L, ST, S> RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  /// Creates a new [`RaftStorageError`].
+  pub fn new(kind: RaftStorageErrorKind<L, ST, S>) -> Self {
+    Self {
+      kind,
+      messages: Vec::new(),
+    }
+  }
+
+  /// Returns the error kind.
+  pub fn kind(&self) -> &RaftStorageErrorKind<L, ST, S> {
+    &self.kind
+  }
+
+  /// Returns the error messages.
+  pub fn messages(&self) -> &[Cow<'static, str>] {
+    &self.messages
+  }
+
+  /// Consumes the error and returns the error kind.
+  pub fn into_kind(self) -> RaftStorageErrorKind<L, ST, S> {
+    self.kind
+  }
+
+  /// Consumes the error and returns the error messages.
+  pub fn into_messages(self) -> Vec<Cow<'static, str>> {
+    self.messages
+  }
+
+  /// Consumes the error and returns the error kind and messages.
+  pub fn into_components(self) -> (RaftStorageErrorKind<L, ST, S>, Vec<Cow<'static, str>>) {
+    (self.kind, self.messages)
+  }
+}
+
+impl<L, ST, S> From<std::io::Error> for RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  fn from(value: std::io::Error) -> Self {
+    Self {
+      kind: RaftStorageErrorKind::IO(value),
+      messages: Vec::new(),
+    }
+  }
+}
+
+impl<L, ST, S> std::fmt::Display for RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("RaftStorageError")
+      .field("kind", &self.kind)
+      .field("messages", &self.messages)
+      .finish()
+  }
+}
+
+impl<L, ST, S> std::fmt::Debug for RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    writeln!(f, "{}", self.kind)?;
+    for (idx, msg) in self.messages.iter().enumerate() {
+      writeln!(f, "\t{}: {msg}", idx + 1)?;
+    }
+    Ok(())
+  }
+}
+
+impl<L, ST, S> std::error::Error for RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+}
+
+impl<L, ST, S> StorageError for RaftStorageError<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  type Stable = ST;
+
+  type Snapshot = S;
+
+  type Log = L;
+
+  fn stable(err: <Self::Stable as StableStorage>::Error) -> Self {
+    Self {
+      kind: RaftStorageErrorKind::Stable(err),
+      messages: Vec::new(),
+    }
+  }
+
+  fn snapshot(err: <Self::Snapshot as SnapshotStorage>::Error) -> Self {
+    Self {
+      kind: RaftStorageErrorKind::Snapshot(err),
+      messages: Vec::new(),
+    }
+  }
+
+  fn log(err: <Self::Log as LogStorage>::Error) -> Self {
+    Self {
+      kind: RaftStorageErrorKind::Log(err),
+      messages: Vec::new(),
+    }
+  }
+
+  fn with_message(mut self, msg: Cow<'static, str>) -> Self {
+    self.messages.push(msg);
+    self
+  }
+
+  fn io(err: std::io::Error) -> Self {
+    Self {
+      kind: RaftStorageErrorKind::IO(err),
+      messages: Vec::new(),
+    }
+  }
+
+  fn custom<T>(msg: T) -> Self
+  where
+    Self: Sized,
+    T: core::fmt::Display,
+  {
+    Self {
+      kind: RaftStorageErrorKind::Custom(msg.to_string()),
+      messages: Vec::new(),
+    }
+  }
+}
+
+/// A [`Storage`] implementation adapter which consists of any kinds of [`LogStorage`], [`StableStorage`] and [`SnapshotStorage`] impelementation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RaftStorage<L, ST, S> {
+  log: L,
+  stable: ST,
+  snapshot: S,
+}
+
+impl<L, ST, S> RaftStorage<L, ST, S> {
+  /// Creates a new [`RaftStorage`] instance.
+  pub fn new(log: L, stable: ST, snapshot: S) -> Self {
+    Self {
+      log,
+      stable,
+      snapshot,
+    }
+  }
+}
+
+impl<L, ST, S> Storage for RaftStorage<L, ST, S>
+where
+  L: LogStorage,
+  ST: StableStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+  S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
+{
+  type Error = RaftStorageError<L, ST, S>;
+
+  type Id = <L as LogStorage>::Id;
+  type Address = <L as LogStorage>::Address;
+  type Data = <L as LogStorage>::Data;
+
+  type Stable = ST;
+  type Snapshot = S;
+  type Log = L;
+  type Runtime = <L as LogStorage>::Runtime;
+
+  fn stable_store(&self) -> &Self::Stable {
+    &self.stable
+  }
+
+  fn log_store(&self) -> &Self::Log {
+    &self.log
+  }
+
+  fn snapshot_store(&self) -> &Self::Snapshot {
+    &self.snapshot
+  }
 }
 
 pub(crate) async fn compact_logs<S: Storage>(
@@ -137,10 +399,10 @@ pub(crate) async fn compact_logs<S: Storage>(
   let start = std::time::Instant::now();
 
   #[cfg(feature = "metrics")]
-  scopeguard::defer!(metrics::histogram!(
-    "ruraft.snapshot.compact_logs",
-    start.elapsed().as_millis() as f64
-  ));
+  scopeguard::defer!({
+    let histogram = metrics::histogram!("ruraft.snapshot.compact_logs",);
+    histogram.record(start.elapsed().as_millis() as f64);
+  });
 
   let last_log = state.last_log();
   compact_logs_with_trailing::<S>(ls, snap_idx, last_log.index, trailing_logs).await
@@ -198,10 +460,10 @@ pub(crate) async fn remove_old_logs<S: Storage>(ls: &S::Log) -> Result<(), S::Er
   let start = std::time::Instant::now();
 
   #[cfg(feature = "metrics")]
-  scopeguard::defer!(metrics::histogram!(
-    "ruraft.snapshot.remove_old_logs",
-    start.elapsed().as_millis() as f64
-  ));
+  scopeguard::defer!({
+    let histogram = metrics::histogram!("ruraft.snapshot.remove_old_logs");
+    histogram.record(start.elapsed().as_millis() as f64);
+  });
 
   match ls.last_index().await {
     Ok(None) | Ok(Some(0)) => Ok(()),

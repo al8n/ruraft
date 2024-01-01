@@ -218,7 +218,7 @@ where
 
       #[cfg(feature = "metrics")]
       {
-        metrics::histogram!("ruraft.lightwal.log_size", blob_size as f64);
+        metrics::histogram!("ruraft.lightwal.log_size").record(blob_size as f64);
       }
       b.insert(&idx.to_be_bytes(), blob)
     }
@@ -226,8 +226,8 @@ where
     let rst = self.log_tree.transaction(move |t| {
       #[cfg(feature = "metrics")]
       {
-        metrics::histogram!("ruraft.lightwal.log_batch_size", batch_size as f64);
-        metrics::histogram!("ruraft.lightwal.logs_per_batch", _num_logs as f64);
+        metrics::histogram!("ruraft.lightwal.log_batch_size").record(batch_size as f64);
+        metrics::histogram!("ruraft.lightwal.logs_per_batch").record(_num_logs as f64);
       }
       t.apply_batch(&b).map_err(Into::into)
     });

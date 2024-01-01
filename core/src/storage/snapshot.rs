@@ -9,6 +9,7 @@ use crate::{
 mod meta;
 pub use meta::*;
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Used to allow for flexible implementations
 /// of snapshot storage and retrieval. For example, a client could implement
 /// a shared state store such as S3, allowing new nodes to restore snapshots
@@ -28,13 +29,6 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Sink: SnapshotSink<Runtime = Self::Runtime>;
   /// The source type used to read snapshots.
   type Source: SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
-  /// The options type used to configure the snapshot storage.
-  type Options;
-
-  /// Used to create a new snapshot storage instance.
-  fn new(opts: Self::Options) -> impl Future<Output = Result<Self, Self::Error>> + Send
-  where
-    Self: Sized;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls

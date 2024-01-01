@@ -103,7 +103,8 @@ impl SaturationMetric {
       0.0
     };
 
-    metrics::histogram!(self.name, saturation);
+    let histogram = metrics::histogram!(self.name);
+    histogram.record(saturation);
 
     self.slept = Duration::ZERO;
     self.lost = Duration::ZERO;

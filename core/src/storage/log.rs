@@ -244,11 +244,8 @@ impl<I, A, D> Log<I, A, D> {
     matches!(self.kind, LogKind::Noop)
   }
 
-  /// Only used for testing.
-  #[cfg(any(feature = "test", test))]
   #[inline]
-  #[doc(hidden)]
-  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
     Self {
       index,
       term,
@@ -256,8 +253,17 @@ impl<I, A, D> Log<I, A, D> {
       appended_at: None,
     }
   }
+
+  /// Only used for testing.
+  #[cfg(any(feature = "test", test))]
+  #[inline]
+  #[doc(hidden)]
+  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+    Self::crate_new(term, index, kind)
+  }
 }
 
+#[auto_impl::auto_impl(Box, Arc)]
 /// Used to provide an trait for storing
 /// and retrieving logs in a durable fashion.
 ///
@@ -400,7 +406,9 @@ pub(crate) trait LogStorageExt: LogStorage {
                 }
               }
             }
-            metrics::gauge!("ruraft.log.oldest.ms", age_ms as f64);
+
+            let gauge = metrics::gauge!("ruraft.log.oldest.ms");
+            gauge.set(age_ms as f64);
           },
           _ = stop_rx.recv().fuse() => return,
         }

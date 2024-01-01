@@ -98,30 +98,64 @@ pub struct FileSnapshotStorageOptions {
     setter(attrs(doc = "Set the number of snapshots should be retained"))
   )]
   retain: usize,
+
+  #[viewit(
+    getter(const, attrs(doc(hidden), cfg(any(feature = "test", test)))),
+    setter(attrs(doc(hidden), cfg(any(feature = "test", test))))
+  )]
+  #[cfg(any(feature = "test", test))]
+  no_sync: bool,
 }
 
 impl FileSnapshotStorageOptions {
   /// Create a new `FileSnapshotStorageOptions`.
-  pub fn new<P: AsRef<Path>>(base: P, retain: usize) -> Self {
+  pub fn new<P: AsRef<Path>>(
+    base: P,
+    retain: usize,
+    #[cfg(any(feature = "test", test))] no_sync: bool,
+  ) -> Self {
     Self {
       base: base.as_ref().to_path_buf(),
       retain,
+      #[cfg(any(feature = "test", test))]
+      no_sync,
     }
   }
 }
 
 /// Implements the [`SnapshotStorage`] trait and allows
 /// snapshots to be made on the local disk.
-#[derive(Clone)]
 pub struct FileSnapshotStorage<I, A, R> {
   path: Arc<PathBuf>,
   retain: usize,
 
   /// `no_sync`, if true, skips crash-safe file fsync api calls.
   /// It's a private field, only used in testing
+  #[cfg(any(feature = "test", test))]
   no_sync: bool,
 
   _runtime: std::marker::PhantomData<(I, A, R)>,
+}
+
+impl<I, A, R> core::fmt::Debug for FileSnapshotStorage<I, A, R> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct(std::any::type_name::<Self>())
+      .field("path", &self.path)
+      .field("retain", &self.retain)
+      .finish()
+  }
+}
+
+impl<I, A, R> Clone for FileSnapshotStorage<I, A, R> {
+  fn clone(&self) -> Self {
+    Self {
+      path: self.path.clone(),
+      retain: self.retain,
+      #[cfg(any(feature = "test", test))]
+      no_sync: self.no_sync,
+      _runtime: std::marker::PhantomData,
+    }
+  }
 }
 
 impl<I, A, R> FileSnapshotStorage<I, A, R>
@@ -227,6 +261,49 @@ where
   }
 }
 
+impl<I, A, R> FileSnapshotStorage<I, A, R>
+where
+  I: Id + Unpin,
+  I::Error: Unpin,
+  A: Address + Unpin,
+  A::Error: Unpin,
+  R: Runtime,
+{
+  /// Create a new file snapshot storage from the given [`FileSnapshotStorageOptions`].
+  pub async fn new(opts: FileSnapshotStorageOptions) -> Result<Self, FileSnapshotStorageError>
+  where
+    Self: Sized,
+  {
+    let FileSnapshotStorageOptions {
+      base,
+      retain,
+      #[cfg(any(feature = "test", test))]
+      no_sync,
+    } = opts;
+    if retain < 1 {
+      return Err(FileSnapshotStorageError::InvalidRetain);
+    }
+
+    // Ensure our path exists
+    let path = base.join(SNAPSHOT_PATH);
+    make_dir_all(&path, 0o755).map_err(FileSnapshotStorageError::PathNotAccessible)?;
+
+    // Setup the store
+    let this = Self {
+      path: Arc::new(path),
+      retain,
+      #[cfg(any(feature = "test", test))]
+      no_sync,
+      _runtime: std::marker::PhantomData,
+    };
+
+    this
+      .check_permissions()
+      .map(|_| this)
+      .map_err(FileSnapshotStorageError::NoPermissions)
+  }
+}
+
 impl<I, A, R> SnapshotStorage for FileSnapshotStorage<I, A, R>
 where
   I: Id + Unpin,
@@ -241,34 +318,6 @@ where
   type Address = A;
   type Runtime = R;
   type Source = FileSnapshotSource<Self::Id, Self::Address, R>;
-  type Options = FileSnapshotStorageOptions;
-
-  async fn new(opts: Self::Options) -> Result<Self, Self::Error>
-  where
-    Self: Sized,
-  {
-    let FileSnapshotStorageOptions { base, retain } = opts;
-    if retain < 1 {
-      return Err(FileSnapshotStorageError::InvalidRetain);
-    }
-
-    // Ensure our path exists
-    let path = base.join(SNAPSHOT_PATH);
-    make_dir_all(&path, 0o755).map_err(FileSnapshotStorageError::PathNotAccessible)?;
-
-    // Setup the store
-    let this = Self {
-      path: Arc::new(path),
-      retain,
-      no_sync: false,
-      _runtime: std::marker::PhantomData,
-    };
-
-    this
-      .check_permissions()
-      .map(|_| this)
-      .map_err(FileSnapshotStorageError::NoPermissions)
-  }
 
   async fn create(
     &self,
@@ -311,6 +360,7 @@ where
     FileSnapshotSink::<Self::Id, Self::Address, Self::Runtime>::write_meta(
       &path,
       &meta,
+      #[cfg(any(feature = "test", test))]
       self.no_sync,
     )
     .map_err(|e| {
@@ -333,6 +383,7 @@ where
     let this = FileSnapshotSink {
       store: self.clone(),
       dir: path,
+      #[cfg(any(feature = "test", test))]
       no_sync: self.no_sync,
       file: w,
       meta,
@@ -465,6 +516,7 @@ pub struct FileSnapshotSink<I, A, R> {
   store: FileSnapshotStorage<I, A, R>,
   dir: PathBuf,
 
+  #[cfg(any(feature = "test", test))]
   no_sync: bool,
 
   file: BufWriter<ChecksumableWriter<File, crc32fast::Hasher>>,
@@ -511,9 +563,12 @@ where
     }
 
     // Write out the meta data
-    if let Err(e) =
-      FileSnapshotSink::<I, A, R>::write_meta(&self.dir, &self.meta, self.store.no_sync)
-    {
+    if let Err(e) = FileSnapshotSink::<I, A, R>::write_meta(
+      &self.dir,
+      &self.meta,
+      #[cfg(any(feature = "test", test))]
+      self.store.no_sync,
+    ) {
       tracing::error!(target = "ruraft.snapshot.file", err = %e, "failed to write snapshot metadata");
       return Poll::Ready(Err(e));
     }
@@ -525,7 +580,33 @@ where
       return Poll::Ready(Err(e));
     }
 
-    if !self.no_sync {
+    #[cfg(any(feature = "test", test))]
+    {
+      if !self.no_sync {
+        if let Some(parent) = self.dir.parent() {
+          match fs::File::open(parent) {
+            Ok(parent_fd) => {
+              if let Err(e) = parent_fd.sync_all() {
+                tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed syncing parent directory");
+                return Poll::Ready(Err(e));
+              }
+            }
+            Err(e) => {
+              tracing::error!(target = "ruraft.snapshot.file", path = %parent.display(), err = %e, "failed to open snapshot parent directory");
+              return Poll::Ready(Err(e));
+            }
+          }
+
+          // Reap any old snapshots
+          if let Err(e) = self.store.reap_snapshots() {
+            return Poll::Ready(Err(e));
+          }
+        }
+      }
+    }
+
+    #[cfg(not(any(feature = "test", test)))]
+    {
       if let Some(parent) = self.dir.parent() {
         match fs::File::open(parent) {
           Ok(parent_fd) => {
@@ -562,7 +643,15 @@ where
     self.file.flush()?;
 
     // sync to force fsync to disk
-    if !self.no_sync {
+    #[cfg(any(feature = "test", test))]
+    {
+      if !self.no_sync {
+        self.file.get_mut().inner_mut().sync_all()?;
+      }
+    }
+
+    #[cfg(not(any(feature = "test", test)))]
+    {
       self.file.get_mut().inner_mut().sync_all()?;
     }
 
@@ -577,7 +666,7 @@ where
   fn write_meta<P: AsRef<Path>>(
     dir: &P,
     meta: &FileSnapshotMeta<I, A>,
-    no_sync: bool,
+    #[cfg(any(feature = "test", test))] no_sync: bool,
   ) -> io::Result<()> {
     // Open the meta file
     let metapath = dir.as_ref().join(META_FILE_PATH.as_path());
@@ -585,11 +674,18 @@ where
     meta.encode_to_writer(&mut fh)?;
     fh.flush()?;
 
-    if !no_sync {
-      return fh.get_mut().sync_all();
+    #[cfg(any(feature = "test", test))]
+    {
+      if !no_sync {
+        return fh.get_mut().sync_all();
+      }
+      Ok(())
     }
 
-    Ok(())
+    #[cfg(not(any(feature = "test", test)))]
+    {
+      fh.get_mut().sync_all()
+    }
   }
 }
 
@@ -691,8 +787,8 @@ where
 
 /// Exports unit tests to let users test [`FileSnapshotStorage`] implementation if they want to
 /// use their own [`agnostic::Runtime`] implementation.
-#[cfg(feature = "test")]
-#[cfg_attr(docsrs, doc(cfg(feature = "test")))]
+#[cfg(any(feature = "test", test))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]
 pub mod tests {
   use std::net::SocketAddr;
 
@@ -710,10 +806,14 @@ pub mod tests {
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let snap =
-      FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-        .await
-        .unwrap();
+    let snap = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
+      &dir,
+      3,
+      #[cfg(any(feature = "test", test))]
+      false,
+    ))
+    .await
+    .unwrap();
 
     snap
       .create(SnapshotVersion::V1, 10, 3, Membership::__empty(), 0)
@@ -730,10 +830,11 @@ pub mod tests {
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
-    let snap =
-      FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-        .await
-        .unwrap();
+    let snap = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
+      &dir, 3, false,
+    ))
+    .await
+    .unwrap();
 
     // check no snapshots
     assert_eq!(snap.list().await.unwrap().len(), 0);
@@ -786,10 +887,11 @@ pub mod tests {
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
 
-    let storage =
-      FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-        .await
-        .unwrap();
+    let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
+      FileSnapshotStorageOptions::new(&dir, 3, false),
+    )
+    .await
+    .unwrap();
 
     let mut snap = storage
       .create(SnapshotVersion::V1, 10, 2, Membership::__empty(), 0)
@@ -813,10 +915,11 @@ pub mod tests {
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage =
-      FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 2))
-        .await
-        .unwrap();
+    let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
+      FileSnapshotStorageOptions::new(&dir, 2, false),
+    )
+    .await
+    .unwrap();
 
     for i in 10..15 {
       let sink = storage
@@ -859,9 +962,10 @@ pub mod tests {
     perm.set_mode(0o000);
     fs::set_permissions(&dir2, perm).unwrap();
 
-    let Err(err) =
-      FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
-        .await
+    let Err(err) = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
+      FileSnapshotStorageOptions::new(&dir2, 3, false),
+    )
+    .await
     else {
       panic!("should fail to use dir with bad perms");
     };
@@ -883,9 +987,11 @@ pub mod tests {
     let dir2 = dir.join("raft");
     drop(parent);
 
-    FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir2, 3))
-      .await
-      .expect("should not fail when using non existing parent");
+    FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
+      &dir2, 3, false,
+    ))
+    .await
+    .expect("should not fail when using non existing parent");
   }
 
   /// Test [`FileSnapshotStorage`].
@@ -898,10 +1004,11 @@ pub mod tests {
     fs::create_dir(&dir).unwrap();
     scopeguard::defer!(fs::remove_dir_all(&dir).unwrap());
 
-    let storage =
-      FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(&dir, 3))
-        .await
-        .unwrap();
+    let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
+      FileSnapshotStorageOptions::new(&dir, 3, false),
+    )
+    .await
+    .unwrap();
 
     let sink = storage
       .create(
