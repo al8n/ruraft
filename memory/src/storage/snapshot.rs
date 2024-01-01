@@ -23,11 +23,21 @@ use ruraft_core::{
 /// retains only the most recent snapshot
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
-#[derive(Debug)]
 pub struct MemorySnapshotStorage<I, A, R> {
   latest: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   has_snapshot: AtomicBool,
   _runtime: std::marker::PhantomData<R>,
+}
+
+impl<I: core::fmt::Debug, A: core::fmt::Debug, R> core::fmt::Debug
+  for MemorySnapshotStorage<I, A, R>
+{
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("MemorySnapshotStorage")
+      .field("latest", &self.latest)
+      .field("has_snapshot", &self.has_snapshot)
+      .finish()
+  }
 }
 
 impl<I, A, R> Default for MemorySnapshotStorage<I, A, R> {

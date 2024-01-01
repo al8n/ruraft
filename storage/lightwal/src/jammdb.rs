@@ -202,7 +202,7 @@ where
         b.put(idx.to_be_bytes(), blob).map(|_| {
           #[cfg(feature = "metrics")]
           {
-            metrics::histogram!("ruraft.lightwal.log_size", blob_size as f64);
+            metrics::histogram!("ruraft.lightwal.log_size").record(blob_size as f64);
           }
         })
       })
@@ -210,8 +210,8 @@ where
 
     #[cfg(feature = "metrics")]
     {
-      metrics::histogram!("ruraft.lightwal.log_batch_size", batch_size as f64);
-      metrics::histogram!("ruraft.lightwal.logs_per_batch", _num_logs as f64);
+      metrics::histogram!("ruraft.lightwal.log_batch_size").record(batch_size as f64);
+      metrics::histogram!("ruraft.lightwal.logs_per_batch").record(_num_logs as f64);
     }
 
     #[cfg(feature = "metrics")]

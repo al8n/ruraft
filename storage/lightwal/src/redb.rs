@@ -326,15 +326,15 @@ where
                 t.insert(idx, blob).map(|_| {
                   #[cfg(feature = "metrics")]
                   {
-                    metrics::histogram!("ruraft.lightwal.log_size", blob_size as f64);
+                    metrics::histogram!("ruraft.lightwal.log_size").record(blob_size as f64);
                   }
                 })
               })
               .map_err(ErrorKind::from)?;
             #[cfg(feature = "metrics")]
             {
-              metrics::histogram!("ruraft.lightwal.log_batch_size", batch_size as f64);
-              metrics::histogram!("ruraft.lightwal.logs_per_batch", _num_logs as f64);
+              metrics::histogram!("ruraft.lightwal.log_batch_size").record(batch_size as f64);
+              metrics::histogram!("ruraft.lightwal.logs_per_batch").record(_num_logs as f64);
             }
             Ok(())
           })

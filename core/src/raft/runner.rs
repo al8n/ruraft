@@ -22,7 +22,7 @@ use super::{
 use crate::{
   error::Error,
   membership::{Membership, Memberships},
-  observe,
+  observer::{observe, Observation},
   options::{Options, ReloadableOptions},
   options::{ProtocolVersion, SnapshotVersion},
   raft::snapshot::SnapshotRestoreMonitor,
@@ -37,7 +37,7 @@ use crate::{
     RpcConsumer, RpcResponseSender, TimeoutNowRequest, TimeoutNowResponse, Transport, VoteRequest,
     VoteResponse,
   },
-  FinateStateMachine, LastSnapshot, Node, Observation, Role, State,
+  FinateStateMachine, LastSnapshot, Node, Role, State,
 };
 
 #[cfg(feature = "metrics")]

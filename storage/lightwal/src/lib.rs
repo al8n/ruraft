@@ -41,8 +41,8 @@ fn report_store_many(logs: usize, start: std::time::Instant) {
     (1_000_000_000.0 / nanos as f64) * logs as f64
   };
 
-  metrics::histogram!("ruraft.lightwal.write_capacity", val);
-  metrics::histogram!("ruraft.lightwal.store_logs", start.elapsed().as_secs_f64());
+  metrics::histogram!("ruraft.lightwal.write_capacity").record(val);
+  metrics::histogram!("ruraft.lightwal.store_logs").record(start.elapsed().as_secs_f64());
 }
 
 #[doc(hidden)]

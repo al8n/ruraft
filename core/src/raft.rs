@@ -46,8 +46,9 @@ pub use api::*;
 
 mod fsm;
 
-mod observer;
-pub use observer::*;
+/// Observer the Raft.
+pub mod observer;
+use observer::*;
 
 mod runner;
 

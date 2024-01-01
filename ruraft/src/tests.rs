@@ -15,13 +15,16 @@ use async_lock::Mutex;
 use futures::{AsyncWriteExt, Future, FutureExt};
 use ruraft_core::{
   membership::{Membership, MembershipBuilder, Server, ServerSuffrage},
+  observer::{
+    bounded, Observation, ObservationFilter, ObserveAll, Observer, ObserverReceiver, ObserverSender,
+  },
   options::Options,
   sidecar::NoopSidecar,
   storage::RaftStorage,
   transport::{Transformable, Transport, Wire},
   FinateStateMachine, FinateStateMachineError, FinateStateMachineLog,
   FinateStateMachineLogTransformError, FinateStateMachineResponse, FinateStateMachineSnapshot,
-  Observation, ObservationFilter, ObserveAll, RaftCore, Role,
+  RaftCore, Role,
 };
 use ruraft_memory::{
   storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
@@ -298,8 +301,8 @@ where
 
   trans: Vec<MemoryTransport<SmolStr, MemoryAddressResolver<MemoryAddress, R>, Vec<u8>, W>>,
 
-  observation_tx: async_channel::Sender<Observation<SmolStr, MemoryAddress>>,
-  observation_rx: async_channel::Receiver<Observation<SmolStr, MemoryAddress>>,
+  observation_tx: ObserverSender<SmolStr, MemoryAddress>,
+  observation_rx: ObserverReceiver<SmolStr, MemoryAddress>,
 
   opts: Options,
   propagate_timeout: Duration,
@@ -768,7 +771,7 @@ where
   async fn make_cluster(mut opts: MakeClusterOptions) -> Result<Self, DynError> {
     let raft_opts = opts.options.get_or_insert(inmem_config());
 
-    let (observation_tx, observation_rx) = async_channel::bounded(1024);
+    let (observation_tx, observation_rx) = bounded(1024);
     let propagate_timeout = raft_opts.heartbeat_timeout() * 2 + raft_opts.commit_timeout();
     let long_stop_timeout = if opts.longstop_timeout > Duration::ZERO {
       opts.longstop_timeout
@@ -785,7 +788,7 @@ where
     let mut snaps = Vec::new();
     let mut membership_builder = MembershipBuilder::new();
     // Setup the stores and transports
-    for i in 0..opts.peers {
+    for _ in 0..opts.peers {
       let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
       dirs.push(dir);
       let stable_store = MemoryStableStorage::new();
@@ -806,12 +809,11 @@ where
       let addr = trans.local_addr();
       let local_id = format!("server-{addr}").into();
       trans.set_local_id(local_id);
-      transs.push(trans);
-
       membership_builder.insert(Server::from_node(
         trans.header().from().clone(),
         ServerSuffrage::Voter,
       ))?;
+      transs.push(trans);
     }
 
     fully_connect(transs.as_slice()).await;
@@ -826,10 +828,8 @@ where
       let trans = transs[i].clone();
 
       let raft = RaftCore::new(fsm, storage, trans, *raft_opts).await?;
-
-      let observer = raft
-        .register_observer::<ObserveAll<SmolStr, MemoryAddress>>(false, None)
-        .await;
+      let observer = Observer::new::<ObserveAll<_, _>>(observation_tx.clone(), false, None);
+      raft.register_observer(&observer).await;
 
       rafts.push(raft);
     }

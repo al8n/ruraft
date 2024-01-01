@@ -20,7 +20,7 @@ use wg::AsyncWaitGroup;
 use super::{super::super::spawn_local, Commitment, Node, State, Verify};
 use crate::{
   error::{Error, RaftError},
-  observe,
+  observer::{observe, Observation, Observer, ObserverId},
   options::ReloadableOptions,
   raft::Contact,
   storage::{LogStorage, SnapshotSource, SnapshotStorage, Storage},
@@ -28,7 +28,7 @@ use crate::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
   },
-  FinateStateMachine, LastSnapshot, Observation, Observer, ObserverId,
+  FinateStateMachine, LastSnapshot,
 };
 
 const MAX_FAILURE_SCALE: u64 = 12;

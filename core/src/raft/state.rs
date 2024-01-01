@@ -11,8 +11,10 @@ use nodecraft::{resolver::AddressResolver, CheapClone};
 use parking_lot::Mutex;
 
 use crate::{
-  membership::Membership, observe, storage::SnapshotMeta, transport::Transport, Observation,
-  Observer, ObserverId,
+  membership::Membership,
+  observer::{observe, Observation, Observer, ObserverId},
+  storage::SnapshotMeta,
+  transport::Transport,
 };
 
 /// Captures the role of a Raft node: Follower, Candidate, Leader,

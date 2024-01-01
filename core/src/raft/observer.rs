@@ -32,7 +32,7 @@ pub struct ObserverId(u64);
 
 impl core::fmt::Display for ObserverId {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "{}", self.0)
+    write!(f, "ObserverId({})", self.0)
   }
 }
 
@@ -148,15 +148,13 @@ struct Inner<I, A> {
   /// channel receives observations.
   tx: async_channel::Sender<Observation<I, A>>,
 
-  rx: async_channel::Receiver<Observation<I, A>>,
-
+  // rx: async_channel::Receiver<Observation<I, A>>,
   /// Will be called to determine if an observation should be sent to
   /// the channel.
   filter: Option<Box<dyn ObservationFilter<I, A>>>,
 }
 
 /// Observer describes what to do with a given observation.
-#[derive(Clone)]
 pub struct Observer<I, A> {
   inner: Arc<Inner<I, A>>,
 
@@ -169,6 +167,26 @@ pub struct Observer<I, A> {
 }
 
 impl<I, A> Observer<I, A> {
+  /// Creates a new [`Observer`].
+  pub fn new<Filter>(sender: ObserverSender<I, A>, blocking: bool, filter: Option<Filter>) -> Self
+  where
+    Filter: ObservationFilter<I, A>,
+  {
+    let id = ObserverId(NEXT_OBSERVER_ID.fetch_add(1, Ordering::AcqRel));
+    let inner = Arc::new(Inner {
+      num_observed: AtomicU64::new(0),
+      num_dropped: AtomicU64::new(0),
+      tx: sender.0,
+      filter: filter.map(|f| Box::new(f) as Box<dyn ObservationFilter<I, A>>),
+    });
+
+    Observer {
+      inner,
+      blocking,
+      id,
+    }
+  }
+
   /// Returns the id of the [`Observer`].
   #[inline]
   pub const fn id(&self) -> ObserverId {
@@ -186,54 +204,81 @@ impl<I, A> Observer<I, A> {
   pub fn dropped(&self) -> u64 {
     self.inner.num_dropped.load(Ordering::Acquire)
   }
+}
 
-  /// Subscribes to the [`Observer`] and returns an [`Observable`].
-  #[inline]
-  pub fn subscribe(&self) -> Observable<I, A> {
-    Observable {
-      rx: self.inner.rx.clone(),
+impl<I, A> Clone for Observer<I, A> {
+  fn clone(&self) -> Self {
+    Self {
+      inner: self.inner.clone(),
+      blocking: self.blocking,
       id: self.id,
     }
   }
 }
 
-/// Observable is kind of a mpmc receiver, used to receive [`Observation`]s from an [`Observer`].
-#[pin_project::pin_project]
-#[derive(Clone)]
-pub struct Observable<I, A> {
-  #[pin]
-  rx: async_channel::Receiver<Observation<I, A>>,
-  id: ObserverId,
+impl<I, A> CheapClone for Observer<I, A> {}
+
+/// Creates a bounded channel.
+///
+/// The created channel has space to hold at most `cap` [`Observation`]s at a time.
+pub fn bounded<I, A>(cap: usize) -> (ObserverSender<I, A>, ObserverReceiver<I, A>) {
+  let (tx, rx) = async_channel::bounded(cap);
+  (ObserverSender(tx), ObserverReceiver(rx))
 }
 
-impl<I, A> Observable<I, A> {
-  /// Returns the id of the parent [`Observer`].
-  ///
-  /// This id can be used to deregister the observer from the [`RaftCore`].
-  #[inline]
-  pub const fn id(&self) -> ObserverId {
-    self.id
-  }
+/// Creates an unbounded channel.
+///
+/// The created channel can hold an unlimited number of [`Observation`]s.
+pub fn unbounded<I, A>() -> (ObserverSender<I, A>, ObserverReceiver<I, A>) {
+  let (tx, rx) = async_channel::unbounded();
+  (ObserverSender(tx), ObserverReceiver(rx))
+}
 
-  /// Receives an [`Observation`].
-  pub async fn recv(&mut self) -> Result<Observation<I, A>, RecvError> {
-    self.rx.recv().await
+/// ObserverSender is used to let users reuse the same sender for multiple observers.
+pub struct ObserverSender<I, A>(async_channel::Sender<Observation<I, A>>);
+
+impl<I, A> Clone for ObserverSender<I, A> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
+}
+
+impl<I, A> CheapClone for ObserverSender<I, A> {}
+
+/// [`ObserverReceiver`] is kind of a mpmc receiver, used to receive [`Observation`]s from an [`Observer`]s.
+#[pin_project::pin_project]
+pub struct ObserverReceiver<I, A>(#[pin] async_channel::Receiver<Observation<I, A>>);
+
+impl<I, A> Clone for ObserverReceiver<I, A> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
+}
+
+impl<I, A> CheapClone for ObserverReceiver<I, A> {}
+
+impl<I, A> ObserverReceiver<I, A> {
+  /// Receives a [`Observation`] from the channel.
+  /// If the channel is empty, this method waits until there is a message.
+  /// If the channel is closed, this method receives a message or returns an error if there are no more messages
+  pub async fn recv(&self) -> Result<Observation<I, A>, RecvError> {
+    self.0.recv().await
   }
 
   /// Attempts to receive an [`Observation`] without blocking.
   pub fn try_recv(&mut self) -> Result<Observation<I, A>, TryRecvError> {
-    self.rx.try_recv()
+    self.0.try_recv()
   }
 }
 
-impl<I, A> Stream for Observable<I, A> {
+impl<I, A> Stream for ObserverReceiver<I, A> {
   type Item = <async_channel::Receiver<Observation<I, A>> as Stream>::Item;
 
   fn poll_next(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
   ) -> std::task::Poll<Option<Self::Item>> {
-    <async_channel::Receiver<Observation<I, A>> as Stream>::poll_next(self.project().rx, cx)
+    <async_channel::Receiver<Observation<I, A>> as Stream>::poll_next(self.project().0, cx)
   }
 }
 
@@ -260,39 +305,17 @@ where
   /// a function that can be registered in order to filter observations.
   /// The function reports whether the observation should be included - if
   /// it returns false, the observation will be filtered out.
-  pub async fn register_observer<Filter>(
+  pub async fn register_observer(
     &self,
-    blocking: bool,
-    filter: Option<Filter>,
-  ) -> Observer<T::Id, <T::Resolver as AddressResolver>::Address>
-  where
-    Filter: ObservationFilter<T::Id, <T::Resolver as AddressResolver>::Address>,
-  {
-    let id = ObserverId(NEXT_OBSERVER_ID.fetch_add(1, Ordering::AcqRel));
-    let (tx, rx) = async_channel::unbounded();
-    let inner = Arc::new(Inner {
-      num_observed: AtomicU64::new(0),
-      num_dropped: AtomicU64::new(0),
-      tx,
-      rx,
-      filter: filter.map(|f| {
-        Box::new(f) as Box<dyn ObservationFilter<T::Id, <T::Resolver as AddressResolver>::Address>>
-      }),
-    });
-
-    let observer = Observer {
-      inner,
-      blocking,
-      id,
-    };
-
+    observer: &Observer<T::Id, <T::Resolver as AddressResolver>::Address>,
+  ) {
+    let id = observer.id();
     self
       .inner
       .observers
       .write()
       .await
       .insert(id, observer.clone());
-    observer
   }
 
   /// Deregisters an observer.
@@ -330,8 +353,15 @@ pub(crate) async fn observe<I: CheapClone + 'static, A: CheapClone + 'static>(
               }
             } else {
               futures::select! {
-                _ = or.inner.tx.send(o).fuse() => {
-                  or.inner.num_observed.fetch_add(1, Ordering::AcqRel);
+                res = or.inner.tx.send(o).fuse() => {
+                  match res {
+                    Ok(_) => {
+                      or.inner.num_observed.fetch_add(1, Ordering::AcqRel);
+                    }
+                    Err(_) => {
+                      or.inner.num_dropped.fetch_add(1, Ordering::AcqRel);
+                    }
+                  }
                 }
                 default => {
                   or.inner.num_dropped.fetch_add(1, Ordering::AcqRel);

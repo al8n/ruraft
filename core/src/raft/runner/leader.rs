@@ -11,14 +11,13 @@ use smallvec::SmallVec;
 
 use super::*;
 use crate::{
-  observe,
+  observer::{observe, Observation},
   raft::{ApplyRequest, ApplySender, LastSnapshot},
   storage::{
     remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotSource, StorageError,
   },
   transport::{TimeoutNowRequest, TransportError},
   utils::override_notify_bool,
-  Observation,
 };
 
 mod commitment;

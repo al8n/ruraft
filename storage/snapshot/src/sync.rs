@@ -137,6 +137,15 @@ pub struct FileSnapshotStorage<I, A, R> {
   _runtime: std::marker::PhantomData<(I, A, R)>,
 }
 
+impl<I, A, R> core::fmt::Debug for FileSnapshotStorage<I, A, R> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct(std::any::type_name::<Self>())
+      .field("path", &self.path)
+      .field("retain", &self.retain)
+      .finish()
+  }
+}
+
 impl<I, A, R> Clone for FileSnapshotStorage<I, A, R> {
   fn clone(&self) -> Self {
     Self {
