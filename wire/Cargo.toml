@@ -11,29 +11,20 @@ metadata.workspace = true
 [features]
 default = []
 test = ["ruraft-core/test", "smol_str"]
-
-# enable msgpack based wire implementation
-rmp = ["rmp-serde", "serde"]
-
-# enable bincode based wire implementation
-bincode = ["dep:bincode", "serde", "byteorder", "async-bincode"]
-
 serde = ["dep:serde", "ruraft-core/serde", "smol_str?/serde"]
 
 [dependencies]
 bytes = { workspace = true }
+
+
 futures-util = { version = "0.3", features = ["io"] }
 paste = "1"
 ruraft-core = { path = "../core" }
 thiserror = { workspace = true }
 
 serde = { workspace = true, optional = true }
-
-rmp-serde = { version = "1", optional = true }
-
-bincode = { version = "1", optional = true }
 byteorder = { workspace = true, optional = true }
-async-bincode = { version = "0.7", optional = true, default-features = false, features = ["futures"] }
+
 smol_str = { version = "0.2", optional = true }
 
 [dev-dependencies]

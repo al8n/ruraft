@@ -17,12 +17,6 @@ serde = ["dep:serde", "humantime-serde", "ruraft-core/serde"]
 # enable DNS node address resolver
 dns = ["agnostic/dns", "nodecraft/dns"]
 
-# enable rmp encoding/decoding 
-rmp = ["ruraft-wire/rmp"]
-
-# enable bincode encoding/decoding
-bincode = ["ruraft-wire/bincode"]
-
 # enable metrics
 metrics = ["ruraft-core/metrics", "dep:metrics"]
 

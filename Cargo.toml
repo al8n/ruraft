@@ -8,9 +8,6 @@ members = [
   "storage/lightwal",
   "transport/net",
   "transport/tcp",
-  "transport/grpc",
-  "transport/quinn",
-  "transport/s2n",
   "utils",
   "wire",
 ]

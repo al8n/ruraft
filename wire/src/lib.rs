@@ -132,15 +132,5 @@ macro_rules! unittest_encode_decode_response {
   };
 }
 
-/// MsgPack based [`Wire`](ruraft_core::transport::Wire) implementation.
-#[cfg(feature = "rmp")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rmp")))]
-pub mod rmp;
-
-/// [`bincode`](https://crates.io/crates/bincode) based [`Wire`](ruraft_core::transport::Wire) implementation.
-#[cfg(feature = "bincode")]
-#[cfg_attr(docsrs, doc(cfg(feature = "bincode")))]
-pub mod bincode;
-
 mod lpe;
 pub use lpe::*;
