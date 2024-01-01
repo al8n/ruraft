@@ -23,7 +23,7 @@ use crate::{
   observer::{observe, Observation, Observer, ObserverId},
   options::ReloadableOptions,
   raft::Contact,
-  storage::{LogStorage, SnapshotSource, SnapshotStorage, Storage},
+  storage::{LogBatch, LogStorage, SnapshotSource, SnapshotStorage, Storage},
   transport::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
@@ -749,7 +749,7 @@ where
       term,
       prev_log_entry: 0,
       prev_log_term: 0,
-      entries: Vec::with_capacity(self.max_append_entries as usize),
+      entries: LogBatch::with_capacity(self.max_append_entries as usize),
       leader_commit: self.state.commit_index(),
     };
     self.set_previous_log(ls, next_idx, &mut req).await?;

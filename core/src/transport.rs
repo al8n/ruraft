@@ -316,7 +316,7 @@ pub mod tests {
       term: 10,
       prev_log_entry: 100,
       prev_log_term: 4,
-      entries: vec![Log::__crate_new(101, 4, LogKind::Noop)],
+      entries: vec![Log::__crate_new(101, 4, LogKind::Noop)].into(),
       leader_commit: 90,
     }
   }

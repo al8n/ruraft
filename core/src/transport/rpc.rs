@@ -18,23 +18,6 @@ use crate::{
 
 pub use async_channel::{RecvError, TryRecvError};
 
-// macro_rules! encode {
-//   (v1::$ty:ident { $expr: expr }) => {{
-//     let mut buf = Vec::with_capacity(128);
-//     buf.push({ $expr });
-//     buf.push(ProtocolVersion::V1 as u8);
-
-//     // Reserve length for the message.
-//     buf.extend_from_slice(&[0, 0, 0, 0]);
-
-//     rmp_serde::encode::write(&mut buf, $ty)
-//       .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-//     let encoded_len = buf.len() - OFFSET;
-//     buf[2..OFFSET].copy_from_slice(&(encoded_len as u32).to_be_bytes());
-//     Ok(buf)
-//   }};
-// }
-
 /// Used to send a response back to the remote.
 pub struct RpcResponseSender<I, A>(oneshot::Sender<Response<I, A>>);
 

@@ -5,6 +5,33 @@
 #![deny(missing_docs, warnings)]
 #![forbid(unsafe_code)]
 
+/// Create a [`LogBatch`](crate::storage::LogBatch) from a list of elements.
+#[macro_export]
+macro_rules! log_batch {
+  ($elem:expr; $n:expr) => ({
+    $crate::storage::LogBatch::from($crate::__private::smallvec![$elem; $n])
+  });
+  ($($x:expr),*$(,)*) => ({
+    $crate::storage::LogBatch::from($crate::__private::smallvec![$($x),*])
+  });
+}
+
+/// Create a [`CommittedLogBatch`](crate::storage::CommittedLogBatch) from a list of elements.
+#[macro_export]
+macro_rules! committed_log_batch {
+  ($elem:expr; $n:expr) => ({
+    $crate::storage::CommittedLogBatch::from($crate::__private::smallvec![$elem; $n])
+  });
+  ($($x:expr),*$(,)*) => ({
+    $crate::storage::CommittedLogBatch::from($crate::__private::smallvec![$($x),*])
+  });
+}
+
+#[doc(hidden)]
+pub mod __private {
+  pub use smallvec::smallvec;
+}
+
 pub use nodecraft::CheapClone;
 
 const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();

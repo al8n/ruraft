@@ -1,12 +1,12 @@
-use std::{borrow::Cow, future::Future, sync::Arc};
+use std::{borrow::Cow, future::Future};
 
 use futures::AsyncRead;
 use nodecraft::{Address, Id};
 
-use crate::{membership::Membership, storage::SnapshotSink, Data};
-
-mod log;
-pub use log::*;
+use crate::{
+  storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
+  Data,
+};
 
 /// Represents a snapshot of the finate state machine.
 #[auto_impl::auto_impl(Box)]
@@ -79,7 +79,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// produce the same result on all peers in the cluster.
   fn apply(
     &self,
-    log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
+    log: CommittedLog<Self::Id, Self::Address, Self::Data>,
   ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
   /// Invoked once a batch of log entries has been committed and
@@ -93,7 +93,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// method if that method was called on the same Raft node as the FSM.
   fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>> + Send,
+    logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
   ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to

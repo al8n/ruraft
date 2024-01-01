@@ -2,6 +2,7 @@
 
 use pyo3::{types::PyModule, *};
 
+mod fsm;
 mod storage;
 mod types;
 
@@ -10,5 +11,6 @@ mod types;
 pub fn pyraft(py: Python, m: &PyModule) -> PyResult<()> {
   m.add_submodule(storage::submodule(py)?)?;
   m.add_submodule(types::submodule(py)?)?;
+  m.add_submodule(fsm::submodule(py)?)?;
   Ok(())
 }

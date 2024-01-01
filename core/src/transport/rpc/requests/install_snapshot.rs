@@ -9,17 +9,21 @@ use super::*;
 #[viewit::viewit]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(
+    rename_all = "snake_case",
+    bound(
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>",
+    )
+  )
+)]
 pub struct InstallSnapshotRequest<I, A> {
   /// The header of the request
   #[viewit(
     getter(const, style = "ref", attrs(doc = "Get the header of the request"),),
     setter(attrs(doc = "Set the header of the request"),)
-  )]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
   )]
   header: Header<I, A>,
 
@@ -52,12 +56,6 @@ pub struct InstallSnapshotRequest<I, A> {
   last_log_term: u64,
 
   /// Cluster membership.
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
   #[viewit(
     getter(
       const,

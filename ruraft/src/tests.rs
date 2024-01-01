@@ -22,9 +22,8 @@ use ruraft_core::{
   sidecar::NoopSidecar,
   storage::RaftStorage,
   transport::{Transformable, Transport, Wire},
-  FinateStateMachine, FinateStateMachineError, FinateStateMachineLog,
-  FinateStateMachineLogTransformError, FinateStateMachineResponse, FinateStateMachineSnapshot,
-  RaftCore, Role,
+  CommittedLog, CommittedLogTransformError, FinateStateMachine, FinateStateMachineError,
+  FinateStateMachineResponse, FinateStateMachineSnapshot, RaftCore, Role,
 };
 use ruraft_memory::{
   storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
@@ -51,7 +50,7 @@ type Raft<W, R> = RaftCore<
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
 pub enum MockFSMErrorKind {
   IO(io::Error),
-  Transform(FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>),
+  Transform(CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>),
 }
 
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
@@ -81,10 +80,10 @@ impl<R: Runtime> From<io::Error> for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> From<FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
+impl<R: Runtime> From<CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
   for MockFSMError<R>
 {
-  fn from(err: FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>) -> Self {
+  fn from(err: CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>) -> Self {
     Self {
       kind: Arc::new(MockFSMErrorKind::Transform(err)),
       messages: Vec::new(),
@@ -137,7 +136,7 @@ impl FinateStateMachineResponse for MockFSMResponse {
 
 #[derive(Debug)]
 struct MockFSMInner {
-  logs: Vec<FinateStateMachineLog<SmolStr, MemoryAddress, Vec<u8>>>,
+  logs: Vec<CommittedLog<SmolStr, MemoryAddress, Vec<u8>>>,
   memberships: Vec<Membership<SmolStr, MemoryAddress>>,
 }
 
@@ -197,7 +196,7 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
   /// NOTE: This is exposed for middleware testing purposes and is not a stable API
   async fn apply(
     &self,
-    log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
+    log: CommittedLog<Self::Id, Self::Address, Self::Data>,
   ) -> Result<Self::Response, Self::Error> {
     let mut inner = self.inner.lock().await;
     inner.logs.push(log.clone());
@@ -206,7 +205,7 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
 
   async fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>>,
+    logs: impl IntoIterator<Item = CommittedLog<Self::Id, Self::Address, Self::Data>>,
   ) -> Result<Vec<Self::Response>, Self::Error> {
     let mut inner = self.inner.lock().await;
     let mut responses = Vec::new();
@@ -245,7 +244,7 @@ pub struct MockFSMMembershipStore<R> {
 
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
 pub struct MockFSMSnapshot<R> {
-  logs: Vec<FinateStateMachineLog<SmolStr, MemoryAddress, Vec<u8>>>,
+  logs: Vec<CommittedLog<SmolStr, MemoryAddress, Vec<u8>>>,
   max_index: u64,
   _runtime: PhantomData<R>,
 }

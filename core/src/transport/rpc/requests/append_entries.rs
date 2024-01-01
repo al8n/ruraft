@@ -1,6 +1,6 @@
 use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
-use crate::{Data, MESSAGE_SIZE_LEN};
+use crate::{storage::LogBatch, Data, MESSAGE_SIZE_LEN};
 
 use super::*;
 
@@ -9,17 +9,21 @@ use super::*;
 #[viewit::viewit]
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(
+    rename_all = "snake_case",
+    bound(
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+    )
+  )
+)]
 pub struct AppendEntriesRequest<I, A, D> {
   /// The header of the request
   #[viewit(
     getter(const, style = "ref", attrs(doc = "Get the header of the request"),),
     setter(attrs(doc = "Set the header of the request"),)
-  )]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, D: ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
   )]
   header: Header<I, A>,
 
@@ -58,13 +62,7 @@ pub struct AppendEntriesRequest<I, A, D> {
     ),
     setter(attrs(doc = "Set the log entries of the append request"),)
   )]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, D: ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
-  entries: Vec<Log<I, A, D>>,
+  entries: LogBatch<I, A, D>,
 
   /// Commit index on the leader
   #[viewit(
@@ -109,7 +107,7 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
   /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
   /// are set to their default values.
   #[inline]
-  pub const fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
+  pub fn new(version: ProtocolVersion, id: I, addr: A) -> Self {
     Self {
       header: Header {
         protocol_version: version,
@@ -118,14 +116,14 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
       term: 0,
       prev_log_entry: 0,
       prev_log_term: 0,
-      entries: Vec::new(),
+      entries: LogBatch::new(),
       leader_commit: 0,
     }
   }
 
   /// Create a new [`AppendEntriesRequest`] with the given protocol version, node and default values.
   #[inline]
-  pub const fn from_node(version: ProtocolVersion, node: Node<I, A>) -> Self {
+  pub fn from_node(version: ProtocolVersion, node: Node<I, A>) -> Self {
     Self {
       header: Header {
         protocol_version: version,
@@ -134,27 +132,27 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
       term: 0,
       prev_log_entry: 0,
       prev_log_term: 0,
-      entries: Vec::new(),
+      entries: LogBatch::new(),
       leader_commit: 0,
     }
   }
 
   /// Create a new [`AppendEntriesRequest`] with the given header and default values.
   #[inline]
-  pub const fn from_header(header: Header<I, A>) -> Self {
+  pub fn from_header(header: Header<I, A>) -> Self {
     Self {
       header,
       term: 0,
       prev_log_entry: 0,
       prev_log_term: 0,
-      entries: Vec::new(),
+      entries: LogBatch::new(),
       leader_commit: 0,
     }
   }
 
   /// Returns a mutable reference of the log entries.
   #[inline]
-  pub fn entries_mut(&mut self) -> &mut Vec<Log<I, A, D>> {
+  pub fn entries_mut(&mut self) -> &mut LogBatch<I, A, D> {
     &mut self.entries
   }
 }
@@ -192,7 +190,7 @@ where
     dst[offset..offset + core::mem::size_of::<u32>()].copy_from_slice(&num_entries.to_be_bytes());
     offset += core::mem::size_of::<u32>();
 
-    for entry in &self.entries {
+    for entry in self.entries.iter() {
       offset += entry
         .encode(&mut dst[offset..])
         .map_err(Self::Error::encode)?;
@@ -257,7 +255,7 @@ where
       u32::from_be_bytes(buf) as usize
     };
 
-    let mut entries = Vec::with_capacity(num_entrires);
+    let mut entries = LogBatch::with_capacity(num_entrires);
 
     for _ in 0..num_entrires {
       let (readed, entry) =
@@ -298,7 +296,7 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
       term: 1,
       prev_log_entry: 2,
       prev_log_term: 2,
-      entries: vec![
+      entries: log_batch![
         Log::__crate_new(3, 2, LogKind::Noop),
         Log::__crate_new(4, 2, LogKind::Barrier),
         Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
@@ -340,7 +338,7 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
       term: 1,
       prev_log_entry: 2,
       prev_log_term: 2,
-      entries: vec![
+      entries: log_batch![
         Log::__crate_new(3, 2, LogKind::Noop),
         Log::__crate_new(4, 2, LogKind::Barrier),
         Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),

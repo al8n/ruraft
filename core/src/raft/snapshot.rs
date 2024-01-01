@@ -181,7 +181,6 @@ where
               Ok(Err(e)) => {
                 return (None, match e {
                   Error::Raft(RaftError::NothingNewToSnapshot) => Err(Error::nothing_new_to_snapshot()),
-
                   e => {
                     // TODO: with_message
                     // Err(e.with_message(Cow::Borrowed("failed to start snapshot")))

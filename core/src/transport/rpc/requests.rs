@@ -19,7 +19,13 @@ enum_wrapper!(
   /// Request to be sent to the Raft node.
   #[derive(Debug, Clone)]
   #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-  #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", bound = "I: Id + serde::Serialize + for<'a> serde::Deserialize<'a>, A: Address + serde::Serialize + for<'a> serde::Deserialize<'a>, D: serde::Serialize + for<'a> serde::Deserialize<'a>"))]
+  #[cfg_attr(feature = "serde", serde(
+    rename_all = "snake_case",
+    bound(
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+    )
+  ))]
   #[non_exhaustive]
   pub enum Request<I, A, D> {
     /// Append entries request.

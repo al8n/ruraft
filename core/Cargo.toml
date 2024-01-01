@@ -14,7 +14,7 @@ default = []
 test = ["tracing-subscriber", "tempfile"]
 metrics = ["dep:metrics"]
 
-serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "ruraft-utils/serde", "dep:serde_millis"]
+serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "ruraft-utils/serde", "dep:serde_millis", "smallvec/serde"]
 
 [dependencies]
 arc-swap = "1.6"

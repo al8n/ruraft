@@ -31,11 +31,11 @@ use crate::{
   },
   sidecar::{NoopSidecar, Sidecar},
   storage::{
-    Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
+    CommittedLog, CommittedLogKind, Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage,
+    StableStorage, Storage, StorageError,
   },
   transport::{AddressResolver, Transport},
-  FinateStateMachineError, FinateStateMachineLog, FinateStateMachineLogKind,
-  FinateStateMachineSnapshot,
+  FinateStateMachineError, FinateStateMachineSnapshot,
 };
 
 #[cfg(feature = "metrics")]
@@ -619,10 +619,10 @@ where
 
       if let LogKind::Data(data) = entry.kind {
         fsm
-          .apply(FinateStateMachineLog::new(
+          .apply(CommittedLog::new(
             entry.term,
             entry.index,
-            FinateStateMachineLogKind::Log(data),
+            CommittedLogKind::Log(data),
           ))
           .await
           .map_err(|e| {
