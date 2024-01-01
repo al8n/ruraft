@@ -3,6 +3,7 @@ use std::{convert::Infallible, marker::PhantomData};
 
 use futures::StreamExt;
 use ruraft_core::{
+  log_batch,
   storage::{Log, LogKind},
   transport::{
     tests::{__make_append_req, __make_append_resp},
@@ -204,7 +205,7 @@ pub async fn close_streams<
     term: 10,
     prev_log_entry: 100,
     prev_log_term: 4,
-    entries: vec![Log::__crate_new(101, 4, LogKind::Noop)],
+    entries: log_batch![Log::__crate_new(101, 4, LogKind::Noop)],
     leader_commit: 90,
     header: trans1.header().clone(),
   };
@@ -910,7 +911,7 @@ pub async fn pooled_conn<
     term: 10,
     prev_log_entry: 100,
     prev_log_term: 4,
-    entries: vec![Log::__crate_new(4, 101, LogKind::Noop)],
+    entries: log_batch![Log::__crate_new(4, 101, LogKind::Noop)],
     leader_commit: 90,
   };
 

@@ -20,17 +20,19 @@ use ruraft_core::{
   },
   options::Options,
   sidecar::NoopSidecar,
-  storage::RaftStorage,
+  storage::{
+    CommittedLog, CommittedLogBatch, CommittedLogTransformError, RaftStorage, SnapshotSink,
+  },
   transport::{Transformable, Transport, Wire},
-  CommittedLog, CommittedLogTransformError, FinateStateMachine, FinateStateMachineError,
-  FinateStateMachineResponse, FinateStateMachineSnapshot, RaftCore, Role,
+  FinateStateMachine, FinateStateMachineError, FinateStateMachineResponse,
+  FinateStateMachineSnapshot, RaftCore, Role,
 };
 use ruraft_memory::{
   storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
   transport::{MemoryAddress, MemoryAddressResolver, MemoryTransport, MemoryTransportOptions},
 };
 
-use ruraft_snapshot::sync::{FileSnapshotSink, FileSnapshotStorage, FileSnapshotStorageOptions};
+use ruraft_snapshot::sync::{FileSnapshotStorage, FileSnapshotStorageOptions};
 use smol_str::SmolStr;
 use tempfile::TempDir;
 
@@ -181,8 +183,6 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
 
   type Snapshot = MockFSMSnapshot<R>;
 
-  type SnapshotSink = FileSnapshotSink<SmolStr, MemoryAddress, R>;
-
   type Response = MockFSMResponse;
 
   type Id = SmolStr;
@@ -205,7 +205,7 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
 
   async fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = CommittedLog<Self::Id, Self::Address, Self::Data>>,
+    logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
   ) -> Result<Vec<Self::Response>, Self::Error> {
     let mut inner = self.inner.lock().await;
     let mut responses = Vec::new();
@@ -252,11 +252,9 @@ pub struct MockFSMSnapshot<R> {
 impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
   type Error = MockFSMError<R>;
 
-  type Sink = FileSnapshotSink<SmolStr, MemoryAddress, R>;
-
   type Runtime = R;
 
-  async fn persist(&self, mut sink: Self::Sink) -> Result<(), Self::Error> {
+  async fn persist(&self, mut sink: impl SnapshotSink) -> Result<(), Self::Error> {
     let encode_size = self.logs[..self.max_index as usize]
       .iter()
       .map(|l| l.encoded_len())
@@ -268,6 +266,10 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
       offset += log.encode(&mut buf[offset..])?;
     }
     sink.write_all(&buf[..offset]).await.map_err(Into::into)
+  }
+
+  async fn release(self) -> Result<(), Self::Error> {
+    Ok(())
   }
 }
 
@@ -320,11 +322,6 @@ where
   <R::Sleep as futures::Future>::Output: Send + 'static,
   <<R as Runtime>::Interval as futures::Stream>::Item: Send,
 {
-  // async fn make_cluster(n: usize, opts: MakeClusterOptions) -> Result<Self, DynError> {
-  //   opts.options.get_or_insert(inmem_config());
-
-  // }
-
   pub fn remove_server(&mut self, id: &str) {
     self.rafts.retain(|raft| raft.local_id().as_str() != id);
   }

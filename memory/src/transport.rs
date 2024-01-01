@@ -912,6 +912,7 @@ pub(super) mod tests {
   use std::marker::PhantomData;
 
   use ruraft_core::{
+    log_batch,
     transport::{Address, AppendEntriesRequest, AppendEntriesResponse, WireError},
     Node,
   };
@@ -1098,7 +1099,7 @@ pub(super) mod tests {
           term: 0,
           prev_log_entry: 0,
           prev_log_term: 0,
-          entries: vec![],
+          entries: log_batch![],
           leader_commit: 0,
         },
       )
@@ -1121,7 +1122,7 @@ pub(super) mod tests {
           term: 0,
           prev_log_entry: 0,
           prev_log_term: 0,
-          entries: vec![],
+          entries: log_batch![],
           leader_commit: 0,
         },
       )
