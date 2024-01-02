@@ -14,11 +14,11 @@ default = ["metrics", "sled", "jammdb", "redb", "tokio", "serde"]
 
 metrics = ["ruraft-lightwal/metrics", "ruraft-core/metrics", "ruraft-tcp/metrics", "ruraft-snapshot/metrics"]
 
-serde = ["dep:serde", "ruraft-core/serde", "ruraft-tcp/serde", "ruraft-snapshot/serde", "pyo3/serde", "nodecraft/serde"]
+serde = ["dep:serde", "ruraft-core/serde", "ruraft-tcp/serde", "ruraft-snapshot/serde", "pyo3/serde", "nodecraft/serde", "smol_str/serde"]
 
 
-tokio = ["agnostic/tokio"]
-async-std = ["agnostic/async-std"]
+tokio = ["agnostic/tokio", "pyo3-asyncio/tokio-runtime"]
+async-std = ["agnostic/async-std", "pyo3-asyncio/async-std-runtime"]
 smol = ["agnostic/smol"]
 
 sled = ["ruraft-lightwal/sled"]
@@ -27,17 +27,20 @@ redb = ["ruraft-lightwal/redb"]
 
 [dependencies]
 agnostic = { workspace = true }
+async-lock = { workspace = true }
 bytes = { workspace = true }
+futures = { workspace = true }
 indexmap = "2"
 nodecraft = { workspace = true }
 pyo3 = { version = "0.20", features = ["smallvec", "indexmap"] }
-pyo3-asyncio = "0.20"
+pyo3-asyncio = { version = "0.20", features = ["attributes"] }
 ruraft-core = { path = "../../core" }
 ruraft-lightwal = { path = "../../storage/lightwal" }
 ruraft-snapshot = { path = "../../storage/snapshot" }
 ruraft-tcp = { path = "../../transport/tcp" }
 serde = { workspace = true, features = ["derive"], optional = true }
 smallvec = "1"
+smol_str = { workspace = true }
 transformable = { version = "0.1", features = ["bytes"] }
 
 

@@ -254,7 +254,7 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
 
   type Runtime = R;
 
-  async fn persist(&self, mut sink: impl SnapshotSink) -> Result<(), Self::Error> {
+  async fn persist(&self, sink: &mut impl SnapshotSink) -> Result<(), Self::Error> {
     let encode_size = self.logs[..self.max_index as usize]
       .iter()
       .map(|l| l.encoded_len())

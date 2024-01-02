@@ -9,7 +9,7 @@ use std::{
 
 use agnostic::Runtime;
 use atomic::Atomic;
-use futures::{channel::oneshot, FutureExt};
+use futures::{channel::oneshot, AsyncWriteExt, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use wg::AsyncWaitGroup;
 
@@ -232,7 +232,7 @@ where
             tracing::info!(target = "ruraft.snapshot.runner", index = %snap.index, "starting snapshot up");
             #[cfg(feature = "metrics")]
             let create_start = Instant::now();
-            let sink = match self.store.snapshot_store().create(
+            let mut sink = match self.store.snapshot_store().create(
               Default::default(),
               snap.term,
               snap.index,
@@ -256,7 +256,10 @@ where
             #[cfg(feature = "metrics")]
             let persist_start = Instant::now();
             let id = sink.id();
-            if let Err(e) = snap.snapshot.persist(sink).await {
+            if let Err(e) = snap.snapshot.persist(&mut sink).await {
+              if let Err(e) = sink.cancel().await {
+                tracing::error!(target = "ruraft.snapshot.persist", err=%e, "failed to cancel snapshot");
+              }
               return (Some(snap.snapshot), Err(Error::fsm(<F::Error as FinateStateMachineError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")))));
             }
 
@@ -266,6 +269,10 @@ where
               histogram.record(persist_start.elapsed().as_millis() as f64);
             }
 
+            // Close and check for error.
+            if let Err(e) = sink.close().await {
+              return (Some(snap.snapshot), Err(Error::storage(<S::Error as StorageError>::snapshot(<S::Snapshot as SnapshotStorage>::Error::from(e)).with_message(Cow::Borrowed("failed to close snapshot")))));
+            }
             // Update the last stable snapshot info.
             self.state.set_last_snapshot(LastSnapshot::new(snap.index, snap.term));
 

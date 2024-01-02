@@ -219,10 +219,6 @@ where
   async fn cancel(&mut self) -> std::io::Result<()> {
     Ok(())
   }
-
-  async fn close(self) -> std::io::Result<()> {
-    Ok(())
-  }
 }
 
 /// Implements [`SnapshotSource`] in memory

@@ -12,7 +12,7 @@ use crate::{
 #[auto_impl::auto_impl(Box)]
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
-  type Error: std::error::Error;
+  type Error: std::error::Error + Send + Sync + 'static;
 
   /// The async runtime used by the finate state machine snapshot.
   type Runtime: agnostic::Runtime;
@@ -20,7 +20,7 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Persist should write the FSM snapshot to the given sink.
   fn persist(
     &self,
-    sink: impl SnapshotSink,
+    sink: &mut impl SnapshotSink,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Release is invoked when we are finished with the snapshot.

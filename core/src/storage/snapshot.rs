@@ -16,7 +16,7 @@ pub use meta::*;
 /// without streaming from the leader.
 pub trait SnapshotStorage: Send + Sync + 'static {
   /// The error type returned by the snapshot storage.
-  type Error: std::error::Error + Send + Sync + 'static;
+  type Error: std::error::Error + From<std::io::Error> + Send + Sync + 'static;
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
@@ -64,9 +64,6 @@ pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static 
 
   /// Cancel the sink.
   fn cancel(&mut self) -> impl Future<Output = std::io::Result<()>> + Send;
-
-  /// Close the sink.
-  fn close(self) -> impl Future<Output = std::io::Result<()>> + Send;
 }
 
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state

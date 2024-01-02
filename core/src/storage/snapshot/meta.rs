@@ -10,7 +10,7 @@ use super::*;
 
 /// The id used to identify a snapshot.
 #[viewit::viewit(setters(prefix = "with"))]
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SnapshotId {
   /// The index of the snapshot.
@@ -50,6 +50,22 @@ pub struct SnapshotId {
 impl core::fmt::Display for SnapshotId {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}_{}_{}", self.term, self.index, self.timestamp)
+  }
+}
+
+impl PartialOrd for SnapshotId {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl Ord for SnapshotId {
+  fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    self
+      .term
+      .cmp(&other.term)
+      .then(self.index.cmp(&other.index))
+      .then(self.timestamp.cmp(&other.timestamp))
   }
 }
 

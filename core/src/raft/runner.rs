@@ -10,7 +10,7 @@ use std::{
 
 use agnostic::Runtime;
 use atomic::Atomic;
-use futures::{channel::oneshot, FutureExt};
+use futures::{channel::oneshot, AsyncWriteExt, FutureExt};
 use nodecraft::{resolver::AddressResolver, Address, Id};
 use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
@@ -778,7 +778,9 @@ where
       return respond_install_snapshot_request(
         &self.transport,
         counting_rpc_reader,
-        Err(Error::<F, S, T>::storage(<S::Error as StorageError>::io(e))),
+        Err(Error::<F, S, T>::storage(
+          <S::Error as StorageError>::snapshot(<S::Snapshot as SnapshotStorage>::Error::from(e)),
+        )),
         tx,
       )
       .await;

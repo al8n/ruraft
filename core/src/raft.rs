@@ -15,7 +15,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
 use atomic_time::AtomicOptionInstant;
-use futures::channel::oneshot;
+use futures::{channel::oneshot, AsyncWriteExt};
 use nodecraft::CheapClone;
 use wg::AsyncWaitGroup;
 
@@ -640,7 +640,7 @@ where
       Error::fsm(e.with_message(Cow::Borrowed("failed to snapshot finate state machine")))
     })?;
 
-    let sink = ss
+    let mut sink = ss
       .create(Default::default(), last_term, last_index, membership, 1)
       .await
       .map_err(|e| {
@@ -650,10 +650,17 @@ where
         )
       })?;
 
-    snapshot.persist(sink).await.map_err(|e| {
+    snapshot.persist(&mut sink).await.map_err(|e| {
       Error::fsm(
         <F::Error as FinateStateMachineError>::snapshot(e)
           .with_message(Cow::Borrowed("failed to persist snapshot")),
+      )
+    })?;
+
+    sink.close().await.map_err(|e| {
+      Error::storage(
+        <S::Error as StorageError>::snapshot(<S::Snapshot as SnapshotStorage>::Error::from(e))
+          .with_message(Cow::Borrowed("failed to finalize snapshot")),
       )
     })?;
 

@@ -11,7 +11,6 @@ use std::{
 
 use agnostic::Runtime;
 use byteorder::{ByteOrder, NetworkEndian};
-use futures::AsyncWriteExt;
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
@@ -720,10 +719,6 @@ where
       })
       .and_then(|_| fs::remove_dir_all(&self.dir))
   }
-
-  async fn close(mut self) -> io::Result<()> {
-    AsyncWriteExt::close(&mut self).await
-  }
 }
 
 const CRC_SIZE: usize = mem::size_of::<u64>();
@@ -922,7 +917,7 @@ pub mod tests {
     .unwrap();
 
     for i in 10..15 {
-      let sink = storage
+      let mut sink = storage
         .create(
           SnapshotVersion::V1,
           i as u64,
@@ -1010,7 +1005,7 @@ pub mod tests {
     .await
     .unwrap();
 
-    let sink = storage
+    let mut sink = storage
       .create(
         SnapshotVersion::V1,
         130350,
@@ -1022,7 +1017,7 @@ pub mod tests {
       .unwrap();
     sink.close().await.unwrap();
 
-    let sink = storage
+    let mut sink = storage
       .create(
         SnapshotVersion::V1,
         204917,

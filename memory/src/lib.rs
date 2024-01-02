@@ -162,7 +162,7 @@ pub mod tests {
   /// - create snapshot
   pub async fn memory_snapshot_storage_create<R: Runtime>() {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
-    use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
+    use ruraft_core::storage::SnapshotStorage;
 
     let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
