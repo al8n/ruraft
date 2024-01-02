@@ -9,10 +9,10 @@
 #[macro_export]
 macro_rules! log_batch {
   ($elem:expr; $n:expr) => ({
-    $crate::storage::LogBatch::from($crate::__private::smallvec![$elem; $n])
+    $crate::storage::LogBatch::from($crate::smallvec::smallvec![$elem; $n])
   });
   ($($x:expr),*$(,)*) => ({
-    $crate::storage::LogBatch::from($crate::__private::smallvec![$($x),*])
+    $crate::storage::LogBatch::from($crate::smallvec::smallvec![$($x),*])
   });
 }
 
@@ -20,17 +20,15 @@ macro_rules! log_batch {
 #[macro_export]
 macro_rules! committed_log_batch {
   ($elem:expr; $n:expr) => ({
-    $crate::storage::CommittedLogBatch::from($crate::__private::smallvec![$elem; $n])
+    $crate::storage::CommittedLogBatch::from($crate::smallvec::smallvec![$elem; $n])
   });
   ($($x:expr),*$(,)*) => ({
-    $crate::storage::CommittedLogBatch::from($crate::__private::smallvec![$($x),*])
+    $crate::storage::CommittedLogBatch::from($crate::smallvec::smallvec![$($x),*])
   });
 }
 
-#[doc(hidden)]
-pub mod __private {
-  pub use smallvec::smallvec;
-}
+#[doc(inline)]
+pub use smallvec;
 
 pub use nodecraft::CheapClone;
 

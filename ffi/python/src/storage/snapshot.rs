@@ -7,6 +7,12 @@ use ruraft_core::storage::SnapshotId as RSnapshotId;
 #[pyclass]
 pub struct SnapshotId(RSnapshotId);
 
+impl From<RSnapshotId> for SnapshotId {
+  fn from(value: RSnapshotId) -> Self {
+    Self(value)
+  }
+}
+
 #[pymethods]
 impl SnapshotId {
   #[getter]
@@ -51,23 +57,8 @@ impl SnapshotId {
 }
 
 #[cfg(feature = "tokio")]
-mod tokio;
+pub mod tokio;
 
 #[cfg(feature = "async-std")]
-mod async_std;
+pub mod async_std;
 
-#[pymodule]
-pub fn snapshot(py: Python, m: &PyModule) -> PyResult<()> {
-  #[cfg(feature = "tokio")]
-  m.add_submodule(self::tokio::submodule(py)?)?;
-  #[cfg(feature = "async-std")]
-  m.add_submodule(self::async_std::submodule(py)?)?;
-  Ok(())
-}
-
-// This function creates and returns the sled submodule.
-pub fn submodule(py: Python) -> PyResult<&PyModule> {
-  let module = PyModule::new(py, "snapshot")?;
-  snapshot(py, module)?;
-  Ok(module)
-}

@@ -1,27 +1,38 @@
 use std::sync::Arc;
 
-use async_lock::RwLock;
-use futures::AsyncWriteExt;
-use nodecraft::{NodeAddress, NodeId};
+use async_lock::Mutex;
+use futures::{AsyncWriteExt, AsyncWrite};
 use pyo3::{prelude::*, types::PyBytes};
 use pyo3_asyncio::async_std::*;
-use ruraft_snapshot::sync::FileSnapshotSink as RFileSnapshotSink;
 use smallvec::SmallVec;
+
+use super::SnapshotId;
 
 const INLINED: usize = 64;
 
+#[derive(Clone)]
 #[pyclass]
-pub struct FileSnapshotSink(
-  Arc<RwLock<RFileSnapshotSink<NodeId, NodeAddress, agnostic::async_std::AsyncStdRuntime>>>,
-);
+pub struct FileSnapshotSink {
+  id: SnapshotId,
+  sink: Arc<Mutex<dyn AsyncWrite + Send + Sync + Unpin + 'static>>,
+}
+
+impl FileSnapshotSink {
+  pub fn new(id: SnapshotId, writer: impl AsyncWrite + Send + Sync + Unpin + 'static) -> Self {
+    Self {
+      id,
+      sink: Arc::new(Mutex::new(writer))
+    }
+  }
+}
 
 #[pymethods]
 impl FileSnapshotSink {
   fn write<'a>(&self, py: Python<'a>, bytes: &'a PyBytes) -> PyResult<&'a PyAny> {
-    let this = self.0.clone();
+    let this = self.sink.clone();
     let buf = SmallVec::<[u8; INLINED]>::from_slice(bytes.as_bytes());
     future_into_py(py, async move {
-      let mut sink = this.write().await;
+      let mut sink = this.lock().await;
       let readed = sink
         .write(&buf)
         .await
@@ -31,16 +42,21 @@ impl FileSnapshotSink {
   }
 
   fn write_all<'a>(&self, py: Python<'a>, bytes: &'a PyBytes) -> PyResult<&'a PyAny> {
-    let this = self.0.clone();
+    let this = self.sink.clone();
     let buf = SmallVec::<[u8; INLINED]>::from_slice(bytes.as_bytes());
     future_into_py(py, async move {
-      let mut sink = this.write().await;
+      let mut sink = this.lock().await;
       sink
         .write_all(&buf)
         .await
         .map_err(|err| PyErr::new::<pyo3::exceptions::PyIOError, _>(err.to_string()))?;
       Ok(())
     })
+  }
+
+  #[getter]
+  fn id(&self) -> SnapshotId {
+    self.id
   }
 }
 

@@ -2,6 +2,7 @@ use std::{borrow::Cow, future::Future};
 
 use futures::AsyncRead;
 use nodecraft::{Address, Id};
+use smallvec::SmallVec;
 
 use crate::{
   storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
@@ -18,13 +19,19 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
+  /// 
+  /// **Note:**
+  /// 
+  /// - [`SnapshotSink::cancel`](crate::storage::SnapshotSink::cancel) should be invoked on failure.
+  /// - Whether the implementation return `Ok` or `Err`, at the end of the fn, 
+  /// [`close`](futures::AsyncWriteExt::close) on `sink` should be invoked.
   fn persist(
     &self,
-    sink: &mut impl SnapshotSink,
+    sink: impl SnapshotSink<Runtime = Self::Runtime>,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Release is invoked when we are finished with the snapshot.
-  fn release(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  fn release(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Represents a comprehensive set of errors arising from operations within the [`FinateStateMachine`] trait.
@@ -48,6 +55,66 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
   /// Returns the index of the newly applied log entry.
   fn index(&self) -> u64;
 }
+
+const INLINED_RESPONSE: usize = 2;
+
+/// Response returned by [`FinateStateMachine::apply_batch`].
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ApplyBatchResponse<R>(SmallVec<[R; INLINED_RESPONSE]>);
+
+impl<R> Default for ApplyBatchResponse<R> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<R> ApplyBatchResponse<R> {
+  /// Creates a new instance of `ApplyBatchResponse`.
+  pub fn new() -> Self {
+    Self(SmallVec::new())
+  }
+
+  /// Creates a new instance of `ApplyBatchResponse` with the given capacity.
+  pub fn with_capacity(capacity: usize) -> Self {
+    Self(SmallVec::with_capacity(capacity))
+  }
+}
+
+impl<R> From<SmallVec<[R; INLINED_RESPONSE]>> for ApplyBatchResponse<R> {
+  fn from(value: SmallVec<[R; INLINED_RESPONSE]>) -> Self {
+    Self(value)
+  }
+}
+
+impl<R> core::ops::Deref for ApplyBatchResponse<R> {
+  type Target = SmallVec<[R; INLINED_RESPONSE]>;
+
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+
+impl<R> core::ops::DerefMut for ApplyBatchResponse<R> {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    &mut self.0
+  }
+}
+
+impl<R> FromIterator<R> for ApplyBatchResponse<R> {
+  fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
+    Self(iter.into_iter().collect())
+  }
+}
+
+impl<R> IntoIterator for ApplyBatchResponse<R> {
+  type Item = R;
+  type IntoIter = smallvec::IntoIter<[R; INLINED_RESPONSE]>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.0.into_iter()
+  }
+}
+
 
 /// Implemented by clients to make use of the replicated log.
 #[auto_impl::auto_impl(Box, Arc)]
@@ -94,7 +161,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   fn apply_batch(
     &self,
     logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
-  ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<ApplyBatchResponse<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to
   /// restore the FSM to a previous state, or to bring out-of-date followers up

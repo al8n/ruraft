@@ -4,10 +4,11 @@ use std::{
   sync::Arc,
 };
 
-use bytes::Bytes;
 use nodecraft::{NodeAddress, NodeId};
 use pyo3::{exceptions::PyTypeError, types::PyModule, *};
 use ruraft_lightwal::redb::{Db as RustDb, DbOptions as RustDbOptions};
+
+use crate::RaftData;
 
 /// Options used to create Db.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -89,7 +90,7 @@ impl DbOptions {
 /// [`redb`](https://crates.io/crates/redb) database based on [`tokio`](https://tokio.rs) runtime.
 #[cfg(feature = "tokio")]
 #[pyclass]
-pub struct TokioDb(RustDb<NodeId, NodeAddress, Bytes, agnostic::tokio::TokioRuntime>);
+pub struct TokioDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::tokio::TokioRuntime>);
 
 #[cfg(feature = "tokio")]
 #[pymethods]
@@ -105,7 +106,7 @@ impl TokioDb {
 /// [`redb`](https://crates.io/crates/redb) database based on [`async-std`](https://crates.io/crates/async-std) runtime.
 #[cfg(feature = "async-std")]
 #[pyclass]
-pub struct AsyncStdDb(RustDb<NodeId, NodeAddress, Bytes, agnostic::async_std::AsyncStdRuntime>);
+pub struct AsyncStdDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::async_std::AsyncStdRuntime>);
 
 #[cfg(feature = "async-std")]
 #[pymethods]
@@ -121,7 +122,7 @@ impl AsyncStdDb {
 /// [`sled`](https://crates.io/crates/sled) database based on [`smol`](https://crates.io/crates/smol) runtime.
 #[cfg(feature = "smol")]
 #[pyclass]
-pub struct SmolDb(RustDb<NodeId, NodeAddress, Bytes, agnostic::smol::SmolRuntime>);
+pub struct SmolDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::smol::SmolRuntime>);
 
 #[cfg(feature = "smol")]
 #[pymethods]

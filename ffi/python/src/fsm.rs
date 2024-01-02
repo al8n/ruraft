@@ -1,16 +1,18 @@
-use bytes::Bytes;
+use std::sync::Arc;
+
 use futures::AsyncRead;
 use nodecraft::{NodeAddress, NodeId};
-use pyo3::prelude::*;
+use pyo3::{prelude::*, exceptions::PyIOError};
 use ruraft_core::{
   storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
   FinateStateMachine as RFinateStateMachine, FinateStateMachineError as RFinateStateMachineError,
   FinateStateMachineResponse as RFinateStateMachineResponse,
   FinateStateMachineSnapshot as RFinateStateMachineSnapshot,
+  ApplyBatchResponse as RApplyBatchResponse,
 };
-use ruraft_snapshot::sync::FileSnapshotSink;
+use smallvec::SmallVec;
 
-mod tokio;
+pub mod tokio;
 
 pub fn index<T: RFinateStateMachineResponse>(resp: &T) -> u64 {
   resp.index()
@@ -22,13 +24,15 @@ pub fn index_wrapper(model: &FinateStateMachineResponse) {
   index(model);
 }
 
+
+#[derive(Clone)]
 #[pyclass]
-pub struct FinateStateMachineResponse(Py<PyAny>);
+pub struct FinateStateMachineResponse(Arc<Py<PyAny>>);
 
 impl RFinateStateMachineResponse for FinateStateMachineResponse {
   fn index(&self) -> u64 {
     Python::with_gil(|py| {
-      let py_result: &PyAny = self.0.as_ref(py).call_method("index", (), None).unwrap();
+      let py_result: &PyAny = self.0.as_ref().as_ref(py).call_method("index", (), None).unwrap();
 
       if py_result.get_type().name().unwrap() != "int" {
         panic!(
@@ -45,15 +49,79 @@ impl RFinateStateMachineResponse for FinateStateMachineResponse {
 #[pymethods]
 impl FinateStateMachineResponse {
   #[new]
-  pub fn new(model: Py<PyAny>) -> Self {
-    Self(model)
+  pub fn new(resp: Py<PyAny>) -> Self {
+    Self(Arc::new(resp))
   }
 }
 
+#[derive(Clone)]
+#[pyclass]
+pub struct ApplyBatchResponse(RApplyBatchResponse<FinateStateMachineResponse>);
+
+impl From<ApplyBatchResponse> for RApplyBatchResponse<FinateStateMachineResponse> {
+  fn from(value: ApplyBatchResponse) -> Self {
+    value.0
+  }
+}
+
+
+#[pymethods]
+impl ApplyBatchResponse {
+  #[new]
+  pub fn new(resps: SmallVec<[FinateStateMachineResponse; 2]>) -> Self {
+    Self(resps.into())
+  }
+}
+
+#[derive(Clone)]
+#[pyclass]
+pub struct FinateStateMachineSnapshotError(Arc<PyErr>);
+
+impl From<PyErr> for FinateStateMachineSnapshotError {
+  fn from(value: PyErr) -> Self {
+    Self(Arc::new(value))
+  }
+}
+
+impl core::fmt::Debug for FinateStateMachineSnapshotError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{:?}", &self.0)
+  }
+}
+
+impl core::fmt::Display for FinateStateMachineSnapshotError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", &self.0)
+  }
+}
+
+impl std::error::Error for FinateStateMachineSnapshotError {}
+
+#[pymethods]
+impl FinateStateMachineSnapshotError {
+  #[new]
+  pub fn new(err: &str) -> Self {
+    Self(Arc::new(PyErr::new::<PyIOError, _>(err.to_string())))
+  }
+
+  fn __str__(&self) -> String {
+    self.0.to_string()
+  }
+
+  fn __repr__(&self) -> String {
+    format!("{:?}", self)
+  }
+}
+
+
 #[pymodule]
-pub fn fsm(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn fsm(py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<FinateStateMachineResponse>()?;
+  m.add_class::<ApplyBatchResponse>()?;
   m.add_function(wrap_pyfunction!(index_wrapper, m)?)?;
+  #[cfg(feature = "tokio")]
+  m.add_submodule(self::tokio::submodule(py)?)?;
+
   Ok(())
 }
 

@@ -1,5 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+use ::either::Either;
 use nodecraft::{NodeAddress as RNodeAddress, NodeId as RNodeId, Transformable};
 use pyo3::{exceptions::PyTypeError, pyclass::CompareOp, types::PyModule, *};
 use ruraft_core::{
@@ -7,8 +8,11 @@ use ruraft_core::{
     Membership as RMembership, MembershipBuilder as RMembershipBuilder, Server as RServer,
     ServerSuffrage as RServerSuffrage,
   },
+  storage::{CommittedLog as RCommittedLog, CommittedLogKind as RCommittedLogKind},
   Node as RNode,
 };
+
+use crate::RaftData;
 
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
 #[pyclass]
@@ -359,8 +363,13 @@ impl Server {
   }
 
   #[inline]
-  pub fn __str__(&self) -> String {
-    format!("{:?}", self.0)
+  pub fn __str__(&self) -> PyResult<String> {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0)
+        .map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self.0))
+    }
   }
 
   #[inline]
@@ -403,6 +412,7 @@ impl MembershipBuilder {
       .insert(server.into())
       .map_err(|e| PyTypeError::new_err(e.to_string()))
   }
+
 
   /// Inserts a collection of servers into the membership.
   ///
@@ -482,6 +492,12 @@ impl From<Membership> for RMembership<RNodeId, RNodeAddress> {
   }
 }
 
+impl From<RMembership<RNodeId, RNodeAddress>> for Membership {
+  fn from(m: RMembership<RNodeId, RNodeAddress>) -> Self {
+    Self(m)
+  }
+}
+
 #[pymethods]
 impl Membership {
   /// Returns the number of servers in the membership.
@@ -538,12 +554,17 @@ impl Membership {
 
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
-    Ok(format!("{}", self.0))
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0)
+        .map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self.0))
+    }
   }
 
   #[inline]
-  pub fn __repr__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self.0))
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self.0)
   }
 
   pub fn __eq__(&self, other: &Self) -> bool {
@@ -555,6 +576,65 @@ impl Membership {
   }
 }
 
+/// A committed log, which may contains two kinds of data: a bytes array or [`Membership`].
+#[pyclass]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CommittedLog(RCommittedLog<RNodeId, RNodeAddress, RaftData>);
+
+impl From<RCommittedLog<RNodeId, RNodeAddress, RaftData>> for CommittedLog {
+  fn from(value: RCommittedLog<RNodeId, RNodeAddress, RaftData>) -> Self {
+    Self(value)
+  }
+}
+
+#[pymethods]
+impl CommittedLog {
+  #[getter]
+  pub fn term(&self) -> u64 {
+    self.0.term()
+  }
+
+  #[getter]
+  pub fn index(&self) -> u64 {
+    self.0.index()
+  }
+
+  #[getter]
+  pub fn data(&self) -> Either<RaftData, Membership> {
+    match self.0.kind() {
+      RCommittedLogKind::Log(data) => Either::Left(data.as_ref().clone()),
+      RCommittedLogKind::Membership(membership) => Either::Right(membership.clone().into()),
+    }
+  }
+
+  #[inline]
+  pub fn __str__(&self) -> PyResult<String> {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0)
+        .map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self.0))
+    }
+  }
+
+  #[inline]
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self.0)
+  }
+
+  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+    match op {
+      CompareOp::Lt => self.0 < other.0,
+      CompareOp::Le => self.0 <= other.0,
+      CompareOp::Eq => self.0 == other.0,
+      CompareOp::Ne => self.0 != other.0,
+      CompareOp::Gt => self.0 > other.0,
+      CompareOp::Ge => self.0 >= other.0,
+    }
+  }
+}
+
+
 #[pymodule]
 pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<NodeId>()?;
@@ -564,6 +644,7 @@ pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<Server>()?;
   m.add_class::<MembershipBuilder>()?;
   m.add_class::<Membership>()?;
+  m.add_class::<CommittedLog>()?;
   Ok(())
 }
 

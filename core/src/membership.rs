@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// The suffrage of a server.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
   feature = "serde",
   derive(serde_repr::Serialize_repr, serde_repr::Deserialize_repr)
@@ -29,6 +29,12 @@ pub enum ServerSuffrage {
   Voter,
   /// The server cannot vote.
   Nonvoter,
+}
+
+impl core::fmt::Debug for ServerSuffrage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(self.as_str())
+  }
 }
 
 /// Returend when the fail to parse [`ServerSuffrage`].

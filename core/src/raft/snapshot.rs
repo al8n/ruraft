@@ -9,7 +9,7 @@ use std::{
 
 use agnostic::Runtime;
 use atomic::Atomic;
-use futures::{channel::oneshot, AsyncWriteExt, FutureExt};
+use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use wg::AsyncWaitGroup;
 
@@ -31,7 +31,7 @@ pub(crate) use monitor::*;
 
 pub(super) struct SnapshotRunner<F, S, T, R>
 where
-  F: FinateStateMachine<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address>,
+  F: FinateStateMachine<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   S: Storage<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
@@ -39,7 +39,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   R: Runtime,
@@ -87,6 +86,7 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
+    Runtime = R,
   >,
   S: Storage<
     Id = T::Id,
@@ -113,7 +113,7 @@ where
 
             // Trigger a snapshot
             let (snapshot, res) = self.take_snapshot().await;
-            if let Some(snapshot) = snapshot {
+            if let Some(mut snapshot) = snapshot {
               if let Err(e) = snapshot.release().await {
                 tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to release finate state machine's snapshot");
               }
@@ -126,7 +126,7 @@ where
             // User-triggered, run immediately
             Ok(tx) => {
               let (snapshot, res) = self.take_snapshot().await;
-              if let Some(snapshot) = snapshot {
+              if let Some(mut snapshot) = snapshot {
                 if let Err(e) = snapshot.release().await {
                   tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to release finate state machine's snapshot");
                 }
@@ -232,7 +232,7 @@ where
             tracing::info!(target = "ruraft.snapshot.runner", index = %snap.index, "starting snapshot up");
             #[cfg(feature = "metrics")]
             let create_start = Instant::now();
-            let mut sink = match self.store.snapshot_store().create(
+            let sink = match self.store.snapshot_store().create(
               Default::default(),
               snap.term,
               snap.index,
@@ -256,10 +256,7 @@ where
             #[cfg(feature = "metrics")]
             let persist_start = Instant::now();
             let id = sink.id();
-            if let Err(e) = snap.snapshot.persist(&mut sink).await {
-              if let Err(e) = sink.cancel().await {
-                tracing::error!(target = "ruraft.snapshot.persist", err=%e, "failed to cancel snapshot");
-              }
+            if let Err(e) = snap.snapshot.persist(sink).await {
               return (Some(snap.snapshot), Err(Error::fsm(<F::Error as FinateStateMachineError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")))));
             }
 
@@ -269,10 +266,6 @@ where
               histogram.record(persist_start.elapsed().as_millis() as f64);
             }
 
-            // Close and check for error.
-            if let Err(e) = sink.close().await {
-              return (Some(snap.snapshot), Err(Error::storage(<S::Error as StorageError>::snapshot(<S::Snapshot as SnapshotStorage>::Error::from(e)).with_message(Cow::Borrowed("failed to close snapshot")))));
-            }
             // Update the last stable snapshot info.
             self.state.set_last_snapshot(LastSnapshot::new(snap.index, snap.term));
 

@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-use core::panic;
 use std::{
   borrow::Cow,
   collections::HashSet,
@@ -25,7 +24,7 @@ use ruraft_core::{
   },
   transport::{Transformable, Transport, Wire},
   FinateStateMachine, FinateStateMachineError, FinateStateMachineResponse,
-  FinateStateMachineSnapshot, RaftCore, Role,
+  FinateStateMachineSnapshot, RaftCore, Role, ApplyBatchResponse,
 };
 use ruraft_memory::{
   storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
@@ -206,9 +205,9 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
   async fn apply_batch(
     &self,
     logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
-  ) -> Result<Vec<Self::Response>, Self::Error> {
+  ) -> Result<ApplyBatchResponse<Self::Response>, Self::Error> {
     let mut inner = self.inner.lock().await;
-    let mut responses = Vec::new();
+    let mut responses = ApplyBatchResponse::new();
     for log in logs {
       inner.logs.push(log.clone());
       responses.push(MockFSMResponse(inner.logs.len() as u64));
@@ -231,7 +230,7 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
   /// NOTE: This is exposed for middleware testing purposes and is not a stable API
   async fn restore(
     &self,
-    _snapshot: impl futures::prelude::AsyncRead + Unpin,
+    _snapshot: impl futures::AsyncRead + Send + Unpin,
   ) -> Result<(), Self::Error> {
     Ok(())
   }
@@ -254,7 +253,7 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
 
   type Runtime = R;
 
-  async fn persist(&self, sink: &mut impl SnapshotSink) -> Result<(), Self::Error> {
+  async fn persist(&self, mut sink: impl SnapshotSink) -> Result<(), Self::Error> {
     let encode_size = self.logs[..self.max_index as usize]
       .iter()
       .map(|l| l.encoded_len())
@@ -265,10 +264,29 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
     for log in &self.logs[..self.max_index as usize] {
       offset += log.encode(&mut buf[offset..])?;
     }
-    sink.write_all(&buf[..offset]).await.map_err(Into::into)
+    match sink.write_all(&buf[..offset]).await {
+      Ok(_) => {
+        sink.flush().await?;
+        if let Err(e) = sink.close().await {
+          tracing::error!(target = "ruraft.tests", err=%e, "failed to close snapshot sink");
+        }
+        Ok(())
+      },
+      Err(err) => {
+        if let Err(e) = sink.cancel().await {
+          tracing::error!(target = "ruraft.tests", err=%e, "failed to cancel snapshot sink");
+        }
+
+        if let Err(e) = sink.close().await {
+          tracing::error!(target = "ruraft.tests", err=%e, "failed to close snapshot sink");
+        }
+
+        Err(MockFSMError::from(err))
+      },
+    }
   }
 
-  async fn release(self) -> Result<(), Self::Error> {
+  async fn release(&mut self) -> Result<(), Self::Error> {
     Ok(())
   }
 }
