@@ -20,7 +20,7 @@ pub fn storage(py: Python, m: &PyModule) -> PyResult<()> {
     let astd = PyModule::new(py, "async_std")?;
     astd.add_class::<snapshot::async_std::FileSnapshotSink>()?;
   }
- 
+
   Ok(())
 }
 

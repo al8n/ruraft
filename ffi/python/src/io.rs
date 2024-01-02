@@ -1,9 +1,5 @@
-
+use pyo3::{exceptions::PyIOError, prelude::*};
 use std::sync::Arc;
-use async_lock::Mutex;
-use futures::{AsyncRead, AsyncReadExt};
-use pyo3::{exceptions::PyIOError, prelude::*, types::PyByteArray, ffi::PyByteArrayObject};
-
 
 #[derive(Clone)]
 #[pyclass]
@@ -35,26 +31,6 @@ impl IoError {
     ))))
   }
 }
-
-#[pyclass]
-pub struct Reader(Arc<Mutex<dyn AsyncRead + Send + Unpin>>);
-
-#[pymethods]
-impl Reader {
-  fn read(&self, py: Python, buf: &PyByteArray) {
-    let this = self.0.clone();
-    pyo3_asyncio::tokio::future_into_py(py, async move {
-      let mut reader = this.lock().await;
-      let readed = reader
-        .read(unsafe { buf.as_bytes_mut() })
-        .await
-        .map_err(|err| PyErr::new::<PyIOError, _>(err.to_string()))?;
-
-      Ok(())
-    });
-  }
-}
-
 
 #[pymodule]
 pub fn io(_py: Python, m: &PyModule) -> PyResult<()> {

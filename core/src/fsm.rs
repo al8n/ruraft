@@ -1,11 +1,11 @@
 use std::{borrow::Cow, future::Future};
 
-use futures::AsyncRead;
+// use futures::AsyncRead;
 use nodecraft::{Address, Id};
 use smallvec::SmallVec;
 
 use crate::{
-  storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
+  storage::{CommittedLog, CommittedLogBatch, SnapshotSink, SnapshotSource},
   Data,
 };
 
@@ -19,11 +19,11 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
-  /// 
+  ///
   /// **Note:**
-  /// 
+  ///
   /// - [`SnapshotSink::cancel`](crate::storage::SnapshotSink::cancel) should be invoked on failure.
-  /// - Whether the implementation return `Ok` or `Err`, at the end of the fn, 
+  /// - Whether the implementation return `Ok` or `Err`, at the end of the fn,
   /// [`close`](futures::AsyncWriteExt::close) on `sink` should be invoked.
   fn persist(
     &self,
@@ -115,7 +115,6 @@ impl<R> IntoIterator for ApplyBatchResponse<R> {
   }
 }
 
-
 /// Implemented by clients to make use of the replicated log.
 #[auto_impl::auto_impl(Box, Arc)]
 pub trait FinateStateMachine: Send + Sync + 'static {
@@ -182,6 +181,6 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// state before restoring the snapshot.
   fn restore(
     &self,
-    snapshot: impl AsyncRead + Send + Unpin,
+    snapshot: impl SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

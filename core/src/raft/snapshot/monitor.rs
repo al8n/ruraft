@@ -10,6 +10,8 @@ use agnostic::Runtime;
 use futures::{AsyncRead, FutureExt, StreamExt};
 use wg::AsyncWaitGroup;
 
+use crate::storage::SnapshotSource;
+
 const SNAPSHOT_RESTORE_MONITOR_INTERVAL: Duration = Duration::from_secs(10);
 
 pub(crate) struct SnapshotRestoreMonitor<R: Runtime> {
@@ -78,13 +80,13 @@ impl<R: Runtime> SnapshotRestoreMonitor<R> {
 }
 
 #[pin_project::pin_project]
-pub(crate) struct CountingReader<R: AsyncRead> {
+pub(crate) struct CountingSnapshotSourceReader<R> {
   #[pin]
   r: R,
   bytes: Arc<AtomicU64>,
 }
 
-impl<R: AsyncRead> From<R> for CountingReader<R> {
+impl<R> From<R> for CountingSnapshotSourceReader<R> {
   fn from(r: R) -> Self {
     Self {
       r,
@@ -93,13 +95,13 @@ impl<R: AsyncRead> From<R> for CountingReader<R> {
   }
 }
 
-impl<R: AsyncRead> CountingReader<R> {
+impl<R> CountingSnapshotSourceReader<R> {
   pub fn ctr(&self) -> Arc<AtomicU64> {
     self.bytes.clone()
   }
 }
 
-impl<R: AsyncRead> AsyncRead for CountingReader<R> {
+impl<R: AsyncRead> AsyncRead for CountingSnapshotSourceReader<R> {
   fn poll_read(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,
@@ -112,5 +114,17 @@ impl<R: AsyncRead> AsyncRead for CountingReader<R> {
         num
       })
     })
+  }
+}
+
+impl<R: SnapshotSource> SnapshotSource for CountingSnapshotSourceReader<R> {
+  type Runtime = R::Runtime;
+
+  type Id = R::Id;
+
+  type Address = R::Address;
+
+  fn meta(&self) -> &crate::storage::SnapshotMeta<Self::Id, Self::Address> {
+    self.r.meta()
   }
 }

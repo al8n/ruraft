@@ -1,5 +1,5 @@
 use byteorder::{ByteOrder, NetworkEndian};
-use nodecraft::Transformable;
+use nodecraft::{CheapClone, Transformable};
 use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
 use crate::{
@@ -97,8 +97,18 @@ impl<I, A> PartialEq<SnapshotId> for SnapshotMeta<I, A> {
   getters(vis_all = "pub"),
   setters(vis_all = "pub", prefix = "with", style = "ref")
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(
+    rename_all = "snake_case",
+    bound(
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>",
+    )
+  )
+)]
 pub struct SnapshotMeta<I, A> {
   /// The version number of the snapshot metadata. This does not cover
   /// the application's data in the snapshot, that should be versioned
@@ -153,14 +163,19 @@ pub struct SnapshotMeta<I, A> {
     ),
     setter(attrs(doc = "Sets the membership at the time when the snapshot was taken."))
   )]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
   membership: Membership<I, A>,
 }
+
+impl<I, A> Clone for SnapshotMeta<I, A> {
+  fn clone(&self) -> Self {
+    Self {
+      membership: self.membership.clone(),
+      ..*self
+    }
+  }
+}
+
+impl<I, A> CheapClone for SnapshotMeta<I, A> {}
 
 impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for SnapshotMeta<I, A> {
   fn eq(&self, other: &Self) -> bool {
@@ -175,6 +190,22 @@ impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for SnapshotMeta<I, A> {
 }
 
 impl<I: core::hash::Hash + Eq, A: PartialEq> Eq for SnapshotMeta<I, A> {}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialOrd for SnapshotMeta<I, A> {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> Ord for SnapshotMeta<I, A> {
+  fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    self
+      .term
+      .cmp(&other.term)
+      .then_with(|| self.index.cmp(&other.index))
+      .then_with(|| self.timestamp.cmp(&other.timestamp))
+  }
+}
 
 impl<I, A> SnapshotMeta<I, A> {
   /// Create a snapshot meta with a [`Membership`](crate::membership::Membership), and keep

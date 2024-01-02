@@ -1,17 +1,17 @@
 use std::{borrow::Cow, sync::Arc};
 
-use crate::RaftData;
+use crate::{RaftData, storage::snapshot::async_std::FileSnapshotSource};
 
 use super::*;
+use crate::storage::snapshot::tokio::FileSnapshotSink;
 use agnostic::tokio::TokioRuntime;
 use async_lock::Mutex;
 use futures::AsyncWriteExt;
 use pyo3::types::PyString;
 use pyo3_asyncio::tokio::into_future;
-use ruraft_core::ApplyBatchResponse;
+use ruraft_core::{ApplyBatchResponse, storage::SnapshotSource};
 use smallvec::SmallVec;
 use smol_str::SmolStr;
-use crate::storage::snapshot::tokio::FileSnapshotSink;
 
 #[derive(Clone)]
 #[pyclass]
@@ -21,7 +21,10 @@ impl RFinateStateMachineSnapshot for FinateStateMachineSnapshot {
   type Error = FinateStateMachineSnapshotError;
   type Runtime = TokioRuntime;
 
-  async fn persist(&self, sink: impl SnapshotSink<Runtime = Self::Runtime>) -> Result<(), Self::Error> {
+  async fn persist(
+    &self,
+    sink: impl SnapshotSink<Runtime = Self::Runtime>,
+  ) -> Result<(), Self::Error> {
     let id = sink.id();
     let sink = Arc::new(Mutex::new(sink));
     let snap = FileSnapshotSink::new(id.into(), sink.clone());
@@ -38,20 +41,20 @@ impl RFinateStateMachineSnapshot for FinateStateMachineSnapshot {
               tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to close snapshot sink.");
             }
             Ok(())
-          },
+          }
           Err(err) => {
             if let Err(e) = sink.cancel().await {
               tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to cancel snapshot sink.");
             }
-    
+
             if let Err(e) = sink.close().await {
               tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to close snapshot sink.");
             }
-    
+
             Err(err.into())
           }
         }
-      },
+      }
       Err(err) => {
         let mut sink = sink.lock().await;
         if let Err(e) = sink.cancel().await {
@@ -63,17 +66,15 @@ impl RFinateStateMachineSnapshot for FinateStateMachineSnapshot {
         }
 
         Err(err.into())
-      },
+      }
     }
   }
 
   async fn release(&mut self) -> Result<(), Self::Error> {
-    Python::with_gil(|py| {
-      into_future(self.0.as_ref().as_ref(py).call_method0("release")?)
-    })?
-    .await
-    .map(|_| ())
-    .map_err(Into::into)
+    Python::with_gil(|py| into_future(self.0.as_ref().as_ref(py).call_method0("release")?))?
+      .await
+      .map(|_| ())
+      .map_err(Into::into)
   }
 }
 
@@ -193,14 +194,10 @@ impl RFinateStateMachine for FinateStateMachine {
   ) -> Result<Self::Response, Self::Error> {
     Python::with_gil(|py| {
       let log = crate::types::CommittedLog::from(log);
-      into_future(self.0.as_ref(py).call_method1("apply", (log,),)?)
+      into_future(self.0.as_ref(py).call_method1("apply", (log,))?)
     })?
     .await
-    .and_then(|res| {
-      Python::with_gil(|py| {
-        res.extract::<FinateStateMachineResponse>(py)
-      })
-    })
+    .and_then(|res| Python::with_gil(|py| res.extract::<FinateStateMachineResponse>(py)))
     .map_err(Into::into)
   }
 
@@ -218,15 +215,12 @@ impl RFinateStateMachine for FinateStateMachine {
     logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
   ) -> Result<ApplyBatchResponse<Self::Response>, Self::Error> {
     Python::with_gil(|py| {
-      let logs: SmallVec<[crate::types::CommittedLog; 4]> = logs.into_iter().map(|log| log.into()).collect();
-      into_future(self.0.as_ref(py).call_method1("apply_batch", (logs,),)?)
+      let logs: SmallVec<[crate::types::CommittedLog; 4]> =
+        logs.into_iter().map(|log| log.into()).collect();
+      into_future(self.0.as_ref(py).call_method1("apply_batch", (logs,))?)
     })?
     .await
-    .and_then(|res| {
-      Python::with_gil(|py| {
-        res.extract::<super::ApplyBatchResponse>(py)
-      })
-    })
+    .and_then(|res| Python::with_gil(|py| res.extract::<super::ApplyBatchResponse>(py)))
     .map(Into::into)
     .map_err(Into::into)
   }
@@ -244,23 +238,23 @@ impl RFinateStateMachine for FinateStateMachine {
   /// be called concurrently with FSMSnapshot.Persist. This means the FSM should
   /// be implemented to allow for concurrent updates while a snapshot is happening.
   async fn snapshot(&self) -> Result<Self::Snapshot, Self::Error> {
-    Python::with_gil(|py| {
-      into_future(self.0.as_ref(py).call_method0("snapshot")?)
-    })?
-    .await
-    .and_then(|res| {
-      Python::with_gil(|py| {
-        res.extract::<FinateStateMachineSnapshot>(py)
-      })
-    })
-    .map_err(Into::into)
+    Python::with_gil(|py| into_future(self.0.as_ref(py).call_method0("snapshot")?))?
+      .await
+      .and_then(|res| Python::with_gil(|py| res.extract::<FinateStateMachineSnapshot>(py)))
+      .map_err(Into::into)
   }
 
   /// Used to restore an FSM from a snapshot. It is not called
   /// concurrently with any other command. The FSM must discard all previous
   /// state before restoring the snapshot.
-  async fn restore(&self, snapshot: impl AsyncRead + Send + Unpin) -> Result<(), Self::Error> {
-    todo!()
+  async fn restore(&self, snapshot: impl SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>,) -> Result<(), Self::Error> {
+    let source = FileSnapshotSource::new(snapshot.meta().clone(), Arc::new(Mutex::new(snapshot)));
+    Python::with_gil(|py| {
+      into_future(self.0.as_ref(py).call_method1("restore", (source,),)?)
+    })?
+    .await
+    .map(|_| ())
+    .map_err(Into::into)
   }
 }
 

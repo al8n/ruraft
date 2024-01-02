@@ -17,6 +17,7 @@ use ruraft_core::{
   options::SnapshotVersion,
   storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
   transport::{Address, Id, Transformable},
+  CheapClone,
 };
 use ruraft_utils::{io::ChecksumableWriter, make_dir_all};
 
@@ -454,16 +455,59 @@ where
 /// on disk so that we can verify the snapshot.
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-struct FileSnapshotMeta<I, A> {
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      flatten,
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
+#[cfg_attr(
+  feature = "serde",
+  serde(
+    rename_all = "snake_case",
+    bound(
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>",
     )
-  )]
+  )
+)]
+pub struct FileSnapshotMeta<I, A> {
+  #[cfg_attr(feature = "serde", serde(flatten))]
   meta: SnapshotMeta<I, A>,
   crc: u64,
+}
+
+impl<I, A> FileSnapshotMeta<I, A> {
+  /// Returns the checksum of the snapshot file.
+  #[inline]
+  pub const fn checksum(&self) -> u64 {
+    self.crc
+  }
+}
+
+impl<I, A> core::ops::Deref for FileSnapshotMeta<I, A> {
+  type Target = SnapshotMeta<I, A>;
+
+  fn deref(&self) -> &Self::Target {
+    &self.meta
+  }
+}
+
+impl<I, A> Clone for FileSnapshotMeta<I, A> {
+  fn clone(&self) -> Self {
+    Self {
+      meta: self.meta.clone(),
+      crc: self.crc,
+    }
+  }
+}
+
+impl<I, A> CheapClone for FileSnapshotMeta<I, A> {}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialOrd for FileSnapshotMeta<I, A> {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> Ord for FileSnapshotMeta<I, A> {
+  fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    self.meta.cmp(&other.meta)
+  }
 }
 
 impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for FileSnapshotMeta<I, A> {
@@ -505,6 +549,7 @@ where
   type Runtime = R;
   type Id = I;
   type Address = A;
+
   fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
     &self.meta.meta
   }

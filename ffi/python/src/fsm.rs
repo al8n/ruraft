@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use futures::AsyncRead;
 use nodecraft::{NodeAddress, NodeId};
-use pyo3::{prelude::*, exceptions::PyIOError};
+use pyo3::{exceptions::PyIOError, prelude::*};
 use ruraft_core::{
   storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
-  FinateStateMachine as RFinateStateMachine, FinateStateMachineError as RFinateStateMachineError,
+  ApplyBatchResponse as RApplyBatchResponse, FinateStateMachine as RFinateStateMachine,
+  FinateStateMachineError as RFinateStateMachineError,
   FinateStateMachineResponse as RFinateStateMachineResponse,
   FinateStateMachineSnapshot as RFinateStateMachineSnapshot,
-  ApplyBatchResponse as RApplyBatchResponse,
 };
 use smallvec::SmallVec;
 
@@ -24,7 +24,6 @@ pub fn index_wrapper(model: &FinateStateMachineResponse) {
   index(model);
 }
 
-
 #[derive(Clone)]
 #[pyclass]
 pub struct FinateStateMachineResponse(Arc<Py<PyAny>>);
@@ -32,7 +31,12 @@ pub struct FinateStateMachineResponse(Arc<Py<PyAny>>);
 impl RFinateStateMachineResponse for FinateStateMachineResponse {
   fn index(&self) -> u64 {
     Python::with_gil(|py| {
-      let py_result: &PyAny = self.0.as_ref().as_ref(py).call_method("index", (), None).unwrap();
+      let py_result: &PyAny = self
+        .0
+        .as_ref()
+        .as_ref(py)
+        .call_method("index", (), None)
+        .unwrap();
 
       if py_result.get_type().name().unwrap() != "int" {
         panic!(
@@ -63,7 +67,6 @@ impl From<ApplyBatchResponse> for RApplyBatchResponse<FinateStateMachineResponse
     value.0
   }
 }
-
 
 #[pymethods]
 impl ApplyBatchResponse {
@@ -112,7 +115,6 @@ impl FinateStateMachineSnapshotError {
     format!("{:?}", self)
   }
 }
-
 
 #[pymodule]
 pub fn fsm(py: Python, m: &PyModule) -> PyResult<()> {

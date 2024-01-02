@@ -23,8 +23,8 @@ use ruraft_core::{
     CommittedLog, CommittedLogBatch, CommittedLogTransformError, RaftStorage, SnapshotSink,
   },
   transport::{Transformable, Transport, Wire},
-  FinateStateMachine, FinateStateMachineError, FinateStateMachineResponse,
-  FinateStateMachineSnapshot, RaftCore, Role, ApplyBatchResponse,
+  ApplyBatchResponse, FinateStateMachine, FinateStateMachineError, FinateStateMachineResponse,
+  FinateStateMachineSnapshot, RaftCore, Role,
 };
 use ruraft_memory::{
   storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
@@ -271,7 +271,7 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
           tracing::error!(target = "ruraft.tests", err=%e, "failed to close snapshot sink");
         }
         Ok(())
-      },
+      }
       Err(err) => {
         if let Err(e) = sink.cancel().await {
           tracing::error!(target = "ruraft.tests", err=%e, "failed to cancel snapshot sink");
@@ -282,7 +282,7 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
         }
 
         Err(MockFSMError::from(err))
-      },
+      }
     }
   }
 

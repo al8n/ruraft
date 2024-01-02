@@ -26,7 +26,7 @@ use crate::metrics::SaturationMetric;
 
 use super::{
   runner::{BatchCommit, CommitTuple},
-  snapshot::{CountingReader, SnapshotRestoreMonitor},
+  snapshot::{CountingSnapshotSourceReader, SnapshotRestoreMonitor},
 };
 
 pub(crate) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
@@ -263,7 +263,7 @@ where
     #[cfg(feature = "metrics")]
     let start = Instant::now();
 
-    let cr = CountingReader::from(source);
+    let cr = CountingSnapshotSourceReader::from(source);
     let ctr = cr.ctr();
     let monitor = SnapshotRestoreMonitor::<R>::new(ctr, snapshot_size, false);
     match fsm.restore(cr).await {

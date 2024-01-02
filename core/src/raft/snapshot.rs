@@ -31,7 +31,11 @@ pub(crate) use monitor::*;
 
 pub(super) struct SnapshotRunner<F, S, T, R>
 where
-  F: FinateStateMachine<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
+  F: FinateStateMachine<
+    Id = T::Id,
+    Address = <T::Resolver as AddressResolver>::Address,
+    Runtime = R,
+  >,
   S: Storage<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,

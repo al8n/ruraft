@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
 use super::{
-  api::ApplySender, fsm::FSMRequest, state::LastLog, CountingReader, Leader,
+  api::ApplySender, fsm::FSMRequest, state::LastLog, CountingSnapshotSourceReader, Leader,
   MembershipChangeRequest, Observer, ObserverId, OptionalContact, Shutdown,
 };
 use crate::{
@@ -723,7 +723,7 @@ where
 
     // Separately track the progress of streaming a snapshot over the network
     // because this too can take a long time.
-    let mut counting_rpc_reader = CountingReader::from(reader);
+    let mut counting_rpc_reader = CountingSnapshotSourceReader::from(reader);
 
     // Spill the remote snapshot to disk
     let ctr = counting_rpc_reader.ctr();

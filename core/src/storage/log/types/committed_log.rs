@@ -74,13 +74,21 @@ impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for CommittedLogKind<I, A, D> {}
 pub struct CommittedLog<I, A, D> {
   /// The index of the log entry.
   #[viewit(
-    getter(const, style="move", attrs(doc = "Returns the index of the log entry."),),
+    getter(
+      const,
+      style = "move",
+      attrs(doc = "Returns the index of the log entry."),
+    ),
     setter(attrs(doc = "Sets the index of the log entry."),)
   )]
   index: u64,
   /// The term of the log entry.
   #[viewit(
-    getter(const, style="move", attrs(doc = "Returns the term of the log entry."),),
+    getter(
+      const,
+      style = "move",
+      attrs(doc = "Returns the term of the log entry."),
+    ),
     setter(attrs(doc = "Sets the term of the log entry."),)
   )]
   term: u64,

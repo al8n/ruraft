@@ -53,7 +53,7 @@ use observer::*;
 mod runner;
 
 mod snapshot;
-use snapshot::{CountingReader, SnapshotRestoreMonitor};
+use snapshot::{CountingSnapshotSourceReader, SnapshotRestoreMonitor};
 
 mod state;
 pub use state::*;
@@ -572,7 +572,7 @@ where
       // server instance. If the same process will eventually become a Raft peer
       // then it will call NewRaft and restore again from disk then which will
       // report metrics.
-      let cr = CountingReader::from(source);
+      let cr = CountingSnapshotSourceReader::from(source);
       let ctr = cr.ctr();
       let monitor = SnapshotRestoreMonitor::<R>::new(ctr, snap.size, false);
       let rst = fsm.restore(cr).await;

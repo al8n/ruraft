@@ -365,8 +365,7 @@ impl Server {
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
     if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0)
-        .map_err(|e| PyTypeError::new_err(e.to_string()))
+      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
     } else {
       Ok(format!("{:?}", self.0))
     }
@@ -412,7 +411,6 @@ impl MembershipBuilder {
       .insert(server.into())
       .map_err(|e| PyTypeError::new_err(e.to_string()))
   }
-
 
   /// Inserts a collection of servers into the membership.
   ///
@@ -555,8 +553,7 @@ impl Membership {
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
     if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0)
-        .map_err(|e| PyTypeError::new_err(e.to_string()))
+      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
     } else {
       Ok(format!("{:?}", self.0))
     }
@@ -599,7 +596,6 @@ impl CommittedLog {
     self.0.index()
   }
 
-  #[getter]
   pub fn data(&self) -> Either<RaftData, Membership> {
     match self.0.kind() {
       RCommittedLogKind::Log(data) => Either::Left(data.as_ref().clone()),
@@ -610,8 +606,7 @@ impl CommittedLog {
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
     if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0)
-        .map_err(|e| PyTypeError::new_err(e.to_string()))
+      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
     } else {
       Ok(format!("{:?}", self.0))
     }
@@ -633,7 +628,6 @@ impl CommittedLog {
     }
   }
 }
-
 
 #[pymodule]
 pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
