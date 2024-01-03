@@ -192,8 +192,8 @@ pub trait Transport: Send + Sync + 'static {
   /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
 
-  /// Provides the concrete network address for peers in the Raft cluster to communicate with.
-  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress;
+  /// Provides the address this transport is binding to.
+  fn bind_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress;
 
   /// Provides the protocol version used by the transport.
   fn version(&self) -> ProtocolVersion;

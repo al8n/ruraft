@@ -28,11 +28,13 @@ redb = ["ruraft-lightwal/redb"]
 [dependencies]
 agnostic = { workspace = true }
 async-lock = { workspace = true }
+chrono = "0.4"
 either = { version = "1", features = ["serde"] }
 futures = { workspace = true }
 indexmap = "2"
 nodecraft = { workspace = true }
-pyo3 = { version = "0.20", features = ["smallvec", "indexmap", "either", "experimental-inspect"] }
+paste = "1"
+pyo3 = { version = "0.20", features = ["smallvec", "indexmap", "either", "experimental-inspect", "chrono"] }
 pyo3-asyncio = { version = "0.20", features = ["attributes"] }
 ruraft-core = { path = "../../core" }
 ruraft-lightwal = { path = "../../storage/lightwal" }

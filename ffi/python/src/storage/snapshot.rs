@@ -1,8 +1,12 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+  hash::{DefaultHasher, Hash, Hasher},
+  path::PathBuf,
+};
 
 use nodecraft::{NodeAddress, NodeId};
 use pyo3::{exceptions::PyTypeError, prelude::*, pyclass::CompareOp};
-use ruraft_core::storage::{SnapshotId as RSnapshotId, SnapshotMeta};
+use ruraft_core::storage::{SnapshotId as RSnapshotId, SnapshotMeta as RSnapshotMeta};
+use ruraft_snapshot::sync::FileSnapshotStorageOptions as RFileSnapshotStorageOptions;
 
 #[derive(Debug, Clone, Copy)]
 #[pyclass]
@@ -60,10 +64,10 @@ impl SnapshotId {
 /// The meta data for the snapshot file
 #[derive(Clone)]
 #[pyclass]
-pub struct FileSnapshotMeta(SnapshotMeta<NodeId, NodeAddress>);
+pub struct SnapshotMeta(RSnapshotMeta<NodeId, NodeAddress>);
 
 #[pymethods]
-impl FileSnapshotMeta {
+impl SnapshotMeta {
   /// The term when the snapshot was taken.
   #[getter]
   pub fn term(&self) -> u64 {
@@ -125,19 +129,51 @@ impl FileSnapshotMeta {
   }
 }
 
+/// Configurations for `FileSnapshotStorageOptions`
+#[derive(Clone)]
+#[pyclass]
+pub struct FileSnapshotStorageOptions(RFileSnapshotStorageOptions);
+
+impl From<FileSnapshotStorageOptions> for RFileSnapshotStorageOptions {
+  fn from(value: FileSnapshotStorageOptions) -> Self {
+    value.0
+  }
+}
+
+#[pymethods]
+impl FileSnapshotStorageOptions {
+  /// Constructor
+  #[new]
+  pub fn new(path: PathBuf, retain: usize) -> Self {
+    Self(RFileSnapshotStorageOptions::new(path, retain))
+  }
+
+  /// Returns the the base directory for snapshots
+  #[getter]
+  pub fn path(&self) -> &PathBuf {
+    self.0.base()
+  }
+
+  /// Get the number of snapshots should be retained
+  #[getter]
+  pub fn retain(&mut self) -> usize {
+    self.0.retain()
+  }
+}
+
 macro_rules! impl_source_sink {
   () => {
     #[derive(Clone)]
     #[pyclass]
     pub struct FileSnapshotSink {
       id: SnapshotId,
-      sink: Arc<Mutex<dyn AsyncWrite + Send + Sync + Unpin + 'static>>,
+      sink: FearlessCell<Box<dyn AsyncWrite + Send + Sync + Unpin + 'static>>,
     }
 
     impl FileSnapshotSink {
-      pub fn new(
+      pub(crate) fn new(
         id: SnapshotId,
-        writer: Arc<Mutex<impl AsyncWrite + Send + Sync + Unpin + 'static>>,
+        writer: FearlessCell<Box<dyn AsyncWrite + Send + Sync + Unpin + 'static>>,
       ) -> Self {
         Self { id, sink: writer }
       }
@@ -149,12 +185,12 @@ macro_rules! impl_source_sink {
         let this = self.sink.clone();
         let buf = SmallVec::<[u8; INLINED_U8]>::from_slice(bytes.as_bytes());
         future_into_py(py, async move {
-          let mut sink = this.lock().await;
-          let readed = sink
+          let sink = unsafe { this.get_mut() };
+          let written = sink
             .write(&buf)
             .await
             .map_err(|err| PyErr::new::<PyIOError, _>(err.to_string()))?;
-          Ok(readed)
+          Ok(written)
         })
       }
 
@@ -162,7 +198,7 @@ macro_rules! impl_source_sink {
         let this = self.sink.clone();
         let buf = SmallVec::<[u8; INLINED_U8]>::from_slice(bytes.as_bytes());
         future_into_py(py, async move {
-          let mut sink = this.lock().await;
+          let sink = unsafe { this.get_mut() };
           sink
             .write_all(&buf)
             .await
@@ -180,14 +216,14 @@ macro_rules! impl_source_sink {
     #[derive(Clone)]
     #[pyclass]
     pub struct FileSnapshotSource {
-      meta: SnapshotMeta<NodeId, NodeAddress>,
-      source: Arc<Mutex<dyn AsyncRead + Send + Sync + Unpin + 'static>>,
+      meta: RSnapshotMeta<NodeId, NodeAddress>,
+      source: FearlessCell<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>>,
     }
 
     impl FileSnapshotSource {
-      pub fn new(
-        meta: SnapshotMeta<NodeId, NodeAddress>,
-        reader: Arc<Mutex<impl AsyncRead + Send + Sync + Unpin + 'static>>,
+      pub(crate) fn new(
+        meta: RSnapshotMeta<NodeId, NodeAddress>,
+        reader: FearlessCell<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>>,
       ) -> Self {
         Self {
           meta,
@@ -238,7 +274,7 @@ macro_rules! impl_source_sink {
       pub fn read<'a>(&'a self, py: Python<'a>, chunk_size: usize) -> PyResult<&'a PyAny> {
         let source = self.source.clone();
         future_into_py(py, async move {
-          let mut source = source.lock().await;
+          let source = unsafe { source.get_mut() };
           let mut buf: SmallVec<[u8; INLINED_U8]> = ::smallvec::smallvec![0; chunk_size];
           match source.read(&mut buf).await {
             Ok(_) => {
@@ -255,13 +291,13 @@ macro_rules! impl_source_sink {
         let source = self.source.clone();
         future_into_py(py, async move {
           let mut buf = SmallVec::<[u8; INLINED_U8]>::with_capacity(size);
-          source
-            .lock()
-            .await
+          unsafe { source
+            .get_mut()
             .read_exact(&mut buf)
             .await
             .map(|_| buf)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("{:?}", e)))
+          }
         })
       }
 
@@ -270,7 +306,7 @@ macro_rules! impl_source_sink {
       pub fn read_all<'a>(&'a self, py: Python<'a>, chunk_size: usize) -> PyResult<&'a PyAny> {
         let source = self.source.clone();
         future_into_py(py, async move {
-          let mut source = source.lock().await;
+          let source = unsafe { source.get_mut() };
           let mut buf: SmallVec<[u8; INLINED_U8]> = Default::default();
 
           loop {

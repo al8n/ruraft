@@ -270,7 +270,7 @@ where
   R: Runtime,
 {
   /// Create a new file snapshot storage from the given [`FileSnapshotStorageOptions`].
-  pub async fn new(opts: FileSnapshotStorageOptions) -> Result<Self, FileSnapshotStorageError>
+  pub fn new(opts: FileSnapshotStorageOptions) -> Result<Self, FileSnapshotStorageError>
   where
     Self: Sized,
   {
@@ -852,7 +852,6 @@ pub mod tests {
       #[cfg(any(feature = "test", test))]
       false,
     ))
-    .await
     .unwrap();
 
     snap
@@ -873,7 +872,6 @@ pub mod tests {
     let snap = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
       &dir, 3, false,
     ))
-    .await
     .unwrap();
 
     // check no snapshots
@@ -930,7 +928,6 @@ pub mod tests {
     let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir, 3, false),
     )
-    .await
     .unwrap();
 
     let mut snap = storage
@@ -958,7 +955,6 @@ pub mod tests {
     let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir, 2, false),
     )
-    .await
     .unwrap();
 
     for i in 10..15 {
@@ -1004,9 +1000,7 @@ pub mod tests {
 
     let Err(err) = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir2, 3, false),
-    )
-    .await
-    else {
+    ) else {
       panic!("should fail to use dir with bad perms");
     };
     assert!(matches!(
@@ -1028,9 +1022,8 @@ pub mod tests {
     drop(parent);
 
     FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
-      &dir2, 3, false,
+      dir2, 3, false,
     ))
-    .await
     .expect("should not fail when using non existing parent");
   }
 
@@ -1047,7 +1040,6 @@ pub mod tests {
     let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir, 3, false),
     )
-    .await
     .unwrap();
 
     let mut sink = storage

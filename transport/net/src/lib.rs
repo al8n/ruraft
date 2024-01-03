@@ -214,33 +214,10 @@ impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W> {
 }
 
 /// Encapsulates configuration for the network transport layer.
-#[viewit::viewit(setters(prefix = "with"))]
+#[viewit::viewit(getters(style = "move"), setters(prefix = "with"))]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NetTransportOptions<I: Id, A: Address> {
-  /// The local header of the header of the network transport.
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Returns the header of the network transport.")
-    ),
-    setter(attrs(doc = "Sets the header of the network transport."))
-  )]
-  header: Header<I, A>,
-
-  /// The address for the network transport layer bind to, if not set,
-  /// will use the address of the header to resolve an address by using
-  /// the [`AddressResolver`].
-  #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-  #[viewit(
-    getter(
-      const,
-      attrs(doc = "Returns the socket address of this network transport layer bind to.")
-    ),
-    setter(attrs(doc = "Sets the socket address of this network transport layer bind to."))
-  )]
-  advertise_addr: Option<SocketAddr>,
-
+pub struct NetTransportOptions {
   /// Controls how many connections we will pool
   #[viewit(
     getter(const, attrs(doc = "Returns how many connections we will pool.")),
@@ -287,36 +264,20 @@ pub struct NetTransportOptions<I: Id, A: Address> {
   timeout: Duration,
 }
 
-impl<I, A> Clone for NetTransportOptions<I, A>
-where
-  I: Id,
-  A: Address,
-{
-  fn clone(&self) -> Self {
-    Self {
-      max_pool: self.max_pool,
-      max_inflight_requests: self.max_inflight_requests,
-      timeout: self.timeout,
-      header: self.header.clone(),
-      advertise_addr: self.advertise_addr,
-    }
+impl Default for NetTransportOptions {
+  fn default() -> Self {
+    Self::new()
   }
 }
 
-impl<I, A> NetTransportOptions<I, A>
-where
-  I: Id,
-  A: Address,
-{
+impl NetTransportOptions {
   /// Create a new [`NetTransportOptions`] with default values.
   #[inline]
-  pub const fn new(header: Header<I, A>) -> Self {
+  pub const fn new() -> Self {
     Self {
       max_pool: 3,
       max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
       timeout: Duration::from_secs(10),
-      header,
-      advertise_addr: None,
     }
   }
 }
@@ -383,7 +344,7 @@ where
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <A as AddressResolver>::Address>,
-  advertise_addr: SocketAddr,
+  bind_addr: SocketAddr,
   consumer: RpcConsumer<
     I,
     <A as AddressResolver>::Address,
@@ -413,40 +374,32 @@ where
 {
   /// Create a new [`NetTransport`].
   pub async fn new(
+    local_header: Header<I, A::Address>,
+    bind_addr: A::ResolvedAddress,
     resolver: A,
     mut stream_layer: S,
-    opts: NetTransportOptions<I, A::Address>,
+    opts: NetTransportOptions,
   ) -> Result<Self, Error<I, A, W>> {
     let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
-    let advertise_addr = if let Some(addr) = opts.advertise_addr {
-      addr
-    } else {
-      tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
-      resolver
-        .resolve(opts.header.from().addr())
-        .await
-        .map_err(<Error<_, _, _> as TransportError>::resolver)?
-    };
+    let auto_port = bind_addr.port() == 0;
 
-    let auto_port = advertise_addr.port() == 0;
-
-    let ln = stream_layer.bind(advertise_addr).await.map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", advertise_addr=%advertise_addr, err=%e, "failed to bind listener");
+    let ln = stream_layer.bind(bind_addr).await.map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", bind_addr=%bind_addr, err=%e, "failed to bind listener");
       Error::IO(e)
     })?;
 
-    let advertise_addr = if auto_port {
+    let bind_addr = if auto_port {
       let addr = ln.local_addr()?;
       tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
       addr
     } else {
-      advertise_addr
+      bind_addr
     };
 
     tracing::info!(
       target = "ruraft.net.transport",
       "advertise to {}",
-      advertise_addr
+      bind_addr
     );
 
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -455,7 +408,7 @@ where
     let stream_ctx = StreamContext::new();
     let request_handler = RequestHandler {
       ln,
-      local_header: opts.header.clone(),
+      local_header: local_header.clone(),
       producer,
       shutdown: shutdown.clone(),
       #[cfg(test)]
@@ -474,12 +427,12 @@ where
       shutdown_rx,
       shutdown,
       shutdown_tx,
-      advertise_addr,
+      bind_addr,
       resolver,
       consumer,
       conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
-      protocol_version: opts.header.protocol_version(),
-      local_header: opts.header,
+      protocol_version: local_header.protocol_version(),
+      local_header,
       max_pool: opts.max_pool,
       max_inflight_requests: if opts.max_inflight_requests == 0 {
         DEFAULT_MAX_INFLIGHT_REQUESTS
@@ -553,8 +506,8 @@ where
     self.protocol_version
   }
 
-  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
-    &self.advertise_addr
+  fn bind_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
+    &self.bind_addr
   }
 
   fn resolver(&self) -> &Self::Resolver {

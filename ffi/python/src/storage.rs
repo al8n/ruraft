@@ -8,17 +8,23 @@ pub mod snapshot;
 pub fn storage(py: Python, m: &PyModule) -> PyResult<()> {
   m.add_submodule(light::submodule(py)?)?;
   m.add_class::<snapshot::SnapshotId>()?;
+  m.add_class::<snapshot::SnapshotMeta>()?;
+  m.add_class::<snapshot::FileSnapshotStorageOptions>()?;
 
   #[cfg(feature = "tokio")]
   {
     let tokio = PyModule::new(py, "tokio")?;
     tokio.add_class::<snapshot::tokio::FileSnapshotSink>()?;
+    tokio.add_class::<snapshot::tokio::FileSnapshotSource>()?;
+    m.add_submodule(tokio)?;
   }
 
   #[cfg(feature = "async-std")]
   {
     let astd = PyModule::new(py, "async_std")?;
     astd.add_class::<snapshot::async_std::FileSnapshotSink>()?;
+    astd.add_class::<snapshot::async_std::FileSnapshotSource>()?;
+    m.add_submodule(astd)?;
   }
 
   Ok(())

@@ -807,7 +807,7 @@ where
       dirs.push(dir);
       let stable_store = MemoryStableStorage::new();
       let log_store = MemoryLogStorage::new();
-      let (dir2, snapshot_store) = file_snapshot().await;
+      let (dir2, snapshot_store) = file_snapshot();
       snaps.push(snapshot_store.clone());
       dirs.push(dir2);
       fsms.push(MockFSM::default());
@@ -934,13 +934,11 @@ impl DurationExt for Duration {
   }
 }
 
-async fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
+fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
   // Create a test dir
   let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
 
   let opts = FileSnapshotStorageOptions::new(dir.path(), 3, true);
-  let snap = FileSnapshotStorage::<SmolStr, MemoryAddress, R>::new(opts)
-    .await
-    .unwrap();
+  let snap = FileSnapshotStorage::<SmolStr, MemoryAddress, R>::new(opts).unwrap();
   (dir, snap)
 }

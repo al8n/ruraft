@@ -482,7 +482,7 @@ where
 {
   inner: Arc<RwLock<MemoryTransportInner<I, A, D, W>>>,
   timeout: Duration,
-  advertise_address: A::ResolvedAddress,
+  bind_address: A::ResolvedAddress,
   local_address: A::Address,
   local_id: I,
   resolver: Arc<A>,
@@ -515,7 +515,7 @@ where
     Self {
       inner: self.inner.clone(),
       timeout: self.timeout,
-      advertise_address: self.advertise_address.cheap_clone(),
+      bind_address: self.bind_address.cheap_clone(),
       resolver: self.resolver.clone(),
       local_address: self.local_address.cheap_clone(),
       local_id: self.local_id.clone(),
@@ -544,7 +544,7 @@ where
         pipelines: vec![],
       })),
       timeout: opts.timeout.unwrap_or(Duration::from_millis(500)),
-      advertise_address: resolved,
+      bind_address: resolved,
       resolver: Arc::new(resolver),
       local_id: opts.id,
       local_address: addr,
@@ -574,7 +574,7 @@ where
     opts: MemoryTransportOptions<I>,
   ) -> Result<Self, Error<I, A, W>> {
     let (tx, rx) = rpc();
-    let advertise_addr = resolver.resolve(&addr).await.map_err(Error::Resolver)?;
+    let bind_addr = resolver.resolve(&addr).await.map_err(Error::Resolver)?;
 
     Ok(Self {
       inner: Arc::new(RwLock::new(MemoryTransportInner {
@@ -582,7 +582,7 @@ where
         pipelines: vec![],
       })),
       timeout: opts.timeout.unwrap_or(Duration::from_millis(500)),
-      advertise_address: advertise_addr,
+      bind_address: bind_addr,
       resolver: Arc::new(resolver),
       local_id: opts.id,
       local_address: addr,
@@ -750,8 +750,8 @@ where
   ) {
   }
 
-  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
-    &self.advertise_address
+  fn bind_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
+    &self.bind_address
   }
 
   fn resolver(&self) -> &Self::Resolver {

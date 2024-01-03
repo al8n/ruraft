@@ -2,13 +2,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use nodecraft::{NodeAddress, NodeId};
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyIOError, PyTypeError};
 use pyo3::{types::PyModule, *};
 use ruraft_lightwal::sled::{Db as RustDb, DbOptions as RustDbOptions, Mode as RustMode};
+use ruraft_lightwal::LightWal;
+use ruraft_snapshot::sync::FileSnapshotStorage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::RaftData;
+use crate::{storage::snapshot::FileSnapshotStorageOptions, RaftData};
+
+#[cfg(feature = "tokio")]
+use agnostic::tokio::TokioRuntime as Tokio;
+
+#[cfg(feature = "async-std")]
+use agnostic::async_std::AsyncStdRuntime as AsyncStd;
 
 /// The high-level database mode, according to the trade-offs of the RUM conjecture.
 #[pyclass]
@@ -274,64 +282,51 @@ impl DbOptions {
   }
 }
 
-/// [`sled`](https://crates.io/crates/sled) database based on [`tokio`](https://tokio.rs) runtime.
+macro_rules! wal {
+  ($($rt: ident),+$(,)?) => {
+    $(
+      paste::paste! {
+        /// Raft WAL and snapshot implementation based on [`sled`](https://crates.io/crates/sled).
+        #[derive(Clone)]
+        #[pyclass]
+        pub struct [< $rt Wal>] (
+          Arc<
+            LightWal<
+              FileSnapshotStorage<NodeId, NodeAddress, $rt>,
+              RustDb<NodeId, NodeAddress, RaftData, $rt>,
+            >,
+          >,
+        );
+
+        #[pymethods]
+        impl [< $rt Wal >] {
+          #[new]
+          pub fn new(db_options: DbOptions, snapshot_options: FileSnapshotStorageOptions) -> PyResult<Self> {
+            let snap = FileSnapshotStorage::new(snapshot_options.into()).map_err(|e| PyIOError::new_err(e.to_string()))?;
+            RustDb::new(db_options.into())
+              .map(|db| Self(Arc::new(LightWal::new(snap, db))))
+              .map_err(|e| PyTypeError::new_err(e.to_string()))
+          }
+        }
+      }
+    )*
+  };
+}
+
 #[cfg(feature = "tokio")]
-#[pyclass]
-pub struct TokioDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::tokio::TokioRuntime>);
-
-#[cfg(feature = "tokio")]
-#[pymethods]
-impl TokioDb {
-  #[new]
-  pub fn new(opts: DbOptions) -> PyResult<Self> {
-    RustDb::new(opts.into())
-      .map(Self)
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-}
-
-/// [`sled`](https://crates.io/crates/sled) database based on [`async-std`](https://crates.io/crates/async-std) runtime.
-#[cfg(feature = "async-std")]
-#[pyclass]
-pub struct AsyncStdDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::async_std::AsyncStdRuntime>);
+wal!(Tokio);
 
 #[cfg(feature = "async-std")]
-#[pymethods]
-impl AsyncStdDb {
-  #[new]
-  pub fn new(opts: DbOptions) -> PyResult<Self> {
-    RustDb::new(opts.into())
-      .map(Self)
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-}
-
-/// [`sled`](https://crates.io/crates/sled) database based on [`smol`](https://crates.io/crates/smol) runtime.
-#[cfg(feature = "smol")]
-#[pyclass]
-pub struct SmolDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::smol::SmolRuntime>);
-
-#[cfg(feature = "smol")]
-#[pymethods]
-impl SmolDb {
-  #[new]
-  pub fn new(opts: DbOptions) -> PyResult<Self> {
-    RustDb::new(opts.into())
-      .map(Self)
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-}
+wal!(AsyncStd);
 
 #[pymodule]
 fn sled(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<Mode>()?;
   m.add_class::<DbOptions>()?;
   #[cfg(feature = "tokio")]
-  m.add_class::<TokioDb>()?;
+  m.add_class::<TokioWal>()?;
   #[cfg(feature = "async-std")]
-  m.add_class::<AsyncStdDb>()?;
-  #[cfg(feature = "smol")]
-  m.add_class::<SmolDb>()?;
+  m.add_class::<AsyncStdWal>()?;
 
   Ok(())
 }
