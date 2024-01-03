@@ -1,13 +1,42 @@
 use pyo3::prelude::*;
 
+macro_rules! wal {
+  ($rt: ident) => {
+    paste::paste! {
+      /// Raft WAL and snapshot implementation based on [`sled`](https://crates.io/crates/sled).
+      #[derive(Clone)]
+      #[pyclass]
+      pub struct [< $rt Wal>] (
+        std::sync::Arc<
+          ruraft_lightwal::LightStorage<
+            ruraft_snapshot::sync::FileSnapshotStorage<nodecraft::NodeId, nodecraft::NodeAddress, $rt>,
+            RustDb<nodecraft::NodeId, nodecraft::NodeAddress, crate::RaftData, $rt>,
+          >,
+        >,
+      );
+
+      #[pymethods]
+      impl [< $rt Wal >] {
+        #[new]
+        pub fn new(db_options: DbOptions, snapshot_options: crate::storage::snapshot::FileSnapshotStorageOptions) -> pyo3::PyResult<Self> {
+          let snap = ruraft_snapshot::sync::FileSnapshotStorage::new(snapshot_options.into()).map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+          RustDb::new(db_options.into())
+            .map(|db| Self(Arc::new(ruraft_lightwal::LightStorage::new(snap, db))))
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+        }
+      }
+    }
+  };
+}
+
 #[cfg(feature = "sled")]
-mod sled;
+pub mod sled;
 
 #[cfg(feature = "redb")]
-mod redb;
+pub mod redb;
 
 #[cfg(feature = "jammdb")]
-mod jammdb;
+pub mod jammdb;
 
 /// Expose [`ruraft-lightwal`](https://crates.io/crates/ruraft-lightwal) to a Python module.
 #[pymodule]

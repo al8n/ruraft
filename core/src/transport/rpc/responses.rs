@@ -26,17 +26,17 @@ enum_wrapper!(
   #[non_exhaustive]
   pub enum Response<I, A> {
     /// Append entries response.
-    AppendEntries(AppendEntriesResponse<I, A>) = 0 => append_entries,
+    AppendEntries(AppendEntriesResponse<I, A>) = 0,
     /// Vote response.
-    Vote(VoteResponse<I, A>) = 1 => vote,
+    Vote(VoteResponse<I, A>) = 1,
     /// Install snapshot response.
-    InstallSnapshot(InstallSnapshotResponse<I, A>) = 2 => install_snapshot,
+    InstallSnapshot(InstallSnapshotResponse<I, A>) = 2,
     /// Timeout now response.
-    TimeoutNow(TimeoutNowResponse<I, A>) = 3 => timeout_now,
+    TimeoutNow(TimeoutNowResponse<I, A>) = 3,
     /// Heartbeat response.
-    Heartbeat(HeartbeatResponse<I, A>) = 4 => heartbeat,
+    Heartbeat(HeartbeatResponse<I, A>) = 4,
     /// Error response.
-    Error(ErrorResponse<I, A>) = 255 => error,
+    Error(ErrorResponse<I, A>) = 255,
   }
 );
 

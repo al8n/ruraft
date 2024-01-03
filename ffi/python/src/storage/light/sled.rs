@@ -1,16 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nodecraft::{NodeAddress, NodeId};
-use pyo3::exceptions::{PyIOError, PyTypeError};
 use pyo3::{types::PyModule, *};
 use ruraft_lightwal::sled::{Db as RustDb, DbOptions as RustDbOptions, Mode as RustMode};
-use ruraft_lightwal::LightWal;
-use ruraft_snapshot::sync::FileSnapshotStorage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-use crate::{storage::snapshot::FileSnapshotStorageOptions, RaftData};
 
 #[cfg(feature = "tokio")]
 use agnostic::tokio::TokioRuntime as Tokio;
@@ -280,37 +274,6 @@ impl DbOptions {
     self.hash(&mut hasher);
     hasher.finish()
   }
-}
-
-macro_rules! wal {
-  ($($rt: ident),+$(,)?) => {
-    $(
-      paste::paste! {
-        /// Raft WAL and snapshot implementation based on [`sled`](https://crates.io/crates/sled).
-        #[derive(Clone)]
-        #[pyclass]
-        pub struct [< $rt Wal>] (
-          Arc<
-            LightWal<
-              FileSnapshotStorage<NodeId, NodeAddress, $rt>,
-              RustDb<NodeId, NodeAddress, RaftData, $rt>,
-            >,
-          >,
-        );
-
-        #[pymethods]
-        impl [< $rt Wal >] {
-          #[new]
-          pub fn new(db_options: DbOptions, snapshot_options: FileSnapshotStorageOptions) -> PyResult<Self> {
-            let snap = FileSnapshotStorage::new(snapshot_options.into()).map_err(|e| PyIOError::new_err(e.to_string()))?;
-            RustDb::new(db_options.into())
-              .map(|db| Self(Arc::new(LightWal::new(snap, db))))
-              .map_err(|e| PyTypeError::new_err(e.to_string()))
-          }
-        }
-      }
-    )*
-  };
 }
 
 #[cfg(feature = "tokio")]

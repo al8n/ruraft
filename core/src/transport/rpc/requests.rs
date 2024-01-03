@@ -19,25 +19,28 @@ enum_wrapper!(
   /// Request to be sent to the Raft node.
   #[derive(Debug, Clone)]
   #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-  #[cfg_attr(feature = "serde", serde(
-    rename_all = "snake_case",
-    bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+  #[cfg_attr(
+    feature = "serde",
+    serde(
+      rename_all = "snake_case",
+      bound(
+        serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
+        deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      )
     )
-  ))]
+  )]
   #[non_exhaustive]
   pub enum Request<I, A, D> {
     /// Append entries request.
-    AppendEntries(AppendEntriesRequest<I, A, D>) = 0 => append_entries,
+    AppendEntries(AppendEntriesRequest<I, A, D>) = 0,
     /// Vote request.
-    Vote(VoteRequest<I, A>) = 1 => vote,
+    Vote(VoteRequest<I, A>) = 1,
     /// Install snapshot request.
-    InstallSnapshot(InstallSnapshotRequest<I, A>) = 2 => install_snapshot,
+    InstallSnapshot(InstallSnapshotRequest<I, A>) = 2,
     /// Timeout now request.
-    TimeoutNow(TimeoutNowRequest<I, A>) = 3 => timeout_now,
+    TimeoutNow(TimeoutNowRequest<I, A>) = 3,
     /// Heartbeat request.
-    Heartbeat(HeartbeatRequest<I, A>) = 4 => heartbeat,
+    Heartbeat(HeartbeatRequest<I, A>) = 4,
   }
 );
 

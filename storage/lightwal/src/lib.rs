@@ -99,10 +99,10 @@ mod sealed {
 }
 
 /// [`SnapshotStorage`](ruraft_core::storage::SnapshotStorage) implementation which consists of a [`SnapshotStorage`] and a backend storage which implements [`LogStorage`] and [`StableStorage`].
-pub struct LightWal<S, B>(RaftStorage<Arc<B>, Arc<B>, S>);
+pub struct LightStorage<S, B>(RaftStorage<Arc<B>, Arc<B>, S>);
 
-impl<S, B> LightWal<S, B> {
-  /// Create a new [`LightWal`] with the given [`SnapshotStorage`] and backend storage which implements [`LogStorage`] and [`StableStorage`].
+impl<S, B> LightStorage<S, B> {
+  /// Create a new [`LightStorage`] with the given [`SnapshotStorage`] and backend storage which implements [`LogStorage`] and [`StableStorage`].
   pub fn new(snapshot: S, backend: B) -> Self {
     let arc = Arc::new(backend);
     Self(RaftStorage::new(arc.clone(), arc, snapshot))
@@ -116,7 +116,7 @@ impl<
       Runtime = <B as LogStorage>::Runtime,
     >,
     B: Backend,
-  > Storage for LightWal<S, B>
+  > Storage for LightStorage<S, B>
 {
   type Error = <RaftStorage<B, B, S> as Storage>::Error;
 

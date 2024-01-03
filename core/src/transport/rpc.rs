@@ -200,7 +200,7 @@ macro_rules! enum_wrapper {
     $vis:vis enum $name:ident $(<$($generic:tt),+>)? {
       $(
         $(#[$variant_meta:meta])*
-        $variant:ident($variant_ty: ident $(<$($variant_generic:tt),+>)?) = $variant_tag:literal => $variant_snake_case: ident
+        $variant:ident($variant_ty: ident $(<$($variant_generic:tt),+>)?) = $variant_tag:literal
       ), +$(,)?
     }
   ) => {
@@ -259,18 +259,18 @@ macro_rules! enum_wrapper {
       $(
         paste::paste! {
           #[doc = concat!("Returns the contained [`", stringify!($variant_ty), "`] request, consuming the self value. Panics if the value is not [`", stringify!($variant_ty), "`].")]
-          $vis fn [< unwrap_ $variant_snake_case>] (self) -> $variant_ty $(< $($variant_generic),+ >)? {
+          $vis fn [< unwrap_ $variant:snake>] (self) -> $variant_ty $(< $($variant_generic),+ >)? {
             if let Self::$variant(val) = self {
               val
             } else {
               panic!(concat!("expect ", stringify!($variant), ", buf got {}"), self.type_name())
             }
           }
-        }
 
-        #[doc = concat!("Construct a [`", stringify!($name), "`] from [`", stringify!($variant_ty), "`].")]
-        pub const fn $variant_snake_case(val: $variant_ty $(< $($variant_generic),+ >)?) -> Self {
-          Self::$variant(val)
+          #[doc = concat!("Construct a [`", stringify!($name), "`] from [`", stringify!($variant_ty), "`].")]
+          pub const fn [< $variant:snake >](val: $variant_ty $(< $($variant_generic),+ >)?) -> Self {
+            Self::$variant(val)
+          }
         }
       )*
     }
@@ -351,10 +351,10 @@ impl TransformError {
 
 #[cfg(test)]
 macro_rules! unit_test_transformable_roundtrip {
-  ($variant_ty:ident $(<$($generic:ty),+>)? => $variant_snake_case:ident) => {
+  ($variant_ty:ident $(<$($generic:ty),+>)? => $variant:ident) => {
     paste::paste! {
       #[tokio::test]
-      async fn [< test_ $variant_snake_case _transformable_roundtrip >]() {
+      async fn [< test_ $variant:snake _transformable_roundtrip >]() {
         test_transformable_roundtrip!(
           $variant_ty $(<$($generic),+>)? {
             $variant_ty::__small()

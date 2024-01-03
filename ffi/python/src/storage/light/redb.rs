@@ -4,11 +4,8 @@ use std::{
   sync::Arc,
 };
 
-use nodecraft::{NodeAddress, NodeId};
-use pyo3::{exceptions::PyTypeError, types::PyModule, *};
+use pyo3::prelude::*;
 use ruraft_lightwal::redb::{Db as RustDb, DbOptions as RustDbOptions};
-
-use crate::RaftData;
 
 /// Options used to create Db.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -87,63 +84,25 @@ impl DbOptions {
   }
 }
 
-/// [`redb`](https://crates.io/crates/redb) database based on [`tokio`](https://tokio.rs) runtime.
 #[cfg(feature = "tokio")]
-#[pyclass]
-pub struct TokioDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::tokio::TokioRuntime>);
-
-#[cfg(feature = "tokio")]
-#[pymethods]
-impl TokioDb {
-  #[new]
-  pub fn new(opts: DbOptions) -> PyResult<Self> {
-    RustDb::new(opts.into())
-      .map(Self)
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-}
-
-/// [`redb`](https://crates.io/crates/redb) database based on [`async-std`](https://crates.io/crates/async-std) runtime.
-#[cfg(feature = "async-std")]
-#[pyclass]
-pub struct AsyncStdDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::async_std::AsyncStdRuntime>);
+use agnostic::tokio::TokioRuntime as Tokio;
 
 #[cfg(feature = "async-std")]
-#[pymethods]
-impl AsyncStdDb {
-  #[new]
-  pub fn new(opts: DbOptions) -> PyResult<Self> {
-    RustDb::new(opts.into())
-      .map(Self)
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-}
+use agnostic::async_std::AsyncStdRuntime as AsyncStd;
 
-/// [`sled`](https://crates.io/crates/sled) database based on [`smol`](https://crates.io/crates/smol) runtime.
-#[cfg(feature = "smol")]
-#[pyclass]
-pub struct SmolDb(RustDb<NodeId, NodeAddress, RaftData, agnostic::smol::SmolRuntime>);
+#[cfg(feature = "tokio")]
+wal!(Tokio);
 
-#[cfg(feature = "smol")]
-#[pymethods]
-impl SmolDb {
-  #[new]
-  pub fn new(opts: DbOptions) -> PyResult<Self> {
-    RustDb::new(opts.into())
-      .map(Self)
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-}
+#[cfg(feature = "async-std")]
+wal!(AsyncStd);
 
 #[pymodule]
 fn redb(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<DbOptions>()?;
   #[cfg(feature = "tokio")]
-  m.add_class::<TokioDb>()?;
+  m.add_class::<TokioWal>()?;
   #[cfg(feature = "async-std")]
-  m.add_class::<AsyncStdDb>()?;
-  #[cfg(feature = "smol")]
-  m.add_class::<SmolDb>()?;
+  m.add_class::<AsyncStdWal>()?;
   Ok(())
 }
 

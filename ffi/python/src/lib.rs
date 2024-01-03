@@ -2,12 +2,17 @@
 
 use std::{cell::UnsafeCell, sync::Arc};
 
+#[cfg(feature = "tokio")]
+use agnostic::tokio::TokioRuntime;
+use nodecraft::{resolver::dns::DnsResolver, NodeAddress, NodeId};
 use pyo3::{types::PyModule, *};
 use ruraft_core::{sidecar::NoopSidecar, RaftCore};
+use ruraft_lightwal::{LightStorage, sled::Db};
+use ruraft_snapshot::sync::FileSnapshotStorage;
+use ruraft_tcp::{net::wire::LpeWire, TcpTransport};
 
 mod error;
 mod fsm;
-mod io;
 pub mod storage;
 mod transport;
 mod types;
@@ -17,8 +22,35 @@ const INLINED_U8: usize = 64;
 
 type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
 
-// #[cfg(feature = "tokio")]
-// pub struct TokioRaft(RaftCore<self::fsm::tokio::FinateStateMachine, _, _, NoopSidecar<agnostic::tokio::TokioRuntime>, agnostic::tokio::TokioRuntime>);
+#[pyclass]
+#[cfg(feature = "tokio")]
+pub struct TokioRaft(
+  RaftCore<
+    self::fsm::tokio::FinateStateMachine,
+    LightStorage<
+      FileSnapshotStorage<NodeId, NodeAddress, TokioRuntime>,
+      Db<NodeId, NodeAddress, RaftData, TokioRuntime>,
+    >,
+    TcpTransport<
+      NodeId,
+      DnsResolver<TokioRuntime>,
+      RaftData,
+      LpeWire<NodeId, NodeAddress, RaftData>,
+    >,
+    NoopSidecar<TokioRuntime>,
+    TokioRuntime,
+  >,
+);
+
+#[pymethods]
+impl TokioRaft {
+  #[staticmethod]
+  fn new(
+    
+  ) -> PyResult<Self> {
+    todo!()
+  }
+}
 
 /// A fearless cell, which is highly unsafe
 ///
@@ -58,6 +90,5 @@ pub fn pyraft(py: Python, m: &PyModule) -> PyResult<()> {
   m.add_submodule(storage::submodule(py)?)?;
   m.add_submodule(types::submodule(py)?)?;
   m.add_submodule(fsm::submodule(py)?)?;
-  m.add_submodule(io::submodule(py)?)?;
   Ok(())
 }
