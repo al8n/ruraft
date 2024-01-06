@@ -67,13 +67,15 @@ where
   pub(super) user_snapshot_rx: async_channel::Receiver<
     oneshot::Sender<
       Result<
-        Box<
-          dyn Future<
-              Output = Result<
-                <S::Snapshot as SnapshotStorage>::Source,
-                <S::Snapshot as SnapshotStorage>::Error,
-              >,
-            > + Send,
+        std::pin::Pin<
+          Box<
+            dyn Future<
+                Output = Result<
+                  <S::Snapshot as SnapshotStorage>::Source,
+                  <S::Snapshot as SnapshotStorage>::Error,
+                >,
+              > + Send,
+          >,
         >,
         Error<F, S, T>,
       >,
@@ -138,9 +140,9 @@ where
               match res {
                 Ok(id) => {
                   let s = self.store.clone();
-                  let _ = tx.send(Ok(Box::new(async move {
+                  let _ = tx.send(Ok(async move {
                     s.snapshot_store().open(&id).await
-                  })));
+                  }.boxed()));
                 }
                 Err(e) => {
                   tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to take snapshot");

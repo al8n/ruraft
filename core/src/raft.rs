@@ -310,13 +310,15 @@ where
   user_snapshot_tx: async_channel::Sender<
     oneshot::Sender<
       Result<
-        Box<
-          dyn Future<
-              Output = Result<
-                <S::Snapshot as SnapshotStorage>::Source,
-                <S::Snapshot as SnapshotStorage>::Error,
-              >,
-            > + Send,
+        std::pin::Pin<
+          Box<
+            dyn Future<
+                Output = Result<
+                  <S::Snapshot as SnapshotStorage>::Source,
+                  <S::Snapshot as SnapshotStorage>::Error,
+                >,
+              > + Send,
+          >,
         >,
         Error<F, S, T>,
       >,

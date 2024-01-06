@@ -192,7 +192,7 @@ where
   /// See also [`apply_timeout`].
   ///
   /// [`apply_timeout`]: struct.RaftCore.html#method.apply_timeout
-  pub async fn apply(&self, data: T::Data) -> ApplyResponse<F, S, T> {
+  pub async fn apply(&self, data: T::Data) -> ApplyFuture<F, S, T> {
     self.apply_in(data, None).await
   }
 
@@ -216,7 +216,7 @@ where
   /// See also [`apply`].
   ///
   /// [`apply`]: struct.RaftCore.html#method.apply
-  pub async fn apply_timeout(&self, data: T::Data, timeout: Duration) -> ApplyResponse<F, S, T> {
+  pub async fn apply_timeout(&self, data: T::Data, timeout: Duration) -> ApplyFuture<F, S, T> {
     self.apply_in(data, Some(timeout)).await
   }
 
@@ -228,7 +228,7 @@ where
   /// See also [`barrier_timeout`].
   ///
   /// [`barrier_timeout`]: struct.RaftCore.html#method.barrier_timeout
-  pub async fn barrier(&self) -> ApplyResponse<F, S, T> {
+  pub async fn barrier(&self) -> ApplyFuture<F, S, T> {
     self.barrier_in(None).await
   }
 
@@ -241,14 +241,14 @@ where
   /// See also [`barrier`].
   ///
   /// [`barrier`]: struct.RaftCore.html#method.barrier
-  pub async fn barrier_timeout(&self, timeout: Duration) -> ApplyResponse<F, S, T> {
+  pub async fn barrier_timeout(&self, timeout: Duration) -> ApplyFuture<F, S, T> {
     self.barrier_in(Some(timeout)).await
   }
 
   /// Used to ensure this peer is still the leader. It may be used
   /// to prevent returning stale data from the FSM after the peer has lost
   /// leadership.
-  pub async fn verify_leader(&self) -> VerifyResponse<F, S, T> {
+  pub async fn verify_leader(&self) -> VerifyFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -258,8 +258,8 @@ where
 
     let (tx, rx) = oneshot::channel();
     match self.inner.verify_tx.send(tx).await {
-      Ok(_) => VerifyResponse::ok(rx),
-      Err(_) => VerifyResponse::err(Error::shutdown()),
+      Ok(_) => VerifyFuture::ok(rx),
+      Err(_) => VerifyFuture::err(Error::shutdown()),
     }
   }
 
@@ -282,7 +282,7 @@ where
     id: T::Id,
     addr: <T::Resolver as AddressResolver>::Address,
     prev_index: u64,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(
         MembershipChangeCommand::add_voter(id, addr, prev_index),
@@ -313,7 +313,7 @@ where
     addr: <T::Resolver as AddressResolver>::Address,
     prev_index: u64,
     timeout: Duration,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(
         MembershipChangeCommand::add_voter(id, addr, prev_index),
@@ -339,7 +339,7 @@ where
     id: T::Id,
     addr: <T::Resolver as AddressResolver>::Address,
     prev_index: u64,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(
         MembershipChangeCommand::add_nonvoter(id, addr, prev_index),
@@ -366,7 +366,7 @@ where
     addr: <T::Resolver as AddressResolver>::Address,
     prev_index: u64,
     timeout: Duration,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(
         MembershipChangeCommand::add_nonvoter(id, addr, prev_index),
@@ -385,7 +385,7 @@ where
   ///  
   /// [`add_voter`]: struct.RaftCore.html#method.add_voter
   /// [`remove_timeout`]: struct.RaftCore.html#method.remove_timeout
-  pub async fn remove(&self, id: T::Id, prev_index: u64) -> MembershipChangeResponse<F, S, T> {
+  pub async fn remove(&self, id: T::Id, prev_index: u64) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(MembershipChangeCommand::remove_server(id, prev_index), None)
       .await
@@ -406,7 +406,7 @@ where
     id: T::Id,
     prev_index: u64,
     timeout: Duration,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(
         MembershipChangeCommand::remove_server(id, prev_index),
@@ -426,11 +426,7 @@ where
   ///
   /// [`add_voter`]: struct.RaftCore.html#method.add_voter
   /// [`demote_voter_timeout`]: struct.RaftCore.html#method.demote_voter_timeout
-  pub async fn demote_voter(
-    &self,
-    id: T::Id,
-    prev_index: u64,
-  ) -> MembershipChangeResponse<F, S, T> {
+  pub async fn demote_voter(&self, id: T::Id, prev_index: u64) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(MembershipChangeCommand::demote_voter(id, prev_index), None)
       .await
@@ -452,7 +448,7 @@ where
     id: T::Id,
     prev_index: u64,
     timeout: Duration,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     self
       .request_membership_change(
         MembershipChangeCommand::demote_voter(id, prev_index),
@@ -516,7 +512,7 @@ where
   /// See also [`snapshot_timeout`].
   ///
   /// [`snapshot_timeout`]: struct.RaftCore.html#method.snapshot_timeout
-  pub async fn snapshot(&self) -> SnapshotResponse<F, S, T> {
+  pub async fn snapshot(&self) -> SnapshotFuture<F, S, T> {
     self.snapshot_in(None).await
   }
 
@@ -527,7 +523,7 @@ where
   /// See also [`snapshot`].
   ///
   /// [`snapshot`]: struct.RaftCore.html#method.snapshot
-  pub async fn snapshot_timeout(&self, timeout: Duration) -> SnapshotResponse<F, S, T> {
+  pub async fn snapshot_timeout(&self, timeout: Duration) -> SnapshotFuture<F, S, T> {
     self.snapshot_in(Some(timeout)).await
   }
 
@@ -596,7 +592,7 @@ where
   /// See also [`leadership_transfer_to_node`].
   ///
   /// [`leadership_transfer_to_node`]: struct.RaftCore.html#method.leadership_transfer_to_node
-  pub async fn leadership_transfer(&self) -> LeadershipTransferResponse<F, S, T> {
+  pub async fn leadership_transfer(&self) -> LeadershipTransferFuture<F, S, T> {
     self.initiate_leadership_transfer(None).await
   }
 
@@ -612,7 +608,7 @@ where
     &self,
     id: T::Id,
     addr: <T::Resolver as AddressResolver>::Address,
-  ) -> LeadershipTransferResponse<F, S, T> {
+  ) -> LeadershipTransferFuture<F, S, T> {
     self
       .initiate_leadership_transfer(Some(Node::new(id, addr)))
       .await
@@ -681,7 +677,7 @@ where
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
 {
-  async fn apply_in(&self, data: T::Data, timeout: Option<Duration>) -> ApplyResponse<F, S, T> {
+  async fn apply_in(&self, data: T::Data, timeout: Option<Duration>) -> ApplyFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -698,14 +694,14 @@ where
       Some(timeout) => {
         futures::select! {
           _ = R::sleep(timeout).fuse() => {
-            ApplyResponse::err(Error::enqueue_timeout())
+            ApplyFuture::err(Error::enqueue_timeout())
           }
           rst = self.inner.apply_tx.send(req).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-              ApplyResponse::err(Error::closed("apply channel closed"))
+              ApplyFuture::err(Error::closed("apply channel closed"))
             } else {
-              ApplyResponse::ok(rx)
+              ApplyFuture::ok(rx)
             }
           },
         }
@@ -713,15 +709,15 @@ where
       None => {
         if let Err(e) = self.inner.apply_tx.send(req).await {
           tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-          ApplyResponse::err(Error::closed("apply channel closed"))
+          ApplyFuture::err(Error::closed("apply channel closed"))
         } else {
-          ApplyResponse::ok(rx)
+          ApplyFuture::ok(rx)
         }
       }
     }
   }
 
-  async fn barrier_in(&self, timeout: Option<Duration>) -> ApplyResponse<F, S, T> {
+  async fn barrier_in(&self, timeout: Option<Duration>) -> ApplyFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -738,22 +734,22 @@ where
     if let Some(timeout) = timeout {
       futures::select! {
         _ = R::sleep(timeout).fuse() => {
-          ApplyResponse::err(Error::enqueue_timeout())
+          ApplyFuture::err(Error::enqueue_timeout())
         }
         rst = self.inner.apply_tx.send(req).fuse() => {
           if let Err(e) = rst {
             tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-            ApplyResponse::err(Error::closed("apply channel closed"))
+            ApplyFuture::err(Error::closed("apply channel closed"))
           } else {
-            ApplyResponse::ok(rx)
+            ApplyFuture::ok(rx)
           }
         },
       }
     } else if let Err(e) = self.inner.apply_tx.send(req).await {
       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-      ApplyResponse::err(Error::closed("apply channel closed"))
+      ApplyFuture::err(Error::closed("apply channel closed"))
     } else {
-      ApplyResponse::ok(rx)
+      ApplyFuture::ok(rx)
     }
   }
 
@@ -761,7 +757,7 @@ where
     &self,
     cmd: MembershipChangeCommand<T::Id, <T::Resolver as AddressResolver>::Address>,
     timeout: Option<Duration>,
-  ) -> MembershipChangeResponse<F, S, T> {
+  ) -> MembershipChangeFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -776,29 +772,29 @@ where
       Some(Duration::ZERO) | None => {
         if let Err(e) = self.inner.membership_change_tx.send(req).await {
           tracing::error!(target="ruraft", err=%e, "failed to send membership change request to the raft: membership change channel closed");
-          return MembershipChangeResponse::err(Error::closed("membership change channel closed"));
+          return MembershipChangeFuture::err(Error::closed("membership change channel closed"));
         }
-        MembershipChangeResponse::ok(rx)
+        MembershipChangeFuture::ok(rx)
       }
       Some(timeout) => {
         futures::select! {
           rst = self.inner.membership_change_tx.send(req).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send membership change request to the raft: membership change channel closed");
-              return MembershipChangeResponse::err(Error::closed("membership change channel closed"));
+              return MembershipChangeFuture::err(Error::closed("membership change channel closed"));
             }
 
-            MembershipChangeResponse::ok(rx)
+            MembershipChangeFuture::ok(rx)
           }
           _ = R::sleep(timeout).fuse() => {
-            MembershipChangeResponse::err(Error::enqueue_timeout())
+            MembershipChangeFuture::err(Error::enqueue_timeout())
           }
         }
       }
     }
   }
 
-  async fn snapshot_in(&self, timeout: Option<Duration>) -> SnapshotResponse<F, S, T> {
+  async fn snapshot_in(&self, timeout: Option<Duration>) -> SnapshotFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -810,25 +806,25 @@ where
 
     match timeout {
       Some(Duration::ZERO) | None => match self.inner.user_snapshot_tx.send(tx).await {
-        Ok(_) => SnapshotResponse::ok(rx),
+        Ok(_) => SnapshotFuture::ok(rx),
         Err(e) => {
           tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
-          SnapshotResponse::err(Error::closed("user snapshot channel closed"))
+          SnapshotFuture::err(Error::closed("user snapshot channel closed"))
         }
       },
       Some(timeout) => {
         futures::select! {
           _ = R::sleep(timeout).fuse() => {
             tracing::error!(target = "ruraft", "failed to send snapshot request: user snapshot channel closed");
-            SnapshotResponse::err(Error::enqueue_timeout())
+            SnapshotFuture::err(Error::enqueue_timeout())
           }
           rst = self.inner.user_snapshot_tx.send(tx).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target = "ruraft", err=%e, "failed to send snapshot request: user snapshot channel closed");
-              return SnapshotResponse::err(Error::closed("user snapshot channel closed"));
+              return SnapshotFuture::err(Error::closed("user snapshot channel closed"));
             }
 
-            SnapshotResponse::ok(rx)
+            SnapshotFuture::ok(rx)
           },
         }
       }
@@ -946,7 +942,7 @@ where
   async fn initiate_leadership_transfer(
     &self,
     target: Option<Node<T::Id, <T::Resolver as AddressResolver>::Address>>,
-  ) -> LeadershipTransferResponse<F, S, T> {
+  ) -> LeadershipTransferFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -956,22 +952,22 @@ where
     if let Some(ref node) = target {
       if node.id().eq(self.inner.transport.local_id()) {
         tracing::error!(target = "ruraft", "cannot transfer leadership to itself");
-        return LeadershipTransferResponse::err(Error::transfer_to_self());
+        return LeadershipTransferFuture::err(Error::transfer_to_self());
       }
     }
 
     futures::select! {
       rst = self.inner.leader_transfer_tx.send((target, tx)).fuse() => {
         match rst {
-          Ok(_) => LeadershipTransferResponse::ok(rx),
+          Ok(_) => LeadershipTransferFuture::ok(rx),
           Err(e) => {
             tracing::error!(target="ruraft", err=%e, "failed to send leadership transfer request to the raft: leadership transfer channel closed");
-            LeadershipTransferResponse::err(Error::closed("leadership transfer channel closed"))
+            LeadershipTransferFuture::err(Error::closed("leadership transfer channel closed"))
           }
         }
       }
       default => {
-        LeadershipTransferResponse::err(Error::enqueue_timeout())
+        LeadershipTransferFuture::err(Error::enqueue_timeout())
       }
     }
   }
@@ -1200,22 +1196,22 @@ macro_rules! resp {
 
 resp!(
   #[doc = "A future that can be used to wait on the result of a membership change. The index is the output of the future."]
-  MembershipChangeResponse<F::Response>,
-  #[doc = "Used for apply and can return the [`FinateStateMachine`] response."]
-  ApplyResponse<F::Response>,
-  #[doc = "Used for barrier and can return the [`FinateStateMachine`] response."]
-  BarrierResponse<F::Response>,
-  #[doc = "Used to verify the current node is still the leader. This is to prevent a stale read."]
-  VerifyResponse<()>,
+  MembershipChangeFuture<F::Response>,
+  #[doc = "A future that can be used for apply and can return the [`FinateStateMachineResponse`](crate::fsm::FinateStateMachineResponse) response."]
+  ApplyFuture<F::Response>,
+  #[doc = "A future that can be used for barrier and can return the [`FinateStateMachineResponse`](crate::fsm::FinateStateMachineResponse) response."]
+  BarrierFuture<F::Response>,
+  #[doc = "A future that can be used to verify the current node is still the leader. This is to prevent a stale read."]
+  VerifyFuture<()>,
   #[doc = "A future that can be used to wait on the result of a snapshot. The returned future whose output is a [`SnapshotSource`](crate::storage::SnapshotSource)."]
-  SnapshotResponse<Box<
+  SnapshotFuture<std::pin::Pin<Box<
     dyn Future<
       Output = Result<
         <S::Snapshot as SnapshotStorage>::Source,
         <S::Snapshot as SnapshotStorage>::Error,
       >,
     > + Send,
-  >>,
+  >>>,
   #[doc = "A future that can be used to wait on the result of a leadership transfer response."]
-  LeadershipTransferResponse<()>,
+  LeadershipTransferFuture<()>,
 );

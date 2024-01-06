@@ -1,13 +1,13 @@
 #![allow(clippy::new_without_default)]
 
-use std::{cell::UnsafeCell, sync::Arc};
+use std::{cell::UnsafeCell, pin::Pin, sync::Arc};
 
-#[cfg(feature = "tokio")]
-use agnostic::tokio::TokioRuntime;
+use agnostic::Runtime;
+use futures::{Future, FutureExt};
 use nodecraft::{resolver::dns::DnsResolver, NodeAddress, NodeId};
 use pyo3::{types::PyModule, *};
 use ruraft_core::{sidecar::NoopSidecar, RaftCore};
-use ruraft_lightwal::{LightStorage, sled::Db};
+use ruraft_lightwal::{sled::Db, LightStorage};
 use ruraft_snapshot::sync::FileSnapshotStorage;
 use ruraft_tcp::{net::wire::LpeWire, TcpTransport};
 
@@ -22,35 +22,26 @@ const INLINED_U8: usize = 64;
 
 type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
 
-#[pyclass]
-#[cfg(feature = "tokio")]
-pub struct TokioRaft(
-  RaftCore<
-    self::fsm::tokio::FinateStateMachine,
-    LightStorage<
-      FileSnapshotStorage<NodeId, NodeAddress, TokioRuntime>,
-      Db<NodeId, NodeAddress, RaftData, TokioRuntime>,
-    >,
-    TcpTransport<
-      NodeId,
-      DnsResolver<TokioRuntime>,
-      RaftData,
-      LpeWire<NodeId, NodeAddress, RaftData>,
-    >,
-    NoopSidecar<TokioRuntime>,
-    TokioRuntime,
-  >,
-);
+type RaftTransport<R> =
+  TcpTransport<NodeId, DnsResolver<R>, RaftData, LpeWire<NodeId, NodeAddress, RaftData>>;
 
-#[pymethods]
-impl TokioRaft {
-  #[staticmethod]
-  fn new(
-    
-  ) -> PyResult<Self> {
-    todo!()
-  }
-}
+type RaftStorage<R> =
+  LightStorage<FileSnapshotStorage<NodeId, NodeAddress, R>, Db<NodeId, NodeAddress, RaftData, R>>;
+
+type Raft<R> =
+  RaftCore<crate::fsm::FinateStateMachine<R>, RaftStorage<R>, RaftTransport<R>, NoopSidecar<R>, R>;
+
+// #[pyclass]
+// #[cfg(feature = "tokio")]
+// pub struct TokioRaft(Raft<TokioRuntime>);
+
+// #[pymethods]
+// impl TokioRaft {
+//   #[staticmethod]
+//   fn new() -> PyResult<Self> {
+//     todo!()
+//   }
+// }
 
 /// A fearless cell, which is highly unsafe
 ///
@@ -84,11 +75,79 @@ impl<T> FearlessCell<T> {
 unsafe impl<T> Send for FearlessCell<T> {}
 unsafe impl<T> Sync for FearlessCell<T> {}
 
+trait IntoPython: Sized {
+  type Target: pyo3::PyClass
+    + pyo3::IntoPy<pyo3::Py<pyo3::PyAny>>
+    + for<'source> pyo3::FromPyObject<'source>;
+
+  fn into_python(self) -> Self::Target;
+}
+
+trait FromPython: Sized {
+  type Source;
+
+  fn from_python(slf: Self::Source) -> Self;
+}
+
+#[derive(Copy, Clone)]
+enum SupportedRuntime {
+  #[cfg(feature = "tokio")]
+  Tokio,
+  #[cfg(feature = "async-std")]
+  AsyncStd,
+}
+
+impl SupportedRuntime {
+  fn future_into_py<F, T>(self, py: Python, fut: F) -> PyResult<&PyAny>
+  where
+    F: Future<Output = PyResult<T>> + Send + 'static,
+    T: IntoPy<PyObject>,
+  {
+    match self {
+      #[cfg(feature = "tokio")]
+      Self::Tokio => pyo3_asyncio::tokio::future_into_py(py, fut),
+      #[cfg(feature = "async-std")]
+      Self::AsyncStd => pyo3_asyncio::async_std::future_into_py(py, fut),
+    }
+  }
+
+  fn into_future(
+    self,
+    awaitable: &PyAny,
+  ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send>>> {
+    match self {
+      #[cfg(feature = "tokio")]
+      Self::Tokio => pyo3_asyncio::tokio::into_future(awaitable).map(|fut| fut.boxed()),
+      #[cfg(feature = "async-std")]
+      Self::AsyncStd => pyo3_asyncio::async_std::into_future(awaitable).map(|fut| fut.boxed()),
+    }
+  }
+}
+
+trait IntoSupportedRuntime: Runtime {
+  fn into_supported() -> SupportedRuntime;
+}
+
+#[cfg(feature = "tokio")]
+impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
+  #[inline(always)]
+  fn into_supported() -> SupportedRuntime {
+    SupportedRuntime::Tokio
+  }
+}
+
+#[cfg(feature = "async-std")]
+impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
+  #[inline(always)]
+  fn into_supported() -> SupportedRuntime {
+    SupportedRuntime::AsyncStd
+  }
+}
+
 /// Expose [`ruraft`](https://crates.io/crates/ruraft) Raft protocol implementation to a Python module.
 #[pymodule]
 pub fn pyraft(py: Python, m: &PyModule) -> PyResult<()> {
-  m.add_submodule(storage::submodule(py)?)?;
+  // m.add_submodule(storage::submodule(py)?)?;
   m.add_submodule(types::submodule(py)?)?;
-  m.add_submodule(fsm::submodule(py)?)?;
   Ok(())
 }

@@ -629,6 +629,104 @@ impl CommittedLog {
   }
 }
 
+macro_rules! state_machine_futs {
+  ($($ty:ident), +$(,)?) => {
+    $(
+      pub struct $ty<R, S, T>(Option<ruraft_core::$ty<crate::fsm::FinateStateMachine<R>, S, T>>)
+      where
+        R: crate::IntoSupportedRuntime,
+        crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
+        crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+        crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
+        S: ruraft_core::storage::Storage<Runtime = R>,
+        T: ruraft_core::transport::Transport<Runtime = R>;
+
+      impl<R, S, T> $ty<R, S, T>
+      where
+        R: crate::IntoSupportedRuntime,
+        crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
+        crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+        crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
+        S: ruraft_core::storage::Storage<Runtime = R>,
+        T: ruraft_core::transport::Transport<Runtime = R>
+      {
+        pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          match self.0.take() {
+            Some(f) => {
+              R::into_supported().future_into_py(py, async move {
+                f.await.map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
+              })
+            }
+            None => {
+              Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(concat!(stringify!($ty), ".wait() have been consumed.")))
+            }
+          }
+        }
+      }
+    )*
+  };
+}
+
+state_machine_futs!(
+  ApplyFuture,
+  BarrierFuture,
+  MembershipChangeFuture,
+  VerifyFuture,
+  LeadershipTransferFuture,
+);
+
+pub struct SnapshotFuture<R, T>(
+  Option<ruraft_core::SnapshotFuture<crate::fsm::FinateStateMachine<R>, crate::RaftStorage<R>, T>>,
+)
+where
+  R: crate::IntoSupportedRuntime,
+  crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
+  crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+  crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
+      Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
+    > + crate::IntoPython,
+  T: ruraft_core::transport::Transport<Runtime = R>;
+
+impl<R, T> SnapshotFuture<R, T>
+where
+  R: crate::IntoSupportedRuntime,
+  crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
+  crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+  crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
+      Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
+    > + crate::IntoPython,
+  T: ruraft_core::transport::Transport<Runtime = R>,
+{
+  pub fn wait<'a>(&'a mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+    use ruraft_core::storage::SnapshotSource;
+
+    match self.0.take() {
+      Some(f) => R::into_supported().future_into_py(py, async move {
+        match f.await {
+          Ok(res) => match res.await {
+            Ok(res) => {
+              let meta = res.meta().clone();
+              let cell = crate::FearlessCell::new(Box::new(res) as Box<_>);
+              Ok(crate::IntoPython::into_python(
+                crate::storage::snapshot::SnapshotSource::new(meta, cell),
+              ))
+            }
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+              e.to_string(),
+            )),
+          },
+          Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            e.to_string(),
+          )),
+        }
+      }),
+      None => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        "SnapshotFuture.wait() have been consumed.",
+      )),
+    }
+  }
+}
+
 #[pymodule]
 pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<NodeId>()?;
