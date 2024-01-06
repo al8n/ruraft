@@ -494,11 +494,11 @@ macro_rules! wrap_fsm {
         }
       }
 
-      impl crate::FromPython for [< $rt FinateStateMachine >] {
-        type Source = super::FinateStateMachine< agnostic:: [< $rt:snake >] :: [< $rt Runtime >] >;
+      impl crate::FromPython for super::FinateStateMachine< agnostic:: [< $rt:snake >] :: [< $rt Runtime >] > {
+        type Source = [< $rt FinateStateMachine >];
 
-        fn from_python(slf: Self::Source,) -> [< $rt FinateStateMachine >] {
-          [< $rt FinateStateMachine >] (slf)
+        fn from_python(slf: Self::Source,) -> super::FinateStateMachine< agnostic:: [< $rt:snake >] :: [< $rt Runtime >] > {
+          slf.0
         }
       }
 
@@ -530,11 +530,11 @@ macro_rules! wrap_fsm_snapshot {
         }
       }
 
-      impl crate::FromPython for [< $rt FinateStateMachineSnapshot >] {
-        type Source = super::FinateStateMachineSnapshot< agnostic:: [< $rt:snake >] :: [< $rt Runtime >] >;
+      impl crate::FromPython for super::FinateStateMachineSnapshot< agnostic:: [< $rt:snake >] :: [< $rt Runtime >] > {
+        type Source = [< $rt FinateStateMachineSnapshot >];
 
-        fn from_python(slf: Self::Source,) -> [< $rt FinateStateMachineSnapshot >] {
-          [< $rt FinateStateMachineSnapshot >] (slf)
+        fn from_python(slf: Self::Source,) -> super::FinateStateMachineSnapshot< agnostic:: [< $rt:snake >] :: [< $rt Runtime >] > {
+          slf.0
         }
       }
 

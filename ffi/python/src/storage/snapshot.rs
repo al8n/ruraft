@@ -16,7 +16,7 @@ use ruraft_core::storage::{SnapshotId as RSnapshotId, SnapshotMeta as RSnapshotM
 use ruraft_snapshot::sync::FileSnapshotStorageOptions as RFileSnapshotStorageOptions;
 use smallvec::SmallVec;
 
-use crate::{FearlessCell, IntoPython, IntoSupportedRuntime, PythonAsyncIORuntime, INLINED_U8};
+use crate::{FearlessCell, IntoSupportedRuntime, INLINED_U8};
 
 #[derive(Debug, Clone, Copy)]
 #[pyclass]
@@ -284,7 +284,7 @@ impl<R> SnapshotSource<R> {
   }
 }
 
-impl<R: PythonAsyncIORuntime> SnapshotSource<R> {
+impl<R: IntoSupportedRuntime> SnapshotSource<R> {
   /// The term when the snapshot was taken.
   pub fn term(&self) -> u64 {
     self.meta.term()
@@ -319,7 +319,7 @@ impl<R: PythonAsyncIORuntime> SnapshotSource<R> {
   // #[pyo3(signature = (chunk_size = 1024))]
   pub fn read<'a>(&'a self, py: Python<'a>, chunk_size: usize) -> PyResult<&'a PyAny> {
     let source = self.source.clone();
-    R::future_into_py(py, async move {
+    R::into_supported().future_into_py(py, async move {
       let source = unsafe { source.get_mut() };
       let mut buf: SmallVec<[u8; INLINED_U8]> = ::smallvec::smallvec![0; chunk_size];
       match source.read(&mut buf).await {
@@ -335,7 +335,7 @@ impl<R: PythonAsyncIORuntime> SnapshotSource<R> {
   /// Read exact num of bytes from the snapshot to bytes.
   pub fn read_exact<'a>(&'a self, py: Python<'a>, size: usize) -> PyResult<&'a PyAny> {
     let source = self.source.clone();
-    R::future_into_py(py, async move {
+    R::into_supported().future_into_py(py, async move {
       let mut buf = SmallVec::<[u8; INLINED_U8]>::with_capacity(size);
       unsafe {
         source
@@ -352,7 +352,7 @@ impl<R: PythonAsyncIORuntime> SnapshotSource<R> {
   // #[pyo3(signature = (chunk_size = 1024))]
   pub fn read_all<'a>(&'a self, py: Python<'a>, chunk_size: usize) -> PyResult<&'a PyAny> {
     let source = self.source.clone();
-    R::future_into_py(py, async move {
+    R::into_supported().future_into_py(py, async move {
       let source = unsafe { source.get_mut() };
       let mut buf: SmallVec<[u8; INLINED_U8]> = Default::default();
 

@@ -629,73 +629,102 @@ impl CommittedLog {
   }
 }
 
-macro_rules! state_machine_futs {
-  ($($ty:ident), +$(,)?) => {
-    $(
-      pub struct $ty<R, S, T>(Option<ruraft_core::$ty<crate::fsm::FinateStateMachine<R>, S, T>>)
-      where
-        R: crate::IntoSupportedRuntime,
-        crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-        crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-        crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
-        S: ruraft_core::storage::Storage<Runtime = R>,
-        T: ruraft_core::transport::Transport<Runtime = R>;
+macro_rules! wrap_fut {
+  ($rt:literal::$ty:literal) => {
+    paste::paste! {
+      #[cfg(feature = $rt)]
+      #[::pyo3::pyclass(name = $ty)]
+      pub struct [< $rt:camel $ty >]([< $ty >] < ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] >);
 
-      impl<R, S, T> $ty<R, S, T>
-      where
-        R: crate::IntoSupportedRuntime,
-        crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-        crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-        crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
-        S: ruraft_core::storage::Storage<Runtime = R>,
-        T: ruraft_core::transport::Transport<Runtime = R>
-      {
-        pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
-          match self.0.take() {
-            Some(f) => {
-              R::into_supported().future_into_py(py, async move {
-                f.await.map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
-              })
-            }
-            None => {
-              Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(concat!(stringify!($ty), ".wait() have been consumed.")))
+      #[cfg(feature = $rt)]
+      #[::pyo3::pymethods]
+      impl [< $rt:camel $ty >] {
+        /// Wait the future to be finished and get the response. This function can only be invoked once.
+        /// Otherwise, the `wait` method will lead to exceptions.
+        pub fn wait<'a>(&'a mut self, py: ::pyo3::Python<'a>) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
+          self.0.wait(py)
+        }
+      }
+    }
+  };
+}
+
+macro_rules! state_machine_futs {
+  ($($ty:literal), +$(,)?) => {
+    $(
+      paste::paste! {
+        pub struct [< $ty >]<R>(Option<ruraft_core::[< $ty >] <crate::fsm::FinateStateMachine<R>, crate::RaftStorage<R>, crate::RaftTransport<R>>>)
+        where
+          R: crate::IntoSupportedRuntime,
+          <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
+          crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
+          crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+          crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython;
+
+        impl<R> [< $ty >]<R>
+        where
+          R: crate::IntoSupportedRuntime,
+          <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
+          crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
+          crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+          crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
+        {
+          pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
+            match self.0.take() {
+              Some(f) => {
+                R::into_supported().future_into_py(py, async move {
+                  f.await.map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
+                })
+              }
+              None => {
+                Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(concat!(stringify!($ty), ".wait() have been consumed.")))
+              }
             }
           }
         }
       }
+
+      wrap_fut!("tokio" :: $ty);
+      wrap_fut!("async-std" :: $ty);
     )*
   };
 }
 
 state_machine_futs!(
-  ApplyFuture,
-  BarrierFuture,
-  MembershipChangeFuture,
-  VerifyFuture,
-  LeadershipTransferFuture,
+  "ApplyFuture",
+  "BarrierFuture",
+  "MembershipChangeFuture",
+  "VerifyFuture",
+  "LeadershipTransferFuture",
 );
 
-pub struct SnapshotFuture<R, T>(
-  Option<ruraft_core::SnapshotFuture<crate::fsm::FinateStateMachine<R>, crate::RaftStorage<R>, T>>,
+pub struct SnapshotFuture<R>(
+  Option<
+    ruraft_core::SnapshotFuture<
+      crate::fsm::FinateStateMachine<R>,
+      crate::RaftStorage<R>,
+      crate::RaftTransport<R>,
+    >,
+  >,
 )
 where
   R: crate::IntoSupportedRuntime,
+  <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
   crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
   crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
   crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
       Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
-    > + crate::IntoPython,
-  T: ruraft_core::transport::Transport<Runtime = R>;
+    > + crate::IntoPython;
 
-impl<R, T> SnapshotFuture<R, T>
+impl<R> SnapshotFuture<R>
 where
   R: crate::IntoSupportedRuntime,
+  <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
   crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
   crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
   crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
       Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
     > + crate::IntoPython,
-  T: ruraft_core::transport::Transport<Runtime = R>,
 {
   pub fn wait<'a>(&'a mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
     use ruraft_core::storage::SnapshotSource;
@@ -726,6 +755,9 @@ where
     }
   }
 }
+
+wrap_fut!("tokio" :: "SnapshotFuture");
+wrap_fut!("async-std" :: "SnapshotFuture");
 
 #[pymodule]
 pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {

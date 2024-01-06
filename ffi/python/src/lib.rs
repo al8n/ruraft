@@ -146,7 +146,7 @@ impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
 
 /// Expose [`ruraft`](https://crates.io/crates/ruraft) Raft protocol implementation to a Python module.
 #[pymodule]
-pub fn pyraft(py: Python, m: &PyModule) -> PyResult<()> {
+pub fn prufty(py: Python, m: &PyModule) -> PyResult<()> {
   // m.add_submodule(storage::submodule(py)?)?;
   m.add_submodule(types::submodule(py)?)?;
   Ok(())
