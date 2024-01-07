@@ -28,6 +28,12 @@ impl From<RSnapshotId> for SnapshotId {
   }
 }
 
+impl From<SnapshotId> for RSnapshotId {
+  fn from(value: SnapshotId) -> Self {
+    value.0
+  }
+}
+
 #[pymethods]
 impl SnapshotId {
   #[getter]

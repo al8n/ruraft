@@ -139,8 +139,8 @@ where
   /// the the receiver was processing first leadership transition.
   ///
   /// If you want to watch all leadership transitions, use [`leadership_change_watcher`].
-  pub fn leadership_watcher(&self) -> LeaderWatcher {
-    LeaderWatcher(self.inner.leader_rx.clone())
+  pub fn leadership_watcher(&self) -> LeadershipWatcher {
+    LeadershipWatcher(self.inner.leader_rx.clone())
   }
 
   /// Used to get a stream which will receive all of leadership changes.
@@ -148,9 +148,9 @@ where
   /// which means subsequent `true` values will never happen.
   ///
   /// [`leadership_watcher`]: struct.RaftCore.html#method.leader_watcher
-  #[must_use = "The `LeaderWatcher` returned by `leadership_change_watcher` must be aggressively consumed. Otherwise, you should consider to use `leadership_watcher`."]
-  pub fn leadership_change_watcher(&self) -> LeaderWatcher {
-    LeaderWatcher(self.inner.leadership_change_rx.clone())
+  #[must_use = "The `LeadershipWatcher` returned by `leadership_change_watcher` must be aggressively consumed. Otherwise, you should consider to use `leadership_watcher`."]
+  pub fn leadership_change_watcher(&self) -> LeadershipWatcher {
+    LeadershipWatcher(self.inner.leadership_change_rx.clone())
   }
 }
 
@@ -228,7 +228,7 @@ where
   /// See also [`barrier_timeout`].
   ///
   /// [`barrier_timeout`]: struct.RaftCore.html#method.barrier_timeout
-  pub async fn barrier(&self) -> ApplyFuture<F, S, T> {
+  pub async fn barrier(&self) -> BarrierFuture<F, S, T> {
     self.barrier_in(None).await
   }
 
@@ -241,7 +241,7 @@ where
   /// See also [`barrier`].
   ///
   /// [`barrier`]: struct.RaftCore.html#method.barrier
-  pub async fn barrier_timeout(&self, timeout: Duration) -> ApplyFuture<F, S, T> {
+  pub async fn barrier_timeout(&self, timeout: Duration) -> BarrierFuture<F, S, T> {
     self.barrier_in(Some(timeout)).await
   }
 
@@ -527,6 +527,21 @@ where
     self.snapshot_in(Some(timeout)).await
   }
 
+  /// Used open a snapshot. This is useful for restoring from a
+  /// snapshot.
+  pub async fn open_snapshot(
+    &self,
+    id: crate::storage::SnapshotId,
+  ) -> Result<<S::Snapshot as SnapshotStorage>::Source, Error<F, S, T>> {
+    self
+      .inner
+      .storage
+      .snapshot_store()
+      .open(&id)
+      .await
+      .map_err(|e| Error::storage(<S::Error as crate::storage::StorageError>::snapshot(e)))
+  }
+
   /// Used to manually force Raft to consume an external snapshot, such
   /// as if restoring from a backup. We will use the current Raft membership,
   /// not the one from the snapshot, so that we can restore into a new cluster. We
@@ -648,7 +663,7 @@ where
       term: self.inner.state.current_term(),
       commit_index: self.inner.state.commit_index(),
       applied_index: self.inner.state.last_applied(),
-      last_contact: self.last_contact(),
+      last_contact: self.last_contact().map(|t| t.elapsed()),
       num_peers,
       fsm_pending: self.inner.fsm_mutate_tx.len() as u64,
       snapshot_version: SnapshotVersion::V1,
@@ -717,7 +732,7 @@ where
     }
   }
 
-  async fn barrier_in(&self, timeout: Option<Duration>) -> ApplyFuture<F, S, T> {
+  async fn barrier_in(&self, timeout: Option<Duration>) -> BarrierFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -734,22 +749,22 @@ where
     if let Some(timeout) = timeout {
       futures::select! {
         _ = R::sleep(timeout).fuse() => {
-          ApplyFuture::err(Error::enqueue_timeout())
+          BarrierFuture::err(Error::enqueue_timeout())
         }
         rst = self.inner.apply_tx.send(req).fuse() => {
           if let Err(e) = rst {
             tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-            ApplyFuture::err(Error::closed("apply channel closed"))
+            BarrierFuture::err(Error::closed("apply channel closed"))
           } else {
-            ApplyFuture::ok(rx)
+            BarrierFuture::ok(rx)
           }
         },
       }
     } else if let Err(e) = self.inner.apply_tx.send(req).await {
       tracing::error!(target="ruraft", err=%e, "failed to send apply request to the raft: apply channel closed");
-      ApplyFuture::err(Error::closed("apply channel closed"))
+      BarrierFuture::err(Error::closed("apply channel closed"))
     } else {
-      ApplyFuture::ok(rx)
+      BarrierFuture::ok(rx)
     }
   }
 
@@ -991,7 +1006,7 @@ where
 
 /// The information about the current stats of the Raft node.
 #[viewit::viewit(vis_all = "", getters(vis_all = "pub"), setters(skip))]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(
   feature = "serde",
@@ -1021,8 +1036,8 @@ pub struct RaftStats<I, A> {
   #[viewit(getter(const, attrs(doc = "Returns the version of the snapshot.")))]
   snapshot_version: SnapshotVersion,
   #[viewit(getter(const, attrs(doc = "Returns the last contact time of the raft.")))]
-  #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde_instant"))]
-  last_contact: Option<Instant>,
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde::option"))]
+  last_contact: Option<Duration>,
   #[viewit(getter(
     style = "ref",
     const,
@@ -1068,9 +1083,9 @@ impl<I, A> LatestMembership<I, A> {
 /// - `false` indicates the node is not the leader anymore.
 #[derive(Clone)]
 #[pin_project::pin_project]
-pub struct LeaderWatcher(#[pin] async_channel::Receiver<bool>);
+pub struct LeadershipWatcher(#[pin] async_channel::Receiver<bool>);
 
-impl Stream for LeaderWatcher {
+impl Stream for LeadershipWatcher {
   type Item = <async_channel::Receiver<bool> as Stream>::Item;
 
   fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

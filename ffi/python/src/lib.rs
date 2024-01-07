@@ -4,16 +4,12 @@ use std::{cell::UnsafeCell, pin::Pin, sync::Arc};
 
 use agnostic::Runtime;
 use futures::{Future, FutureExt};
-use nodecraft::{resolver::dns::DnsResolver, NodeAddress, NodeId};
 use pyo3::{types::PyModule, *};
-use ruraft_core::{sidecar::NoopSidecar, RaftCore};
-use ruraft_ffi::storage::snapshot::SupportedSnapshotStorage;
-use ruraft_lightwal::{sled::Db, LightStorage};
-use ruraft_tcp::{net::wire::LpeWire, TcpTransport};
 
 mod error;
 mod fsm;
 pub mod storage;
+mod raft;
 mod transport;
 mod types;
 mod utils;
@@ -22,26 +18,11 @@ const INLINED_U8: usize = 64;
 
 type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
 
-type RaftTransport<R> =
-  TcpTransport<NodeId, DnsResolver<R>, RaftData, LpeWire<NodeId, NodeAddress, RaftData>>;
+type RaftTransport<R> = ruraft_ffi::transport::SupportedTransport<RaftData, R>;
 
-type RaftStorage<R> =
-  LightStorage<SupportedSnapshotStorage<R>, Db<NodeId, NodeAddress, RaftData, R>>;
+type RaftStorage<R> = ruraft_ffi::storage::SupportedStorage<RaftData, R>;
 
-type Raft<R> =
-  RaftCore<crate::fsm::FinateStateMachine<R>, RaftStorage<R>, RaftTransport<R>, NoopSidecar<R>, R>;
-
-// #[pyclass]
-// #[cfg(feature = "tokio")]
-// pub struct TokioRaft(Raft<TokioRuntime>);
-
-// #[pymethods]
-// impl TokioRaft {
-//   #[staticmethod]
-//   fn new() -> PyResult<Self> {
-//     todo!()
-//   }
-// }
+type Raft<R> = ruraft_ffi::Raft<fsm::FinateStateMachine<R>, RaftData, R>;
 
 /// A fearless cell, which is highly unsafe
 ///

@@ -14,6 +14,7 @@ use ruraft_tcp::tls::TlsTransport;
 
 #[cfg(feature = "native-tls")]
 use ruraft_tcp::native_tls::NativeTlsTransport;
+use ruraft_wire::LpeWire;
 
 pub struct SupportedAppendEntriesPipelineConsumer<W: Wire, R: Runtime>(
   Pin<
@@ -114,16 +115,16 @@ where
 }
 
 #[derive(derive_more::From)]
-pub enum SupportedTransport<D, W, R: Runtime> {
-  Tcp(TcpTransport<NodeId, DnsResolver<R>, D, W>),
+pub enum SupportedTransport<D, R: Runtime> {
+  Tcp(TcpTransport<NodeId, DnsResolver<R>, D, LpeWire<NodeId, NodeAddress, D>>),
   #[cfg(feature = "tls")]
-  Tls(TlsTransport<NodeId, DnsResolver<R>, D, W>),
+  Tls(TlsTransport<NodeId, DnsResolver<R>, D, LpeWire<NodeId, NodeAddress, D>>),
   #[cfg(feature = "native-tls")]
-  NativeTls(NativeTlsTransport<NodeId, DnsResolver<R>, D, W>),
+  NativeTls(NativeTlsTransport<NodeId, DnsResolver<R>, D, LpeWire<NodeId, NodeAddress, D>>),
 }
 
-impl<D: Data, W: Wire<Id = NodeId, Address = NodeAddress, Data = D>, R: Runtime> Transport
-  for SupportedTransport<D, W, R>
+impl<D: Data, R: Runtime> Transport
+  for SupportedTransport<D, R>
 where
   <R::Sleep as Future>::Output: Send + 'static,
 {
@@ -139,7 +140,7 @@ where
 
   type Resolver = DnsResolver<Self::Runtime>;
 
-  type Wire = W;
+  type Wire = LpeWire<NodeId, NodeAddress, D>;
 
   fn consumer(
     &self,

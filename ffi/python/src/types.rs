@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{hash::{DefaultHasher, Hash, Hasher}, time::Duration};
 
 use ::either::Either;
 use nodecraft::{NodeAddress as RNodeAddress, NodeId as RNodeId, Transformable};
@@ -14,12 +14,27 @@ use ruraft_core::{
 
 use crate::RaftData;
 
+mod futs;
+pub use futs::*;
+
+mod membership;
+pub use membership::*;
+
+mod options;
+pub use options::*;
+
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
 #[pyclass]
-#[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Debug)]
+#[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Debug, derive_more::From)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct NodeId(RNodeId);
+
+impl From<NodeId> for RNodeId {
+  fn from(value: NodeId) -> Self {
+    value.0
+  }
+}
 
 #[pymethods]
 impl NodeId {
@@ -87,6 +102,18 @@ impl NodeId {
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct NodeAddress(RNodeAddress);
 
+impl From<NodeAddress> for RNodeAddress {
+  fn from(value: NodeAddress) -> Self {
+    value.0
+  }
+}
+
+impl From<RNodeAddress> for NodeAddress {
+  fn from(value: RNodeAddress) -> Self {
+    Self(value)
+  }
+}
+
 #[pymethods]
 impl NodeAddress {
   /// Construct a new [`NodeId`] from a string.
@@ -150,12 +177,124 @@ impl NodeAddress {
   }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[pyclass]
+pub enum Role {
+  /// The initial state of a Raft node.
+  Follower,
+  /// One of the valid states of a Raft node.
+  Candidate,
+  /// One of the valid states of a Raft node.
+  Leader,
+  /// The terminal state of a Raft node.
+  Shutdown,
+}
+
+impl From<Role> for ruraft_core::Role {
+  fn from(r: Role) -> Self {
+    match r {
+      Role::Follower => Self::Follower,
+      Role::Candidate => Self::Candidate,
+      Role::Leader => Self::Leader,
+      Role::Shutdown => Self::Shutdown,
+    }
+  }
+}
+
+impl From<ruraft_core::Role> for Role {
+  fn from(r: ruraft_core::Role) -> Self {
+    match r {
+      ruraft_core::Role::Follower => Self::Follower,
+      ruraft_core::Role::Candidate => Self::Candidate,
+      ruraft_core::Role::Leader => Self::Leader,
+      ruraft_core::Role::Shutdown => Self::Shutdown,
+    }
+  }
+}
+
+#[pymethods]
+impl Role {
+  /// The initial state of a Raft node.
+  #[inline]
+  #[staticmethod]
+  pub fn follower() -> Self {
+    Self::Follower
+  }
+
+  /// One of the valid states of a Raft node.
+  #[inline]
+  #[staticmethod]
+  pub fn candidate() -> Self {
+    Self::Candidate
+  }
+
+  /// One of the valid states of a Raft node.
+  #[inline]
+  #[staticmethod]
+  pub fn leader() -> Self {
+    Self::Leader
+  }
+
+  /// The terminal state of a Raft node.
+  #[inline]
+  #[staticmethod]
+  pub fn shutdown() -> Self {
+    Self::Shutdown
+  }
+
+  #[inline]
+  pub fn __str__(&self) -> &'static str {
+    match self {
+      Self::Follower => "follower",
+      Self::Candidate => "candidate",
+      Self::Leader => "leader",
+      Self::Shutdown => "shutdown",
+    }
+  }
+
+  #[inline]
+  pub fn __repr__(&self) -> &'static str {
+    match self {
+      Self::Follower => "Role::Follower",
+      Self::Candidate => "Role::Candidate",
+      Self::Leader => "Role::Leader",
+      Self::Shutdown => "Role::Shutdown",
+    }
+  }
+
+  fn __eq__(&self, other: &Self) -> bool {
+    self.eq(other)
+  }
+
+  fn __ne__(&self, other: &Self) -> bool {
+    self.ne(other)
+  }
+
+  fn __hash__(&self) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    self.hash(&mut hasher);
+    hasher.finish()
+  }
+}
 /// An identifier of Raft node in the cluster.
 #[pyclass]
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Node(RNode<RNodeId, RNodeAddress>);
+
+impl From<Node> for RNode<RNodeId, RNodeAddress> {
+  fn from(n: Node) -> Self {
+    n.0
+  }
+}
+
+impl From<RNode<RNodeId, RNodeAddress>> for Node {
+  fn from(n: RNode<RNodeId, RNodeAddress>) -> Self {
+    Self(n)
+  }
+}
 
 #[pymethods]
 impl Node {
@@ -220,359 +359,6 @@ impl Node {
   }
 }
 
-/// The suffrage of a server.
-#[pyclass]
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub enum ServerSuffrage {
-  /// The server can vote.
-  #[default]
-  Voter,
-  /// The server cannot vote.
-  #[serde(rename = "nonvoter")]
-  Nonvoter,
-}
-
-impl From<RServerSuffrage> for ServerSuffrage {
-  fn from(s: RServerSuffrage) -> Self {
-    match s {
-      RServerSuffrage::Voter => Self::Voter,
-      RServerSuffrage::Nonvoter => Self::Nonvoter,
-      _ => unreachable!(),
-    }
-  }
-}
-
-impl From<ServerSuffrage> for RServerSuffrage {
-  fn from(s: ServerSuffrage) -> Self {
-    match s {
-      ServerSuffrage::Voter => Self::Voter,
-      ServerSuffrage::Nonvoter => Self::Nonvoter,
-    }
-  }
-}
-
-#[pymethods]
-impl ServerSuffrage {
-  /// Construct the default suffrage [`ServerSuffrage::Voter`].
-  #[inline]
-  #[new]
-  pub const fn new() -> Self {
-    Self::Voter
-  }
-
-  /// The server can vote.
-  #[inline]
-  #[staticmethod]
-  pub fn voter() -> Self {
-    Self::Voter
-  }
-
-  /// The server cannot vote.
-  #[inline]
-  #[staticmethod]
-  pub fn nonvoter() -> Self {
-    Self::Nonvoter
-  }
-
-  #[inline]
-  pub fn __str__(&self) -> &'static str {
-    match self {
-      Self::Voter => "voter",
-      Self::Nonvoter => "nonvoter",
-    }
-  }
-
-  #[inline]
-  pub fn __repr__(&self) -> &'static str {
-    match self {
-      Self::Voter => "ServerSuffrage::Voter",
-      Self::Nonvoter => "ServerSuffrage::Nonvoter",
-    }
-  }
-
-  fn __eq__(&self, other: &Self) -> bool {
-    self.eq(other)
-  }
-
-  fn __ne__(&self, other: &Self) -> bool {
-    self.ne(other)
-  }
-
-  fn __hash__(&self) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    self.hash(&mut hasher);
-    hasher.finish()
-  }
-}
-
-/// A server in the cluster.
-#[pyclass]
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-pub struct Server(RServer<NodeId, NodeAddress>);
-
-impl From<Server> for RServer<RNodeId, RNodeAddress> {
-  fn from(s: Server) -> Self {
-    Self::new(s.0.id().0.clone(), s.0.addr().0.clone(), *s.0.suffrage())
-  }
-}
-
-#[pymethods]
-impl Server {
-  /// Construct a new [`Server`] from a node and suffrage.
-  #[new]
-  pub fn new(id: NodeId, addr: NodeAddress, suffrage: ServerSuffrage) -> Self {
-    Server(RServer::new(id, addr, suffrage.into()))
-  }
-
-  /// Get the [`NodeId`] of the server.
-  #[getter]
-  pub fn id(&self) -> NodeId {
-    self.0.id().clone()
-  }
-
-  #[setter]
-  pub fn set_id(&mut self, id: NodeId) {
-    self.0.set_id(id);
-  }
-
-  /// Get the [`NodeAddress`] of the server.
-  #[getter]
-  pub fn address(&self) -> NodeAddress {
-    self.0.addr().clone()
-  }
-
-  /// Set the [`NodeAddress`] of the server.
-  #[setter]
-  pub fn set_address(&mut self, address: NodeAddress) {
-    self.0.set_addr(address);
-  }
-
-  /// Get the suffrage of the server.
-  #[getter]
-  pub fn suffrage(&self) -> ServerSuffrage {
-    (*self.0.suffrage()).into()
-  }
-
-  /// Set the suffrage of the server.
-  #[setter]
-  pub fn set_suffrage(&mut self, suffrage: ServerSuffrage) {
-    self.0.set_suffrage(suffrage.into());
-  }
-
-  #[inline]
-  pub fn __str__(&self) -> PyResult<String> {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
-    } else {
-      Ok(format!("{:?}", self.0))
-    }
-  }
-
-  #[inline]
-  pub fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-
-  pub fn __eq__(&self, other: &Self) -> bool {
-    self.0.eq(&other.0)
-  }
-
-  pub fn __ne__(&self, other: &Self) -> bool {
-    self.0.ne(&other.0)
-  }
-
-  pub fn __hash__(&self) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    self.0.hash(&mut hasher);
-    hasher.finish()
-  }
-}
-
-/// The builder for [`Membership`].
-#[pyclass]
-#[derive(Clone)]
-pub struct MembershipBuilder(RMembershipBuilder<RNodeId, RNodeAddress>);
-
-#[pymethods]
-impl MembershipBuilder {
-  /// Construct a new [`MembershipBuilder`].
-  #[new]
-  pub fn new() -> Self {
-    Self(RMembershipBuilder::new())
-  }
-
-  /// Add a server to the membership.
-  pub fn insert(&mut self, server: Server) -> PyResult<()> {
-    self
-      .0
-      .insert(server.into())
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-
-  /// Inserts a collection of servers into the membership.
-  ///
-  /// # Errors
-  /// - If the one of the server address is already in the membership.
-  /// - If the one of the server id is already in the membership.
-  pub fn insert_many(&mut self, server: ::smallvec::SmallVec<[Server; 4]>) -> PyResult<()> {
-    self
-      .0
-      .insert_many(server.into_iter().map(|s| s.into()))
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-  }
-
-  /// Returns true if the server identified by 'id' is in in the
-  /// provided [`Membership`].
-  pub fn contains_id(&self, id: &NodeId) -> bool {
-    self.0.contains_id(&id.0)
-  }
-
-  /// Returns true if the server identified by 'addr' is in in the
-  /// provided [`Membership`].
-  pub fn contains_addr(&self, addr: &NodeAddress) -> bool {
-    self.0.contains_addr(&addr.0)
-  }
-
-  /// Returns `true` if the membership contains a server who is [`ServerSuffrage::Voter`].
-  pub fn contains_voter(&self) -> bool {
-    self.0.contains_voter()
-  }
-
-  /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
-  pub fn is_voter(&self, id: &NodeId) -> bool {
-    self.0.is_voter(&id.0)
-  }
-
-  /// Returns `true` if the server is a [`ServerSuffrage::Nonvoter`].
-  pub fn is_nonvoter(&self, id: &NodeId) -> bool {
-    self.0.is_nonvoter(&id.0)
-  }
-
-  /// Returns `true` if the membership contains no elements.
-  pub fn is_empty(&self) -> bool {
-    self.0.is_empty()
-  }
-
-  /// Returns the number of servers in the membership.
-  pub fn __len__(&self) -> usize {
-    self.0.len()
-  }
-
-  /// Remove a server from the membership.
-  pub fn remove(&mut self, id: &NodeId) {
-    self.0.remove(&id.0);
-  }
-
-  /// Build the [`Membership`].
-  pub fn build(&self) -> PyResult<Membership> {
-    self
-      .0
-      .clone()
-      .build()
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
-      .map(Membership)
-  }
-}
-
-/// The membership of the cluster.
-#[pyclass]
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct Membership(RMembership<RNodeId, RNodeAddress>);
-
-impl From<Membership> for RMembership<RNodeId, RNodeAddress> {
-  fn from(m: Membership) -> Self {
-    m.0
-  }
-}
-
-impl From<RMembership<RNodeId, RNodeAddress>> for Membership {
-  fn from(m: RMembership<RNodeId, RNodeAddress>) -> Self {
-    Self(m)
-  }
-}
-
-#[pymethods]
-impl Membership {
-  /// Returns the number of servers in the membership.
-  pub fn __len__(&self) -> usize {
-    self.0.len()
-  }
-
-  /// Returns true if the membership contains no elements.
-  pub fn is_empty(&self) -> bool {
-    self.0.is_empty()
-  }
-
-  /// Returns true if the server identified by 'id' is in in the
-  /// provided [`Membership`].
-  pub fn contains_id(&self, id: &NodeId) -> bool {
-    self.0.contains_id(&id.0)
-  }
-
-  /// Returns true if the server identified by 'addr' is in in the
-  /// provided [`Membership`].
-  pub fn contains_addr(&self, addr: &NodeAddress) -> bool {
-    self.0.contains_addr(&addr.0)
-  }
-
-  /// Returns `true` if the membership contains a server who is [`ServerSuffrage::Voter`].
-  pub fn contains_voter(&self) -> bool {
-    self.0.contains_voter()
-  }
-
-  /// Returns `true` if the server is a [`ServerSuffrage::Voter`].
-  pub fn is_voter(&self, id: &NodeId) -> bool {
-    self.0.is_voter(&id.0)
-  }
-
-  /// Returns `true` if the server is a [`ServerSuffrage::Nonvoter`].
-  pub fn is_nonvoter(&self, id: &NodeId) -> bool {
-    self.0.is_nonvoter(&id.0)
-  }
-
-  /// Returns the number of voters in the membership.
-  pub fn num_voters(&self) -> usize {
-    self.0.voters()
-  }
-
-  /// Returns the number of non-voters in the membership.
-  pub fn num_nonvoters(&self) -> usize {
-    self.0.nonvoters()
-  }
-
-  /// Returns the quorum size of the membership.
-  pub fn quorum_size(&self) -> usize {
-    self.0.quorum_size()
-  }
-
-  #[inline]
-  pub fn __str__(&self) -> PyResult<String> {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
-    } else {
-      Ok(format!("{:?}", self.0))
-    }
-  }
-
-  #[inline]
-  pub fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-
-  pub fn __eq__(&self, other: &Self) -> bool {
-    self.0.eq(&other.0)
-  }
-
-  pub fn __ne__(&self, other: &Self) -> bool {
-    self.0.ne(&other.0)
-  }
-}
-
 /// A committed log, which may contains two kinds of data: a bytes array or [`Membership`].
 #[pyclass]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -629,146 +415,122 @@ impl CommittedLog {
   }
 }
 
-macro_rules! wrap_fut {
-  ($rt:literal::$ty:literal) => {
-    paste::paste! {
-      #[cfg(feature = $rt)]
-      #[::pyo3::pyclass(name = $ty)]
-      pub struct [< $rt:camel $ty >]([< $ty >] < ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] >);
-
-      #[cfg(feature = $rt)]
-      #[::pyo3::pymethods]
-      impl [< $rt:camel $ty >] {
-        /// Wait the future to be finished and get the response. This function can only be invoked once.
-        /// Otherwise, the `wait` method will lead to exceptions.
-        pub fn wait<'a>(&'a mut self, py: ::pyo3::Python<'a>) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
-          self.0.wait(py)
-        }
-      }
-    }
-  };
+/// The information about the current stats of the Raft node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+#[pyclass]
+pub struct RaftStats {
+  /// The role of the raft.
+  #[pyo3(get)]
+  role: Role,
+  /// The term of the raft.
+  #[pyo3(get)]
+  term: u64,
+  /// The last log index of the raft.
+  #[pyo3(get)]
+  last_log_index: u64,
+  /// Returns the last log term of the raft.
+  #[pyo3(get)]
+  last_log_term: u64,
+  /// Returns the committed index of the raft.
+  #[pyo3(get)]
+  commit_index: u64,
+  /// Returns the applied index of the raft.
+  #[pyo3(get)]
+  applied_index: u64,
+  /// Returns the number of pending fsm requests.
+  #[pyo3(get)]
+  fsm_pending: u64,
+  /// Returns the last snapshot index of the raft.
+  #[pyo3(get)]
+  last_snapshot_index: u64,
+  /// Returns the last snapshot term of the raft.
+  #[pyo3(get)]
+  last_snapshot_term: u64,
+  /// Returns the protocol version of the raft.
+  #[pyo3(get)]
+  protocol_version: ProtocolVersion,
+  /// Returns the version of the snapshot.
+  #[pyo3(get)]
+  snapshot_version: SnapshotVersion,
+  /// Returns the last contact time of the raft.
+  #[cfg_attr(feature = "serde", serde(with = "humantime_serde::option"))]
+  last_contact: Option<Duration>,
+  /// Returns the latest membership in use by Raft.
+  #[pyo3(get)]
+  latest_membership: Membership,
+  /// Returns the index of the latest membership in use by Raft.
+  #[pyo3(get)]
+  latest_membership_index: u64,
+  /// Returns the number of peers in the cluster.
+  #[pyo3(get)]
+  num_peers: u64,
 }
 
-macro_rules! state_machine_futs {
-  ($($ty:literal), +$(,)?) => {
-    $(
-      paste::paste! {
-        pub struct [< $ty >]<R>(Option<ruraft_core::[< $ty >] <crate::fsm::FinateStateMachine<R>, crate::RaftStorage<R>, crate::RaftTransport<R>>>)
-        where
-          R: crate::IntoSupportedRuntime,
-          <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-          crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-          crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-          crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython;
-
-        impl<R> [< $ty >]<R>
-        where
-          R: crate::IntoSupportedRuntime,
-          <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-          crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-          crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-          crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
-        {
-          pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
-            match self.0.take() {
-              Some(f) => {
-                R::into_supported().future_into_py(py, async move {
-                  f.await.map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
-                })
-              }
-              None => {
-                Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(concat!(stringify!($ty), ".wait() have been consumed.")))
-              }
-            }
-          }
-        }
-      }
-
-      wrap_fut!("tokio" :: $ty);
-      wrap_fut!("async-std" :: $ty);
-    )*
-  };
-}
-
-state_machine_futs!(
-  "ApplyFuture",
-  "BarrierFuture",
-  "MembershipChangeFuture",
-  "VerifyFuture",
-  "LeadershipTransferFuture",
-);
-
-pub struct SnapshotFuture<R>(
-  Option<
-    ruraft_core::SnapshotFuture<
-      crate::fsm::FinateStateMachine<R>,
-      crate::RaftStorage<R>,
-      crate::RaftTransport<R>,
-    >,
-  >,
-)
-where
-  R: crate::IntoSupportedRuntime,
-  <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-  crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-  crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-  crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
-      Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
-    > + crate::IntoPython;
-
-impl<R> SnapshotFuture<R>
-where
-  R: crate::IntoSupportedRuntime,
-  <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-  crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-  crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-  crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
-      Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
-    > + crate::IntoPython,
-{
-  pub fn wait<'a>(&'a mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
-    use ruraft_core::storage::SnapshotSource;
-
-    match self.0.take() {
-      Some(f) => R::into_supported().future_into_py(py, async move {
-        match f.await {
-          Ok(res) => match res.await {
-            Ok(res) => {
-              let meta = res.meta().clone();
-              let cell = crate::FearlessCell::new(Box::new(res) as Box<_>);
-              Ok(crate::IntoPython::into_python(
-                crate::storage::snapshot::SnapshotSource::new(meta, cell),
-              ))
-            }
-            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-              e.to_string(),
-            )),
-          },
-          Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            e.to_string(),
-          )),
-        }
-      }),
-      None => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "SnapshotFuture.wait() have been consumed.",
-      )),
+impl From<ruraft_core::RaftStats<RNodeId, RNodeAddress>> for RaftStats {
+  fn from(s: ruraft_core::RaftStats<RNodeId, RNodeAddress>) -> Self {
+    Self {
+      role: s.role().into(),
+      term: s.term(),
+      last_log_index: s.last_log_index(),
+      last_log_term: s.last_log_term(),
+      commit_index: s.commit_index(),
+      applied_index: s.applied_index(),
+      fsm_pending: s.fsm_pending(),
+      last_snapshot_index: s.last_snapshot_index(),
+      last_snapshot_term: s.last_snapshot_term(),
+      protocol_version: s.protocol_version().into(),
+      snapshot_version: s.snapshot_version().into(),
+      last_contact: s.last_contact(),
+      latest_membership: s.latest_membership().clone().into(),
+      latest_membership_index: s.latest_membership_index(),
+      num_peers: s.num_peers(),
     }
   }
 }
 
-wrap_fut!("tokio" :: "SnapshotFuture");
-wrap_fut!("async-std" :: "SnapshotFuture");
+#[pymethods]
+impl RaftStats {
+  pub fn __eq__(&self, other: &Self) -> bool {
+    self.eq(other)
+  }
+
+  pub fn __ne__(&self, other: &Self) -> bool {
+    self.ne(other)
+  }
+
+  pub fn __str__(&self) -> PyResult<String> {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self))
+    }
+  }
+
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self)
+  }
+}
+
 
 #[pymodule]
 pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<NodeId>()?;
   m.add_class::<NodeAddress>()?;
-  m.add_class::<Node>()?;
-  m.add_class::<ServerSuffrage>()?;
-  m.add_class::<Server>()?;
-  m.add_class::<MembershipBuilder>()?;
-  m.add_class::<Membership>()?;
+  m.add_class::<Node>()?; 
   m.add_class::<CommittedLog>()?;
+  m.add_class::<RaftStats>()?;
+  m.add_class::<Role>()?;
+
+  options::register(m)?;
+  membership::register(m)?;
+
+  #[cfg(feature = "tokio")]
+  futs::register_tokio(m)?;
+
+  #[cfg(feature = "async-std")]
+  futs::register_async_std(m)?;
+
   Ok(())
 }
 

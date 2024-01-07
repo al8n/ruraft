@@ -17,6 +17,7 @@ serde = ["dep:serde", "humantime-serde"]
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 futures-io = { version = "0.3", optional = true }
+humantime = "2"
 pin-project = { workspace = true, optional = true }
 
 rand = "0.8"

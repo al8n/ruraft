@@ -295,6 +295,7 @@ where
   /// Used to prevent concurrent shutdown
   shutdown: Arc<Shutdown>,
   transport: Arc<T>,
+  storage: Arc<S>,
 
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
@@ -932,7 +933,7 @@ where
     .spawn();
 
     SnapshotRunner::<F, S, T, R> {
-      store: storage,
+      store: storage.clone(),
       state: state.clone(),
       fsm_snapshot_tx,
       committed_membership_tx,
@@ -954,6 +955,7 @@ where
       state,
       shutdown,
       transport,
+      storage,
       membership_change_tx,
       apply_tx,
       user_snapshot_tx,

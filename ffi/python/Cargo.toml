@@ -13,8 +13,7 @@ default = ["metrics", "sled", "jammdb", "redb", "tokio", "serde"]
 
 metrics = ["ruraft-lightwal/metrics", "ruraft-core/metrics", "ruraft-tcp/metrics", "ruraft-snapshot/metrics"]
 
-serde = ["dep:serde", "serde_json", "ruraft-core/serde", "ruraft-tcp/serde", "ruraft-snapshot/serde", "pyo3/serde", "nodecraft/serde", "smol_str/serde"]
-
+serde = ["dep:serde", "serde_json", "ruraft-core/serde", "ruraft-tcp/serde", "ruraft-snapshot/serde", "pyo3/serde", "nodecraft/serde", "smol_str/serde", "humantime-serde"]
 
 tokio = ["agnostic/tokio", "pyo3-asyncio/tokio-runtime"]
 async-std = ["agnostic/async-std", "pyo3-asyncio/async-std-runtime"]
@@ -28,6 +27,7 @@ redb = ["ruraft-lightwal/redb"]
 agnostic = { workspace = true }
 async-lock = { workspace = true }
 chrono = "0.4"
+derive_more = { workspace = true }
 either = { version = "1", features = ["serde"] }
 futures = { workspace = true }
 indexmap = "2"
@@ -44,6 +44,7 @@ ruraft-snapshot = { workspace = true }
 ruraft-tcp = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+humantime-serde = { version = "1", optional = true }
 smallvec = "1"
 smol_str = { workspace = true }
 tracing = { workspace = true }

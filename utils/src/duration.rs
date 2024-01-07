@@ -1,9 +1,21 @@
 use core::time::Duration;
 
 /// A duration type that does not contain any padding bytes
-#[derive(Clone, Copy, bytemuck::NoUninit)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, bytemuck::NoUninit)]
 #[repr(transparent)]
 pub struct PadDuration(u64);
+
+impl core::fmt::Debug for PadDuration {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    self.to_std().fmt(f)
+  }
+}
+
+impl core::fmt::Display for PadDuration {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{}", humantime::format_duration(self.to_std()))
+  }
+}
 
 impl PadDuration {
   /// Creates a duration from the [`Duration`] type from the standard library.

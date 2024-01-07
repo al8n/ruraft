@@ -256,7 +256,7 @@ impl Options {
 /// or accepting a [`Options`] but only using specific fields to keep the API clear.
 /// Reconfiguring some fields is potentially dangerous so we should only
 /// selectively enable it for fields where that is allowed.
-#[derive(bytemuck::NoUninit, Clone, Copy)]
+#[derive(bytemuck::NoUninit, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReloadableOptions {
@@ -364,6 +364,12 @@ impl ReloadableOptions {
 
   /// Set how many logs we leave after a snapshot.
   #[inline]
+  pub fn set_trailing_logs(&mut self, val: u64) {
+    self.trailing_logs = val;
+  }
+
+  /// Set how many logs we leave after a snapshot. (Builder pattern)
+  #[inline]
   pub const fn with_trailing_logs(mut self, val: u64) -> Self {
     self.trailing_logs = val;
     self
@@ -379,6 +385,13 @@ impl ReloadableOptions {
   /// Set how many how many outstanding logs there must be before
   /// we perform a snapshot.
   #[inline]
+  pub fn set_snapshot_threshold(&mut self, val: u64) {
+    self.snapshot_threshold = val;
+  }
+
+  /// Set how many how many outstanding logs there must be before
+  /// we perform a snapshot. (Builder pattern)
+  #[inline]
   pub const fn with_snapshot_threshold(mut self, val: u64) -> Self {
     self.snapshot_threshold = val;
     self
@@ -391,6 +404,12 @@ impl ReloadableOptions {
   }
 
   /// Set how often we check if we should perform a snapshot.
+  #[inline]
+  pub fn set_snapshot_interval(&mut self, val: Duration) {
+    self.snapshot_interval = PadDuration::from_std(val);
+  }
+
+  /// Set how often we check if we should perform a snapshot. (Builder pattern)
   #[inline]
   pub const fn with_snapshot_interval(mut self, val: Duration) -> Self {
     self.snapshot_interval = PadDuration::from_std(val);
@@ -405,11 +424,18 @@ impl ReloadableOptions {
   }
 
   /// Set the time in follower state without
-  /// a leader before we attempt an election.
+  /// a leader before we attempt an election. (Builder pattern)
   #[inline]
   pub const fn with_heartbeat_timeout(mut self, val: Duration) -> Self {
     self.heartbeat_timeout = PadDuration::from_std(val);
     self
+  }
+
+  /// Set the time in follower state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub fn set_heartbeat_timeout(&mut self, val: Duration) {
+    self.heartbeat_timeout = PadDuration::from_std(val);
   }
 
   /// Get the time in candidate state without
@@ -420,11 +446,18 @@ impl ReloadableOptions {
   }
 
   /// Set the time in candidate state without
-  /// a leader before we attempt an election.
+  /// a leader before we attempt an election. (Builder pattern)
   #[inline]
   pub const fn with_election_timeout(mut self, val: Duration) -> Self {
     self.election_timeout = PadDuration::from_std(val);
     self
+  }
+
+  /// Set the time in candidate state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub fn set_election_timeout(&mut self, val: Duration) {
+    self.election_timeout = PadDuration::from_std(val);
   }
 }
 
