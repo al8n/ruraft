@@ -7,8 +7,8 @@ use futures::{Future, FutureExt};
 use nodecraft::{resolver::dns::DnsResolver, NodeAddress, NodeId};
 use pyo3::{types::PyModule, *};
 use ruraft_core::{sidecar::NoopSidecar, RaftCore};
+use ruraft_ffi::storage::snapshot::SupportedSnapshotStorage;
 use ruraft_lightwal::{sled::Db, LightStorage};
-use ruraft_snapshot::sync::FileSnapshotStorage;
 use ruraft_tcp::{net::wire::LpeWire, TcpTransport};
 
 mod error;
@@ -26,7 +26,7 @@ type RaftTransport<R> =
   TcpTransport<NodeId, DnsResolver<R>, RaftData, LpeWire<NodeId, NodeAddress, RaftData>>;
 
 type RaftStorage<R> =
-  LightStorage<FileSnapshotStorage<NodeId, NodeAddress, R>, Db<NodeId, NodeAddress, RaftData, R>>;
+  LightStorage<SupportedSnapshotStorage<R>, Db<NodeId, NodeAddress, RaftData, R>>;
 
 type Raft<R> =
   RaftCore<crate::fsm::FinateStateMachine<R>, RaftStorage<R>, RaftTransport<R>, NoopSidecar<R>, R>;

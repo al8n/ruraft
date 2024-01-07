@@ -35,8 +35,11 @@ use std::{
     atomic::{AtomicBool, Ordering},
     Arc,
   },
-  time::{Duration, Instant},
+  time::Duration,
 };
+
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 use agnostic::Runtime;
 use async_lock::Mutex;
@@ -1046,6 +1049,7 @@ where
           local_header,
           handle,
           shutdown_rx,
+          #[cfg(feature = "metrics")]
           respond_label,
         )
         .await
@@ -1071,9 +1075,16 @@ where
     metrics::histogram!(enqueue_label).record(process_start.elapsed().as_millis() as f64);
 
     // Wait for response
-    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label)
-      .await
-      .map(|_| reader)
+    Self::wait_and_send_response(
+      writer,
+      local_header,
+      handle,
+      shutdown_rx,
+      #[cfg(feature = "metrics")]
+      respond_label,
+    )
+    .await
+    .map(|_| reader)
   }
 
   async fn wait_and_send_response<

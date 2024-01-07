@@ -225,7 +225,7 @@ where
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSource<I: Id, A: Address, R: Runtime> {
+pub struct MemorySnapshotSource<I, A, R> {
   meta: SnapshotMeta<I, A>,
   contents: Vec<u8>,
   _runtime: std::marker::PhantomData<R>,

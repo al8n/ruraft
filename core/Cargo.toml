@@ -29,6 +29,7 @@ bytes = { workspace = true, features = ["serde"] }
 byteorder = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-skiplist = "0.1"
+derive_more = { workspace = true }
 either = "1.9"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["resolver", "agnostic"] }

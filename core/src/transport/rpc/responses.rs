@@ -20,7 +20,7 @@ pub use error::*;
 
 enum_wrapper!(
   /// Response from the Raft node
-  #[derive(Debug, Clone)]
+  #[derive(Debug, Clone, derive_more::From)]
   #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
   #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
   #[non_exhaustive]

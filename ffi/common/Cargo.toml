@@ -1,0 +1,32 @@
+[package]
+name = "ruraft-ffi"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+metadata.workspace = true
+
+[features]
+default = ["sled"]
+
+tls = ["ruraft-tcp/tls"]
+native-tls = ["ruraft-tcp/native-tls"]
+
+sled = ["ruraft-lightwal/sled"]
+redb = ["ruraft-lightwal/redb"]
+jammdb = ["ruraft-lightwal/jammdb"]
+
+[dependencies]
+agnostic = { workspace = true }
+derive_more = "0.99"
+enum_dispatch = "0.3"
+nodecraft = { workspace = true }
+futures = { workspace = true }
+paste = "1"
+ruraft-core = { workspace = true }
+ruraft-lightwal = { workspace = true }
+ruraft-memory = { workspace = true }
+ruraft-snapshot = { workspace = true }
+ruraft-tcp = { workspace = true }

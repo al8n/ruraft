@@ -17,7 +17,7 @@ pub use heartbeat::*;
 
 enum_wrapper!(
   /// Request to be sent to the Raft node.
-  #[derive(Debug, Clone)]
+  #[derive(Debug, Clone, derive_more::From)]
   #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
   #[cfg_attr(
     feature = "serde",

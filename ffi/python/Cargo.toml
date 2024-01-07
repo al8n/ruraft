@@ -36,10 +36,12 @@ paste = "1"
 pyo3 = { version = "0.20", features = ["smallvec", "indexmap", "either", "experimental-inspect", "chrono"] }
 pyo3-asyncio = { version = "0.20", features = ["attributes"] }
 pin-project = { workspace = true }
-ruraft-core = { path = "../../core" }
-ruraft-lightwal = { path = "../../storage/lightwal" }
-ruraft-snapshot = { path = "../../storage/snapshot" }
-ruraft-tcp = { path = "../../transport/tcp" }
+ruraft-core = { workspace = true }
+ruraft-ffi = { workspace = true }
+ruraft-lightwal = { workspace = true }
+ruraft-memory = { workspace = true }
+ruraft-snapshot = { workspace = true }
+ruraft-tcp = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 smallvec = "1"
