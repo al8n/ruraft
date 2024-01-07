@@ -6,10 +6,9 @@ use agnostic::Runtime;
 use futures::{Future, FutureExt};
 use pyo3::{types::PyModule, *};
 
-mod error;
 mod fsm;
-pub mod storage;
 mod raft;
+pub mod storage;
 mod transport;
 mod types;
 mod utils;
@@ -128,7 +127,20 @@ impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
 /// Expose [`ruraft`](https://crates.io/crates/ruraft) Raft protocol implementation to a Python module.
 #[pymodule]
 pub fn prufty(py: Python, m: &PyModule) -> PyResult<()> {
-  // m.add_submodule(storage::submodule(py)?)?;
   m.add_submodule(types::submodule(py)?)?;
+
+  #[cfg(feature = "tokio")]
+  {
+    let tokio = PyModule::new(py, "tokio")?;
+    tokio.add_class::<raft::TokioRaft>()?;
+    m.add_submodule(tokio)?;
+  }
+
+  #[cfg(feature = "async-std")]
+  {
+    let async_std = PyModule::new(py, "async_std")?;
+    async_std.add_class::<raft::AsyncStdRaft>()?;
+    m.add_submodule(async_std)?;
+  }
   Ok(())
 }

@@ -1,6 +1,6 @@
 use super::*;
-use futures::StreamExt;
 use crate::IntoSupportedRuntime;
+use futures::StreamExt;
 
 macro_rules! leadership_watcher {
   ($($rt: literal), +$(,)?) => {
@@ -11,9 +11,11 @@ macro_rules! leadership_watcher {
         /// - `true` indicates the node becomes the leader.
         /// - `false` indicates the node is not the leader anymore.
         #[derive(Clone)]
-        #[pyclass(name = "LeadershipWatcher")]
+        #[cfg(feature = $rt)]
+        #[pyclass(name = "LeadershipWatcher", frozen)]
         pub struct [< $rt:camel LeadershipWatcher >](pub(crate) ruraft_core::LeadershipWatcher);
 
+        #[cfg(feature = $rt)]
         #[pymethods]
         impl [< $rt:camel LeadershipWatcher >] {
           pub fn next<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
@@ -182,7 +184,6 @@ where
 wrap_fut!("tokio" :: "SnapshotFuture");
 wrap_fut!("async-std" :: "SnapshotFuture");
 
-
 state_machine_futs!(
   "ApplyFuture",
   "BarrierFuture",
@@ -190,7 +191,6 @@ state_machine_futs!(
   "VerifyFuture",
   "LeadershipTransferFuture",
 );
-
 
 leadership_watcher!("tokio", "async-std");
 register!("tokio", "async-std");

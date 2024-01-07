@@ -1,4 +1,7 @@
-use std::{hash::{DefaultHasher, Hash, Hasher}, time::Duration};
+use std::{
+  hash::{DefaultHasher, Hash, Hasher},
+  time::Duration,
+};
 
 use ::either::Either;
 use nodecraft::{NodeAddress as RNodeAddress, NodeId as RNodeId, Transformable};
@@ -24,7 +27,7 @@ mod options;
 pub use options::*;
 
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
-#[pyclass]
+#[pyclass(frozen)]
 #[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Debug, derive_more::From)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -96,7 +99,7 @@ impl NodeId {
 }
 
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
-#[pyclass]
+#[pyclass(frozen)]
 #[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Debug)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -179,7 +182,7 @@ impl NodeAddress {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[pyclass]
+#[pyclass(frozen)]
 pub enum Role {
   /// The initial state of a Raft node.
   Follower,
@@ -360,7 +363,7 @@ impl Node {
 }
 
 /// A committed log, which may contains two kinds of data: a bytes array or [`Membership`].
-#[pyclass]
+#[pyclass(frozen)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CommittedLog(RCommittedLog<RNodeId, RNodeAddress, RaftData>);
 
@@ -418,7 +421,7 @@ impl CommittedLog {
 /// The information about the current stats of the Raft node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
-#[pyclass]
+#[pyclass(frozen)]
 pub struct RaftStats {
   /// The role of the raft.
   #[pyo3(get)]
@@ -491,6 +494,16 @@ impl From<ruraft_core::RaftStats<RNodeId, RNodeAddress>> for RaftStats {
 
 #[pymethods]
 impl RaftStats {
+  #[getter]
+  pub fn last_contact(&self) -> PyResult<Option<::chrono::Duration>> {
+    self
+      .last_contact
+      .map(|d| {
+        ::chrono::Duration::from_std(d).map_err(|e| PyErr::new::<PyTypeError, _>(e.to_string()))
+      })
+      .transpose()
+  }
+
   pub fn __eq__(&self, other: &Self) -> bool {
     self.eq(other)
   }
@@ -512,12 +525,11 @@ impl RaftStats {
   }
 }
 
-
 #[pymodule]
 pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
   m.add_class::<NodeId>()?;
   m.add_class::<NodeAddress>()?;
-  m.add_class::<Node>()?; 
+  m.add_class::<Node>()?;
   m.add_class::<CommittedLog>()?;
   m.add_class::<RaftStats>()?;
   m.add_class::<Role>()?;

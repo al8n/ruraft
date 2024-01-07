@@ -123,8 +123,7 @@ pub enum SupportedTransport<D, R: Runtime> {
   NativeTls(NativeTlsTransport<NodeId, DnsResolver<R>, D, LpeWire<NodeId, NodeAddress, D>>),
 }
 
-impl<D: Data, R: Runtime> Transport
-  for SupportedTransport<D, R>
+impl<D: Data, R: Runtime> Transport for SupportedTransport<D, R>
 where
   <R::Sleep as Future>::Output: Send + 'static,
 {

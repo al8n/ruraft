@@ -19,7 +19,7 @@ use smallvec::SmallVec;
 use crate::{FearlessCell, IntoSupportedRuntime, INLINED_U8};
 
 #[derive(Debug, Clone, Copy)]
-#[pyclass]
+#[pyclass(frozen)]
 pub struct SnapshotId(RSnapshotId);
 
 impl From<RSnapshotId> for SnapshotId {
@@ -79,7 +79,7 @@ impl SnapshotId {
 
 /// The meta data for the snapshot file
 #[derive(Clone)]
-#[pyclass]
+#[pyclass(frozen)]
 pub struct SnapshotMeta(RSnapshotMeta<NodeId, NodeAddress>);
 
 #[pymethods]
@@ -147,7 +147,7 @@ impl SnapshotMeta {
 
 /// Configurations for `FileSnapshotStorageOptions`
 #[derive(Clone)]
-#[pyclass]
+#[pyclass(frozen)]
 pub struct FileSnapshotStorageOptions(RFileSnapshotStorageOptions);
 
 impl From<FileSnapshotStorageOptions> for RFileSnapshotStorageOptions {

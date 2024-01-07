@@ -41,10 +41,12 @@ impl ReloadableOptions {
   /// Set the time in candidate state without
   /// a leader before we attempt an election.
   #[setter]
-  pub fn set_election_timeout(&mut self, timeout: ::chrono::Duration) -> PyResult<()>{
-    self.0.set_election_timeout(timeout.to_std().map_err(|e| {
-      PyErr::new::<PyTypeError, _>(e.to_string())
-    })?);
+  pub fn set_election_timeout(&mut self, timeout: ::chrono::Duration) -> PyResult<()> {
+    self.0.set_election_timeout(
+      timeout
+        .to_std()
+        .map_err(|e| PyErr::new::<PyTypeError, _>(e.to_string()))?,
+    );
     Ok(())
   }
 
@@ -59,10 +61,12 @@ impl ReloadableOptions {
   /// Set the time in follower state without
   /// a leader before we attempt an election.
   #[setter]
-  pub fn set_heartbeat_timeout(&mut self, timeout: ::chrono::Duration) -> PyResult<()>{
-    self.0.set_heartbeat_timeout(timeout.to_std().map_err(|e| {
-      PyErr::new::<PyTypeError, _>(e.to_string())
-    })?);
+  pub fn set_heartbeat_timeout(&mut self, timeout: ::chrono::Duration) -> PyResult<()> {
+    self.0.set_heartbeat_timeout(
+      timeout
+        .to_std()
+        .map_err(|e| PyErr::new::<PyTypeError, _>(e.to_string()))?,
+    );
     Ok(())
   }
 
@@ -75,10 +79,12 @@ impl ReloadableOptions {
 
   /// Set how often we check if we should perform a snapshot.
   #[setter]
-  pub fn set_snapshot_interval(&mut self, interval: ::chrono::Duration) -> PyResult<()>{
-    self.0.set_snapshot_interval(interval.to_std().map_err(|e| {
-      PyErr::new::<PyTypeError, _>(e.to_string())
-    })?);
+  pub fn set_snapshot_interval(&mut self, interval: ::chrono::Duration) -> PyResult<()> {
+    self.0.set_snapshot_interval(
+      interval
+        .to_std()
+        .map_err(|e| PyErr::new::<PyTypeError, _>(e.to_string()))?,
+    );
     Ok(())
   }
 
@@ -139,7 +145,7 @@ impl ReloadableOptions {
 #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
 #[non_exhaustive]
 #[repr(u8)]
-#[pyclass]
+#[pyclass(frozen)]
 pub enum SnapshotVersion {
   V1,
 }
@@ -203,12 +209,11 @@ impl SnapshotVersion {
   }
 }
 
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
 #[non_exhaustive]
 #[repr(u8)]
-#[pyclass]
+#[pyclass(frozen)]
 pub enum ProtocolVersion {
   V1,
 }
@@ -221,8 +226,6 @@ impl From<ruraft_core::options::ProtocolVersion> for ProtocolVersion {
     }
   }
 }
-
-
 
 impl From<ProtocolVersion> for ruraft_core::options::ProtocolVersion {
   fn from(v: ProtocolVersion) -> Self {

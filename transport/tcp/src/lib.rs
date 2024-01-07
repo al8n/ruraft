@@ -83,10 +83,14 @@ pub mod tests {
   async fn tls_stream_layer<R: Runtime>() -> crate::tls::Tls<R> {
     use std::sync::Arc;
 
-    use async_rustls::rustls::{self, Certificate, PrivateKey};
-
     use crate::tls::Tls;
+    use rustls::{
+      client::danger::ServerCertVerifier,
+      pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+      SignatureScheme,
+    };
 
+    #[derive(Debug)]
     struct SkipServerVerification;
 
     impl SkipServerVerification {
@@ -95,41 +99,79 @@ pub mod tests {
       }
     }
 
-    impl rustls::client::ServerCertVerifier for SkipServerVerification {
+    impl ServerCertVerifier for SkipServerVerification {
       fn verify_server_cert(
         &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-      ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
+        _now: rustls::pki_types::UnixTime,
+      ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+      }
+
+      fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+      ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+      }
+
+      fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+      ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+      }
+
+      fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+          SignatureScheme::RSA_PKCS1_SHA1,
+          SignatureScheme::ECDSA_SHA1_Legacy,
+          SignatureScheme::RSA_PKCS1_SHA256,
+          SignatureScheme::ECDSA_NISTP256_SHA256,
+          SignatureScheme::RSA_PKCS1_SHA384,
+          SignatureScheme::ECDSA_NISTP384_SHA384,
+          SignatureScheme::RSA_PKCS1_SHA512,
+          SignatureScheme::ECDSA_NISTP521_SHA512,
+          SignatureScheme::RSA_PSS_SHA256,
+          SignatureScheme::RSA_PSS_SHA384,
+          SignatureScheme::RSA_PSS_SHA512,
+          SignatureScheme::ED25519,
+          SignatureScheme::ED448,
+        ]
       }
     }
 
     let certs = test_cert_gen::gen_keys();
 
     let cfg = rustls::ServerConfig::builder()
-      .with_safe_defaults()
       .with_no_client_auth()
       .with_single_cert(
-        vec![Certificate(
+        vec![CertificateDer::from(
           certs.server.cert_and_key.cert.get_der().to_vec(),
         )],
-        PrivateKey(certs.server.cert_and_key.key.get_der().to_vec()),
+        PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+          certs.server.cert_and_key.key.get_der().to_vec(),
+        )),
       )
       .expect("bad certificate/key");
-    let acceptor = async_rustls::TlsAcceptor::from(Arc::new(cfg));
+    let acceptor = futures_rustls::TlsAcceptor::from(Arc::new(cfg));
 
     let cfg = rustls::ClientConfig::builder()
-      .with_safe_defaults()
+      .dangerous()
       .with_custom_certificate_verifier(SkipServerVerification::new())
       .with_no_client_auth();
-    let connector = async_rustls::TlsConnector::from(Arc::new(cfg));
+    let connector = futures_rustls::TlsConnector::from(Arc::new(cfg));
     Tls::new(
-      rustls::ServerName::IpAddress("127.0.0.1".parse().unwrap()),
+      rustls::pki_types::ServerName::IpAddress(
+        "127.0.0.1".parse::<std::net::IpAddr>().unwrap().into(),
+      ),
       acceptor,
       connector,
     )

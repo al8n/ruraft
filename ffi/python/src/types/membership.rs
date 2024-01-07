@@ -1,7 +1,7 @@
 use super::*;
 
 /// The suffrage of a server.
-#[pyclass]
+#[pyclass(frozen)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
@@ -259,7 +259,7 @@ impl MembershipBuilder {
 }
 
 /// The membership of the cluster.
-#[pyclass]
+#[pyclass(frozen)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -356,7 +356,7 @@ impl Membership {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[pyclass]
+#[pyclass(frozen)]
 pub struct LatestMembership {
   index: u64,
   membership: Membership,
@@ -388,11 +388,15 @@ impl From<ruraft_core::LatestMembership<RNodeId, RNodeAddress>> for LatestMember
 impl LatestMembership {
   /// Returns the index of the latest membership in use by Raft.
   #[getter]
-  pub fn index(&self) -> u64 { self.index }
+  pub fn index(&self) -> u64 {
+    self.index
+  }
 
   /// Returns the latest membership in use by Raft.
   #[getter]
-  pub fn membership(&self) -> Membership { self.membership.clone() }
+  pub fn membership(&self) -> Membership {
+    self.membership.clone()
+  }
 
   #[inline]
   pub fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
@@ -418,7 +422,6 @@ impl LatestMembership {
     format!("{:?}", self)
   }
 }
-
 
 pub fn register(m: &PyModule) -> PyResult<()> {
   m.add_class::<ServerSuffrage>()?;

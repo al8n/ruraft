@@ -10,8 +10,8 @@ use agnostic::{
   net::{Net, TcpListener, TcpStream},
   Runtime,
 };
-pub use async_rustls::{client, rustls::ServerName, server, TlsAcceptor, TlsConnector};
 use futures::{AsyncRead, AsyncWrite};
+pub use futures_rustls::{client, pki_types::ServerName, server, TlsAcceptor, TlsConnector};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};
 
@@ -20,7 +20,7 @@ pub type TlsTransport<I, A, D, W> = NetTransport<I, A, D, Tls<<A as AddressResol
 
 /// Tls stream layer
 pub struct Tls<R> {
-  domain: ServerName,
+  domain: ServerName<'static>,
   acceptor: Option<TlsAcceptor>,
   connector: TlsConnector,
   _marker: std::marker::PhantomData<R>,
@@ -29,7 +29,7 @@ pub struct Tls<R> {
 impl<R> Tls<R> {
   /// Create a new tcp stream layer
   #[inline]
-  pub fn new(domain: ServerName, acceptor: TlsAcceptor, connector: TlsConnector) -> Self {
+  pub fn new(domain: ServerName<'static>, acceptor: TlsAcceptor, connector: TlsConnector) -> Self {
     Self {
       domain,
       acceptor: Some(acceptor),

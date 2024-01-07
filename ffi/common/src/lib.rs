@@ -12,4 +12,3 @@ pub type Raft<F, D, R> = RaftCore<
   NoopSidecar<R>,
   R,
 >;
-
