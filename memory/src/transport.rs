@@ -377,7 +377,8 @@ where
     } else {
       req.entries().last().map(|e| e.index())
     };
-    let (rpc, handle) = Rpc::new(Request::AppendEntries(req), None);
+
+    let (rpc, handle) = Rpc::new::<Cursor<Vec<u8>>>(Request::AppendEntries(req), None);
 
     // Check if we have been already shutdown, otherwise the random choose
     // made by select statement below might pick consumerCh even if
@@ -486,8 +487,8 @@ where
   local_address: A::Address,
   local_id: I,
   resolver: Arc<A>,
-  consumer: RpcConsumer<I, A::Address, D, Cursor<Vec<u8>>>,
-  producer: RpcProducer<I, A::Address, D, Cursor<Vec<u8>>>,
+  consumer: RpcConsumer<I, A::Address, D>,
+  producer: RpcProducer<I, A::Address, D>,
   protocol_version: ProtocolVersion,
 }
 
@@ -714,16 +715,9 @@ where
 
   type Wire = W;
 
-  type SnapshotInstaller = Cursor<Vec<u8>>;
-
   fn consumer(
     &self,
-  ) -> RpcConsumer<
-    Self::Id,
-    <Self::Resolver as AddressResolver>::Address,
-    Self::Data,
-    Self::SnapshotInstaller,
-  > {
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
     self.consumer.clone()
   }
 
@@ -911,6 +905,7 @@ where
 pub(super) mod tests {
   use std::marker::PhantomData;
 
+  use futures::StreamExt;
   use ruraft_core::{
     log_batch,
     transport::{Address, AppendEntriesRequest, AppendEntriesResponse, WireError},
@@ -1062,6 +1057,7 @@ pub(super) mod tests {
 
     <A::Runtime as Runtime>::spawn_detach(async move {
       let consumer = t2.consumer();
+      futures::pin_mut!(consumer);
       let mut i = 0;
       let h = t2.header();
       loop {
@@ -1070,7 +1066,7 @@ pub(super) mod tests {
             stopped_tx.close();
             return;
           },
-          rpc = consumer.recv().fuse() => {
+          rpc = consumer.next().fuse() => {
             let rpc = rpc.unwrap();
             i += 1;
             rpc.respond(Response::AppendEntries(

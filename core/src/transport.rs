@@ -173,18 +173,10 @@ pub trait Transport: Send + Sync + 'static {
     Data = Self::Data,
   >;
 
-  /// Represents the type used by the transport to install the snapshot from remote.
-  type SnapshotInstaller: AsyncRead + Unpin + Send + 'static;
-
   /// Consumes and responds to incoming RPC requests.
   fn consumer(
     &self,
-  ) -> RpcConsumer<
-    Self::Id,
-    <Self::Resolver as AddressResolver>::Address,
-    Self::Data,
-    Self::SnapshotInstaller,
-  >;
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>;
 
   /// Provides the local unique identifier, helping in distinguishing this node from its peers.
   fn local_id(&self) -> &Self::Id;

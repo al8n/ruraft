@@ -11,6 +11,8 @@ metadata.workspace = true
 [features]
 default = ["sled"]
 
+metrics = ["ruraft-core/metrics", "ruraft-lightwal?/metrics", "ruraft-memory/metrics", "ruraft-snapshot/metrics", "ruraft-tcp/metrics"]
+
 tls = ["ruraft-tcp/tls"]
 native-tls = ["ruraft-tcp/native-tls"]
 
@@ -25,8 +27,11 @@ enum_dispatch = "0.3"
 nodecraft = { workspace = true }
 futures = { workspace = true }
 paste = "1"
+pin-project = { workspace = true }
 ruraft-core = { workspace = true }
-ruraft-lightwal = { workspace = true }
+ruraft-lightwal = { workspace = true, default-features = false, optional = true }
 ruraft-memory = { workspace = true }
 ruraft-snapshot = { workspace = true }
-ruraft-tcp = { workspace = true }
+ruraft-net = { workspace = true }
+ruraft-tcp = { workspace = true, default-features = false }
+ruraft-utils = { workspace = true }

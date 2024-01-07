@@ -896,7 +896,9 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   }
 
   // Verify that once we receive/respond another one can be sent.
-  let rpc = trans1.consumer().recv().await.unwrap();
+  let consumer = trans1.consumer();
+  futures::pin_mut!(consumer);
+  let rpc = consumer.next().await.unwrap();
   rpc
     .respond(Response::append_entries(resp1.clone()))
     .unwrap();

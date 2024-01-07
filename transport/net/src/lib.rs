@@ -348,12 +348,7 @@ where
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <A as AddressResolver>::Address>,
   bind_addr: SocketAddr,
-  consumer: RpcConsumer<
-    I,
-    <A as AddressResolver>::Address,
-    D,
-    LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
-  >,
+  consumer: RpcConsumer<I, <A as AddressResolver>::Address, D>,
   resolver: A,
   conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, smallvec::SmallVec<[S::Stream; 2]>>>,
   protocol_version: ProtocolVersion,
@@ -484,16 +479,9 @@ where
 
   type Data = D;
 
-  type SnapshotInstaller = LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>;
-
   fn consumer(
     &self,
-  ) -> RpcConsumer<
-    Self::Id,
-    <Self::Resolver as AddressResolver>::Address,
-    Self::Data,
-    Self::SnapshotInstaller,
-  > {
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
     self.consumer.clone()
   }
 
@@ -820,8 +808,7 @@ where
 struct RequestHandler<I, A, D, S: StreamLayer> {
   ln: S::Listener,
   local_header: Header<I, A>,
-  producer:
-    RpcProducer<I, A, D, LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>,
+  producer: RpcProducer<I, A, D>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A>>>,
@@ -911,12 +898,7 @@ where
     ctx: async_channel::Receiver<()>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
     conn: S::Stream,
-    producer: RpcProducer<
-      I,
-      A,
-      D,
-      LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
-    >,
+    producer: RpcProducer<I, A, D>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) where
@@ -983,12 +965,7 @@ where
     mut reader: BufReader<<S::Stream as Connection>::OwnedReadHalf>,
     writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
-    producer: RpcProducer<
-      I,
-      A,
-      D,
-      LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
-    >,
+    producer: RpcProducer<I, A, D>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<Option<BufReader<<S::Stream as Connection>::OwnedReadHalf>>, Error<I, Resolver, W>>
@@ -1027,10 +1004,19 @@ where
       }
       Request::Heartbeat(_) => {
         is_heartbeat = true;
-        (Rpc::new(req, None), None)
+        (
+          Rpc::new::<LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>(req, None),
+          None,
+        )
       }
-      Request::AppendEntries(_) => (Rpc::new(req, None), Some(reader)),
-      _ => (Rpc::new(req, None), None),
+      Request::AppendEntries(_) => (
+        Rpc::new::<LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>(req, None),
+        Some(reader),
+      ),
+      _ => (
+        Rpc::new::<LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>(req, None),
+        None,
+      ),
     };
 
     // Check for heartbeat fast-path

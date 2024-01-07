@@ -111,8 +111,7 @@ where
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
-  pub(super) rpc:
-    RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data, T::SnapshotInstaller>,
+  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
   /// last_contact is the last time we had contact from the
@@ -297,7 +296,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
-    rpc_reader: Option<T::SnapshotInstaller>,
+    rpc_reader: Option<Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>>,
   ) {
     // TODO: validate the request header
     match req {
@@ -653,7 +652,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
-    reader: T::SnapshotInstaller,
+    reader: Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>,
   ) {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
