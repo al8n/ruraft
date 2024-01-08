@@ -20,7 +20,7 @@ pub enum ProtocolVersion {
   V1 = 1,
 }
 
-/// UnknownProtocolVersion is returned when a protocol version is 
+/// UnknownProtocolVersion is returned when a protocol version is
 /// requested that is not understood by the server.
 #[derive(Debug)]
 pub struct UnknownProtocolVersion(u8);
@@ -124,9 +124,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get the time in follower state without a leader before we attempt an election."),
+      attrs(
+        doc = "Get the time in follower state without a leader before we attempt an election."
+      ),
     ),
-    setter(attrs(doc = "Set the time in follower state without a leader before we attempt an election. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set the time in follower state without a leader before we attempt an election. (Builder pattern)"
+    ),)
   )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   heartbeat_timeout: Duration,
@@ -136,9 +140,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get the time in candidate state without a leader before we attempt an election."),
+      attrs(
+        doc = "Get the time in candidate state without a leader before we attempt an election."
+      ),
     ),
-    setter(attrs(doc = "Set the time in candidate state without a leader before we attempt an election. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set the time in candidate state without a leader before we attempt an election. (Builder pattern)"
+    ),)
   )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   election_timeout: Duration,
@@ -150,9 +158,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get the time without an Apply operation before the leader sends an AppendEntry RPC to followers, to ensure a timely commit of log entries. Due to random staggering, may be delayed as much as 2x this value."),
+      attrs(
+        doc = "Get the time without an Apply operation before the leader sends an AppendEntry RPC to followers, to ensure a timely commit of log entries. Due to random staggering, may be delayed as much as 2x this value."
+      ),
     ),
-    setter(attrs(doc = "Set the time without an Apply operation before the leader sends an AppendEntry RPC to followers, to ensure a timely commit of log entries. Due to random staggering, may be delayed as much as 2x this value. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set the time without an Apply operation before the leader sends an AppendEntry RPC to followers, to ensure a timely commit of log entries. Due to random staggering, may be delayed as much as 2x this value. (Builder pattern)"
+    ),)
   )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   commit_timeout: Duration,
@@ -164,9 +176,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get the maximum number of append entries to send at once. We want to strike a balance between efficiency and avoiding waste if the follower is going to reject because of an inconsistent log."),
+      attrs(
+        doc = "Get the maximum number of append entries to send at once. We want to strike a balance between efficiency and avoiding waste if the follower is going to reject because of an inconsistent log."
+      ),
     ),
-    setter(attrs(doc = "Set the maximum number of append entries to send at once. We want to strike a balance between efficiency and avoiding waste if the follower is going to reject because of an inconsistent log. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set the maximum number of append entries to send at once. We want to strike a balance between efficiency and avoiding waste if the follower is going to reject because of an inconsistent log. (Builder pattern)"
+    ),)
   )]
   max_append_entries: usize,
 
@@ -178,9 +194,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get whether we should buffer apply channel to size `max_append_entries`. This enables batch log commitment,but breaks the timeout guarantee on `apply`. Specifically, a log can be added to the apply channel buffer but not actually be processed until after the specified timeout."),
+      attrs(
+        doc = "Get whether we should buffer apply channel to size `max_append_entries`. This enables batch log commitment,but breaks the timeout guarantee on `apply`. Specifically, a log can be added to the apply channel buffer but not actually be processed until after the specified timeout."
+      ),
     ),
-    setter(attrs(doc = "Set whether we should buffer apply channel to size `max_append_entries`. This enables batch log commitment,but breaks the timeout guarantee on `apply`. Specifically, a log can be added to the apply channel buffer but not actually be processed until after the specified timeout. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set whether we should buffer apply channel to size `max_append_entries`. This enables batch log commitment,but breaks the timeout guarantee on `apply`. Specifically, a log can be added to the apply channel buffer but not actually be processed until after the specified timeout. (Builder pattern)"
+    ),)
   )]
   batch_apply: bool,
 
@@ -191,9 +211,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get if we are a member of a cluster, and `remove_peer` is invoked for the local node, then we forget all peers and transition into the follower state. If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise, we can become a leader of a cluster containing only this node."),
+      attrs(
+        doc = "Get if we are a member of a cluster, and `remove_peer` is invoked for the local node, then we forget all peers and transition into the follower state. If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise, we can become a leader of a cluster containing only this node."
+      ),
     ),
-    setter(attrs(doc = "Set if we are a member of a cluster, and `remove_peer` is invoked for the local node, then we forget all peers and transition into the follower state. If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise, we can become a leader of a cluster containing only this node. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set if we are a member of a cluster, and `remove_peer` is invoked for the local node, then we forget all peers and transition into the follower state. If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise, we can become a leader of a cluster containing only this node. (Builder pattern)"
+    ),)
   )]
   shutdown_on_remove: bool,
 
@@ -204,9 +228,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get how many logs we leave after a snapshot. This is used so that we can quickly replay logs on a follower instead of being forced to send an entire snapshot. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."),
+      attrs(
+        doc = "Get how many logs we leave after a snapshot. This is used so that we can quickly replay logs on a follower instead of being forced to send an entire snapshot. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."
+      ),
     ),
-    setter(attrs(doc = "Set how many logs we leave after a snapshot. This is used so that we can quickly replay logs on a follower instead of being forced to send an entire snapshot. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set how many logs we leave after a snapshot. This is used so that we can quickly replay logs on a follower instead of being forced to send an entire snapshot. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"
+    ),)
   )]
   trailing_logs: u64,
 
@@ -218,9 +246,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get how often we check if we should perform a snapshot. We randomly stagger between this value and 2x this value to avoid the entire cluster from performing a snapshot at once. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."),
+      attrs(
+        doc = "Get how often we check if we should perform a snapshot. We randomly stagger between this value and 2x this value to avoid the entire cluster from performing a snapshot at once. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."
+      ),
     ),
-    setter(attrs(doc = "Set how often we check if we should perform a snapshot. We randomly stagger between this value and 2x this value to avoid the entire cluster from performing a snapshot at once. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set how often we check if we should perform a snapshot. We randomly stagger between this value and 2x this value to avoid the entire cluster from performing a snapshot at once. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"
+    ),)
   )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   snapshot_interval: Duration,
@@ -232,9 +264,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get how many outstanding logs there must be before we perform a snapshot. This is to prevent excessive snapshotting by replaying a small set of logs instead. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."),
+      attrs(
+        doc = "Get how many outstanding logs there must be before we perform a snapshot. This is to prevent excessive snapshotting by replaying a small set of logs instead. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."
+      ),
     ),
-    setter(attrs(doc = "Set how many outstanding logs there must be before we perform a snapshot. This is to prevent excessive snapshotting by replaying a small set of logs instead. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set how many outstanding logs there must be before we perform a snapshot. This is to prevent excessive snapshotting by replaying a small set of logs instead. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"
+    ),)
   )]
   snapshot_threshold: u64,
 
@@ -245,9 +281,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get how long the \"lease\" lasts for being the leader without being able to contact a quorum of nodes. If we reach this interval without contact, we will step down as leader."),
+      attrs(
+        doc = "Get how long the \"lease\" lasts for being the leader without being able to contact a quorum of nodes. If we reach this interval without contact, we will step down as leader."
+      ),
     ),
-    setter(attrs(doc = "Set how long the \"lease\" lasts for being the leader without being able to contact a quorum of nodes. If we reach this interval without contact, we will step down as leader. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set how long the \"lease\" lasts for being the leader without being able to contact a quorum of nodes. If we reach this interval without contact, we will step down as leader. (Builder pattern)"
+    ),)
   )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   leader_lease_timeout: Duration,
@@ -259,9 +299,13 @@ pub struct Options {
   #[viewit(
     getter(
       const,
-      attrs(doc = "Get if raft will restore a snapshot to the [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms than raft snapshotting. Snapshot metadata will still be used to initialize raft's configuration and index values."),
+      attrs(
+        doc = "Get if raft will restore a snapshot to the [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms than raft snapshotting. Snapshot metadata will still be used to initialize raft's configuration and index values."
+      ),
     ),
-    setter(attrs(doc = "Set if raft will restore a snapshot to the [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms than raft snapshotting. Snapshot metadata will still be used to initialize raft's configuration and index values. (Builder pattern)"),)
+    setter(attrs(
+      doc = "Set if raft will restore a snapshot to the [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms than raft snapshotting. Snapshot metadata will still be used to initialize raft's configuration and index values. (Builder pattern)"
+    ),)
   )]
   no_snapshot_restore_on_start: bool,
 }

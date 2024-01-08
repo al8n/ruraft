@@ -54,24 +54,6 @@ impl FinateStateMachineResponse {
 
 #[derive(Clone)]
 #[pyclass]
-pub struct ApplyBatchResponse(RApplyBatchResponse<FinateStateMachineResponse>);
-
-impl From<ApplyBatchResponse> for RApplyBatchResponse<FinateStateMachineResponse> {
-  fn from(value: ApplyBatchResponse) -> Self {
-    value.0
-  }
-}
-
-#[pymethods]
-impl ApplyBatchResponse {
-  #[new]
-  pub fn new(resps: SmallVec<[FinateStateMachineResponse; 2]>) -> Self {
-    Self(resps.into())
-  }
-}
-
-#[derive(Clone)]
-#[pyclass]
 pub struct FinateStateMachineSnapshotError(Arc<PyErr>);
 
 impl From<PyErr> for FinateStateMachineSnapshotError {

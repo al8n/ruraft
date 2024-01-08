@@ -84,11 +84,7 @@ impl Options {
   pub fn set_commit_timeout(&mut self, timeout: ::chrono::Duration) -> PyResult<()> {
     timeout
       .to_std()
-      .map(|d| {
-        self.0.set_commit_timeout(
-          d
-        )
-      })
+      .map(|d| self.0.set_commit_timeout(d))
       .map_err(|e| PyErr::new::<PyTypeError, _>(e.to_string()))
   }
 
@@ -240,7 +236,6 @@ impl Options {
     self.0.set_no_snapshot_restore_on_start(val);
   }
 }
-
 
 /// The subset of `Options` that may be reconfigured during
 /// runtime using `reload_options`. We choose to duplicate fields over embedding
@@ -522,7 +517,6 @@ impl ProtocolVersion {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-
 pub enum SupportedSnapshotStorageOptions {
   File(FileSnapshotStorageOptions),
   Memory,
@@ -538,12 +532,12 @@ pub struct SnapshotStorageOptions(SupportedSnapshotStorageOptions);
 #[pymethods]
 impl SnapshotStorageOptions {
   /// Constructor a file-based snapshot storage
-  /// 
+  ///
   /// ### Example
-  /// 
+  ///
   /// ```python
   /// from prafty.options import SnapshotStorageOptions
-  /// 
+  ///
   /// opts = SnapshotStorageOptions.file(options.FileSnapshotStorageOptions("/path/to/directory", 5))
   /// ```
   #[staticmethod]
@@ -552,12 +546,12 @@ impl SnapshotStorageOptions {
   }
 
   /// Constructor a memory-based snapshot storage
-  /// 
+  ///
   /// ### Example
-  /// 
+  ///
   /// ```python
   /// from prafty.options import SnapshotStorageOptions
-  /// 
+  ///
   /// opts = SnapshotStorageOptions.memory()
   /// ```
   #[staticmethod]
@@ -600,22 +594,24 @@ impl From<FileSnapshotStorageOptions> for ruraft_snapshot::sync::FileSnapshotSto
 #[pymethods]
 impl FileSnapshotStorageOptions {
   /// Constructor a file system based snapshot storage
-  /// 
+  ///
   /// ### Example
-  /// 
+  ///
   /// ```python
   /// from prafty import options
-  /// 
+  ///
   /// opts = options.FileSnapshotStorageOptions("/path/to/directory", 5)
   /// ```
   #[new]
   pub fn new(base: std::path::PathBuf, retain: usize) -> Self {
-    Self(ruraft_snapshot::sync::FileSnapshotStorageOptions::new(base, retain))
+    Self(ruraft_snapshot::sync::FileSnapshotStorageOptions::new(
+      base, retain,
+    ))
   }
 
   /// Returns the the base directory for snapshots
   #[getter]
-  pub fn path(&self) -> &std::path::PathBuf {
+  pub fn base(&self) -> &std::path::PathBuf {
     self.0.base()
   }
 

@@ -13,7 +13,7 @@ macro_rules! leadership_watcher {
         /// - `false` indicates the node is not the leader anymore.
         #[derive(Clone)]
         #[cfg(feature = $rt)]
-        #[pyclass(name = "LeadershipWatcher", frozen)]
+        #[pyclass(name = "LeadershipWatcher")]
         pub struct [< $rt:camel LeadershipWatcher >](pub(crate) ruraft_core::LeadershipWatcher);
 
         #[cfg(feature = $rt)]
@@ -25,6 +25,23 @@ macro_rules! leadership_watcher {
               futures::pin_mut!(this);
               Ok(this.next().await)
             })
+          }
+
+          fn __aiter__(slf: ::pyo3::PyRef<'_, Self>) -> ::pyo3::PyRef<Self> {
+            slf
+          }
+
+          fn __anext__(slf: ::pyo3::PyRefMut<'_, Self>) -> ::pyo3::PyResult<Option<::pyo3::PyObject>> {
+            let watcher = slf.0.clone();
+            let fut = ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(slf.py(), async move {
+              futures::pin_mut!(watcher);
+              match watcher.next().await {
+                Some(val) => Ok(val),
+                None => Err(::pyo3::exceptions::PyStopAsyncIteration::new_err("stream exhausted")),
+              }
+            })?;
+
+            Ok(Some(fut.into()))
           }
         }
       }
@@ -107,7 +124,7 @@ macro_rules! register {
     $(
       paste::paste! {
         #[cfg(feature = $rt)]
-        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> { 
+        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> {
           m.add_class::<[< $rt:camel ApplyFuture >]>()?;
           m.add_class::<[< $rt:camel BarrierFuture >]>()?;
           m.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
@@ -115,7 +132,7 @@ macro_rules! register {
           m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
           m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
           m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
- 
+
           Ok(())
         }
       }

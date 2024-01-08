@@ -1,5 +1,5 @@
 use super::*;
-use crate::{types::*, options::*};
+use crate::{options::*, types::*};
 
 macro_rules! raft {
   ($($rt: literal), +$(,)?) => {

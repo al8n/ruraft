@@ -56,6 +56,14 @@ impl ServerSuffrage {
     Self::Nonvoter
   }
 
+  pub fn is_nonvoter(&self) -> bool {
+    matches!(self, Self::Nonvoter)
+  }
+
+  pub fn is_voter(&self) -> bool {
+    matches!(self, Self::Voter)
+  }
+
   #[inline]
   pub fn __str__(&self) -> &'static str {
     match self {

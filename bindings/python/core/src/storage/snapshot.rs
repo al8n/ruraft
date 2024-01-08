@@ -2,15 +2,11 @@ use std::marker::PhantomData;
 
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use nodecraft::{NodeAddress, NodeId};
-use pyo3::{
-  exceptions::PyIOError,
-  prelude::*,
-  types::PyBytes,
-};
+use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
 use ruraft_core::storage::SnapshotMeta as RSnapshotMeta;
 use smallvec::SmallVec;
 
-use crate::{FearlessCell, IntoSupportedRuntime, INLINED_U8, types::SnapshotId};
+use crate::{types::SnapshotId, FearlessCell, IntoSupportedRuntime, INLINED_U8, utils::Buffer};
 
 pub struct SnapshotSink<R> {
   id: SnapshotId,
@@ -163,9 +159,10 @@ impl<R: IntoSupportedRuntime> SnapshotSource<R> {
       let source = unsafe { source.get_mut() };
       let mut buf: SmallVec<[u8; INLINED_U8]> = ::smallvec::smallvec![0; chunk_size];
       match source.read(&mut buf).await {
-        Ok(_) => {
-          buf.shrink_to_fit();
-          Ok(buf)
+        Ok(n) => {
+          buf.truncate(n);
+
+          Python::with_gil(|py| Buffer::new(buf).into_memory_view(py))
         }
         Err(e) => Err(PyErr::new::<PyIOError, _>(format!("{:?}", e))),
       }
@@ -182,8 +179,9 @@ impl<R: IntoSupportedRuntime> SnapshotSource<R> {
           .get_mut()
           .read_exact(&mut buf)
           .await
-          .map(|_| buf)
-          .map_err(|e| PyErr::new::<PyIOError, _>(format!("{:?}", e)))
+          .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+
+        Python::with_gil(|py| Buffer::new(buf).into_memory_view(py))
       }
     })
   }
@@ -211,7 +209,8 @@ impl<R: IntoSupportedRuntime> SnapshotSource<R> {
           Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("{:?}", e))),
         }
       }
-      Ok(buf)
+
+      Python::with_gil(|py| Buffer::new(buf).into_memory_view(py))
     })
   }
 }
@@ -367,6 +366,26 @@ macro_rules! wrap_source {
         pub fn read_all<'a>(&'a self, py: ::pyo3::Python<'a>, chunk_size: usize) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
           self.0.read_all(py, chunk_size)
         }
+
+        // fn __aenter__<'a>(slf: ::pyo3::PyRef<'a, Self>, py: ::pyo3::Python<'a>) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
+        //   let slf = slf.into_python();
+        //   future_into_py(py, async move { Ok(slf) })
+        // }
+
+        // fn __aexit__<'a>(
+        //   &self,
+        //   py: ::pyo3::Python<'a>,
+        //   _exc_type: &'a ::pyo3::PyAny,
+        //   _exc_value: &'a ::pyo3::PyAny,
+        //   _traceback: &'a ::pyo3::PyAny,
+        // ) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
+        //   let state = self.0.clone();
+        //   future_into_py(py, async move {
+        //       let mut state = state.lock().await;
+        //       *state = AsyncFileState::Closed;
+        //       Ok(())
+        //   })
+        // }
       }
     }
   };

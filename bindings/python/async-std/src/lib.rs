@@ -12,8 +12,8 @@ pub fn _internal(py: Python, m: &PyModule) -> PyResult<()> {
 
   let membershipm = types::membership::register(py)?;
   py.import("sys")?
-  .getattr("modules")?
-  .set_item("async_raft.membership", membershipm)?;
+    .getattr("modules")?
+    .set_item("async_raft.membership", membershipm)?;
 
   let optionsm = options::register(py)?;
   py.import("sys")?

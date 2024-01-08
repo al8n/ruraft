@@ -1,5 +1,6 @@
 use std::{
   hash::{DefaultHasher, Hash, Hasher},
+  net::{IpAddr, Ipv4Addr, Ipv6Addr},
   time::Duration,
 };
 
@@ -15,14 +16,13 @@ use ruraft_core::{
   Node as RNode,
 };
 
-use crate::{RaftData, options::*};
+use crate::{options::*, RaftData, fsm::FinateStateMachineResponse};
 
 pub mod futs;
 pub use futs::*;
 
 pub mod membership;
 pub use membership::*;
-
 
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
 #[pyclass(frozen)]
@@ -125,6 +125,7 @@ impl NodeAddress {
     })?))
   }
 
+  #[getter]
   pub fn port(&self) -> u16 {
     self.0.port()
   }
@@ -133,11 +134,6 @@ impl NodeAddress {
     let mut hasher = DefaultHasher::new();
     self.0.hash(&mut hasher);
     hasher.finish()
-  }
-
-  /// Deep copy of the [`NodeAddress`].
-  pub fn clone(&self) -> Self {
-    Self(self.0.clone())
   }
 
   /// Encode the [`NodeAddress`] into bytes.
@@ -237,11 +233,16 @@ impl Role {
     Self::Leader
   }
 
-  /// The terminal state of a Raft node.
-  #[inline]
-  #[staticmethod]
-  pub fn shutdown() -> Self {
-    Self::Shutdown
+  pub fn is_leader(&self) -> bool {
+    matches!(self, Self::Leader)
+  }
+
+  pub fn is_follower(&self) -> bool {
+    matches!(self, Self::Follower)
+  }
+
+  pub fn is_candidate(&self) -> bool {
+    matches!(self, Self::Candidate)
   }
 
   #[inline]
@@ -335,11 +336,6 @@ impl Node {
     hasher.finish()
   }
 
-  /// Deep copy of the [`NodeAddress`].
-  pub fn clone(&self) -> Self {
-    Self(self.0.clone())
-  }
-
   pub fn __str__(&self) -> String {
     self.0.to_string()
   }
@@ -413,6 +409,24 @@ impl CommittedLog {
       CompareOp::Gt => self.0 > other.0,
       CompareOp::Ge => self.0 >= other.0,
     }
+  }
+}
+
+#[derive(Clone)]
+#[pyclass(frozen)]
+pub struct ApplyBatchResponse(ruraft_core::ApplyBatchResponse<FinateStateMachineResponse>);
+
+impl From<ApplyBatchResponse> for ruraft_core::ApplyBatchResponse<FinateStateMachineResponse> {
+  fn from(value: ApplyBatchResponse) -> Self {
+    value.0
+  }
+}
+
+#[pymethods]
+impl ApplyBatchResponse {
+  #[new]
+  pub fn new(resps: ::smallvec::SmallVec<[FinateStateMachineResponse; 2]>) -> Self {
+    Self(resps.into())
   }
 }
 
@@ -674,10 +688,10 @@ pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
   subm.add_class::<NodeAddress>()?;
   subm.add_class::<Node>()?;
   subm.add_class::<CommittedLog>()?;
+  subm.add_class::<ApplyBatchResponse>()?;
   subm.add_class::<RaftStats>()?;
   subm.add_class::<Role>()?;
   subm.add_class::<SnapshotId>()?;
   subm.add_class::<SnapshotMeta>()?;
   Ok(subm)
 }
-

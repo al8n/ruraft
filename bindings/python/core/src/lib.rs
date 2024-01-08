@@ -12,6 +12,7 @@ pub mod raft;
 pub mod storage;
 pub mod transport;
 pub mod types;
+mod utils;
 
 const INLINED_U8: usize = 64;
 
@@ -123,5 +124,3 @@ impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
     SupportedRuntime::AsyncStd
   }
 }
-
-
