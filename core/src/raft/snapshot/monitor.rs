@@ -118,8 +118,6 @@ impl<R: AsyncRead> AsyncRead for CountingSnapshotSourceReader<R> {
 }
 
 impl<R: SnapshotSource> SnapshotSource for CountingSnapshotSourceReader<R> {
-  type Runtime = R::Runtime;
-
   type Id = R::Id;
 
   type Address = R::Address;

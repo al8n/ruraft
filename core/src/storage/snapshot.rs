@@ -25,10 +25,8 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   /// The address type of node.
   type Address: Address;
 
-  /// The sink type used to write snapshots.
-  type Sink: SnapshotSink<Runtime = Self::Runtime>;
   /// The source type used to read snapshots.
-  type Source: SnapshotSource<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
+  type Source: SnapshotSource<Id = Self::Id, Address = Self::Address>;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls
@@ -40,7 +38,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
     index: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<impl SnapshotSink, Self::Error>> + Send;
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.
@@ -55,10 +53,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static {
-  /// The async runtime used by the storage.
-  type Runtime: agnostic::Runtime;
-
+pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static { 
   /// The snapshot id for the parent snapshot.
   fn id(&self) -> SnapshotId;
 
@@ -69,8 +64,6 @@ pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static 
 /// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state
 /// from the source. On error, `cancel` will be invoked.
 pub trait SnapshotSource: futures::io::AsyncRead + Unpin + Send + Sync + 'static {
-  /// The async runtime used by the storage.
-  type Runtime: agnostic::Runtime;
   /// The id type used to identify nodes.
   type Id: Id;
   /// The address type of node.
