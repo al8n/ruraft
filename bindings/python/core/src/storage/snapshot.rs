@@ -1,181 +1,16 @@
-use std::{
-  hash::{DefaultHasher, Hash, Hasher},
-  marker::PhantomData,
-  path::PathBuf,
-};
+use std::marker::PhantomData;
 
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use nodecraft::{NodeAddress, NodeId};
 use pyo3::{
-  exceptions::{PyIOError, PyTypeError},
+  exceptions::PyIOError,
   prelude::*,
-  pyclass::CompareOp,
   types::PyBytes,
 };
-use ruraft_core::storage::{SnapshotId as RSnapshotId, SnapshotMeta as RSnapshotMeta};
-use ruraft_snapshot::sync::FileSnapshotStorageOptions as RFileSnapshotStorageOptions;
+use ruraft_core::storage::SnapshotMeta as RSnapshotMeta;
 use smallvec::SmallVec;
 
-use crate::{FearlessCell, IntoSupportedRuntime, INLINED_U8};
-
-#[derive(Debug, Clone, Copy)]
-#[pyclass(frozen)]
-pub struct SnapshotId(RSnapshotId);
-
-impl From<RSnapshotId> for SnapshotId {
-  fn from(value: RSnapshotId) -> Self {
-    Self(value)
-  }
-}
-
-impl From<SnapshotId> for RSnapshotId {
-  fn from(value: SnapshotId) -> Self {
-    value.0
-  }
-}
-
-#[pymethods]
-impl SnapshotId {
-  #[getter]
-  pub fn index(&self) -> u64 {
-    self.0.index()
-  }
-
-  #[getter]
-  pub fn term(&self) -> u64 {
-    self.0.term()
-  }
-
-  #[getter]
-  pub fn timestamp(&self) -> u64 {
-    self.0.timestamp()
-  }
-
-  pub fn __str__(&self) -> String {
-    format!("{}", self.0)
-  }
-
-  pub fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-
-  fn __hash__(&self) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    self.0.hash(&mut hasher);
-    hasher.finish()
-  }
-
-  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
-    match op {
-      CompareOp::Lt => self.0 < other.0,
-      CompareOp::Le => self.0 <= other.0,
-      CompareOp::Eq => self.0 == other.0,
-      CompareOp::Ne => self.0 != other.0,
-      CompareOp::Gt => self.0 > other.0,
-      CompareOp::Ge => self.0 >= other.0,
-    }
-  }
-}
-
-/// The meta data for the snapshot file
-#[derive(Clone)]
-#[pyclass(frozen)]
-pub struct SnapshotMeta(RSnapshotMeta<NodeId, NodeAddress>);
-
-#[pymethods]
-impl SnapshotMeta {
-  /// The term when the snapshot was taken.
-  #[getter]
-  pub fn term(&self) -> u64 {
-    self.0.term()
-  }
-
-  /// The index when the snapshot was taken.
-  #[getter]
-  pub fn index(&self) -> u64 {
-    self.0.index()
-  }
-
-  /// The timestamp when the snapshot was taken.
-  #[getter]
-  pub fn timestamp(&self) -> u64 {
-    self.0.timestamp()
-  }
-
-  /// The size of the snapshot, in bytes.
-  #[getter]
-  pub fn size(&self) -> u64 {
-    self.0.size()
-  }
-
-  /// The index of the membership when the snapshot was taken.
-  #[getter]
-  pub fn membership_index(&self) -> u64 {
-    self.0.membership_index()
-  }
-
-  /// The membership at the time when the snapshot was taken.
-  pub fn membership(&self) -> crate::types::Membership {
-    self.0.membership().clone().into()
-  }
-
-  #[inline]
-  pub fn __str__(&self) -> PyResult<String> {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
-    } else {
-      Ok(format!("{:?}", self.0))
-    }
-  }
-
-  #[inline]
-  pub fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-
-  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
-    match op {
-      CompareOp::Lt => self.0 < other.0,
-      CompareOp::Le => self.0 <= other.0,
-      CompareOp::Eq => self.0 == other.0,
-      CompareOp::Ne => self.0 != other.0,
-      CompareOp::Gt => self.0 > other.0,
-      CompareOp::Ge => self.0 >= other.0,
-    }
-  }
-}
-
-/// Configurations for `FileSnapshotStorageOptions`
-#[derive(Clone)]
-#[pyclass(frozen)]
-pub struct FileSnapshotStorageOptions(RFileSnapshotStorageOptions);
-
-impl From<FileSnapshotStorageOptions> for RFileSnapshotStorageOptions {
-  fn from(value: FileSnapshotStorageOptions) -> Self {
-    value.0
-  }
-}
-
-#[pymethods]
-impl FileSnapshotStorageOptions {
-  /// Constructor
-  #[new]
-  pub fn new(path: PathBuf, retain: usize) -> Self {
-    Self(RFileSnapshotStorageOptions::new(path, retain))
-  }
-
-  /// Returns the the base directory for snapshots
-  #[getter]
-  pub fn path(&self) -> &PathBuf {
-    self.0.base()
-  }
-
-  /// Get the number of snapshots should be retained
-  #[getter]
-  pub fn retain(&mut self) -> usize {
-    self.0.retain()
-  }
-}
+use crate::{FearlessCell, IntoSupportedRuntime, INLINED_U8, types::SnapshotId};
 
 pub struct SnapshotSink<R> {
   id: SnapshotId,
@@ -322,7 +157,6 @@ impl<R: IntoSupportedRuntime> SnapshotSource<R> {
   }
 
   /// Read data from the snapshot to bytes.
-  // #[pyo3(signature = (chunk_size = 1024))]
   pub fn read<'a>(&'a self, py: Python<'a>, chunk_size: usize) -> PyResult<&'a PyAny> {
     let source = self.source.clone();
     R::into_supported().future_into_py(py, async move {
@@ -355,7 +189,6 @@ impl<R: IntoSupportedRuntime> SnapshotSource<R> {
   }
 
   /// Read all data from the snapshot to bytes.
-  // #[pyo3(signature = (chunk_size = 1024))]
   pub fn read_all<'a>(&'a self, py: Python<'a>, chunk_size: usize) -> PyResult<&'a PyAny> {
     let source = self.source.clone();
     R::into_supported().future_into_py(py, async move {
@@ -424,14 +257,17 @@ macro_rules! wrap_sink {
 
       #[::pyo3::pymethods]
       impl [< $rt SnapshotSink >] {
+        /// Returns the id of the snapshot.
         pub fn id(&self) -> super::SnapshotId {
           self.0.id()
         }
 
+        /// Write bytes to the snapshot.
         pub fn write<'a>(&self, py: ::pyo3::Python<'a>, bytes: &'a ::pyo3::types::PyBytes) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
           self.0.write(py, bytes)
         }
 
+        /// Write all bytes to the snapshot.
         pub fn write_all<'a>(&self, py: ::pyo3::Python<'a>, bytes: &'a ::pyo3::types::PyBytes) -> ::pyo3::PyResult<&'a ::pyo3::PyAny> {
           self.0.write_all(py, bytes)
         }

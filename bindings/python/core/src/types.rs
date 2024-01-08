@@ -15,16 +15,14 @@ use ruraft_core::{
   Node as RNode,
 };
 
-use crate::RaftData;
+use crate::{RaftData, options::*};
 
-mod futs;
+pub mod futs;
 pub use futs::*;
 
-mod membership;
+pub mod membership;
 pub use membership::*;
 
-mod options;
-pub use options::*;
 
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
 #[pyclass(frozen)]
@@ -525,30 +523,161 @@ impl RaftStats {
   }
 }
 
-#[pymodule]
-pub fn types(_py: Python, m: &PyModule) -> PyResult<()> {
-  m.add_class::<NodeId>()?;
-  m.add_class::<NodeAddress>()?;
-  m.add_class::<Node>()?;
-  m.add_class::<CommittedLog>()?;
-  m.add_class::<RaftStats>()?;
-  m.add_class::<Role>()?;
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[pyclass(frozen)]
+pub struct SnapshotId(ruraft_core::storage::SnapshotId);
 
-  options::register(m)?;
-  membership::register(m)?;
-
-  #[cfg(feature = "tokio")]
-  futs::register_tokio(m)?;
-
-  #[cfg(feature = "async-std")]
-  futs::register_async_std(m)?;
-
-  Ok(())
+impl From<ruraft_core::storage::SnapshotId> for SnapshotId {
+  fn from(value: ruraft_core::storage::SnapshotId) -> Self {
+    Self(value)
+  }
 }
 
-// This function creates and returns the sled submodule.
-pub fn submodule(py: Python) -> PyResult<&PyModule> {
-  let module = PyModule::new(py, "types")?;
-  types(py, module)?;
-  Ok(module)
+impl From<SnapshotId> for ruraft_core::storage::SnapshotId {
+  fn from(value: SnapshotId) -> Self {
+    value.0
+  }
 }
+
+#[pymethods]
+impl SnapshotId {
+  #[getter]
+  pub fn index(&self) -> u64 {
+    self.0.index()
+  }
+
+  #[getter]
+  pub fn term(&self) -> u64 {
+    self.0.term()
+  }
+
+  #[getter]
+  pub fn timestamp(&self) -> u64 {
+    self.0.timestamp()
+  }
+
+  pub fn to_snapshot_identifier(&self) -> String {
+    format!("{}", self.0)
+  }
+
+  pub fn __str__(&self) -> String {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0).unwrap()
+    } else {
+      format!("{:?}", self.0)
+    }
+  }
+
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self.0)
+  }
+
+  fn __hash__(&self) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    self.0.hash(&mut hasher);
+    hasher.finish()
+  }
+
+  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+    match op {
+      CompareOp::Lt => self.0 < other.0,
+      CompareOp::Le => self.0 <= other.0,
+      CompareOp::Eq => self.0 == other.0,
+      CompareOp::Ne => self.0 != other.0,
+      CompareOp::Gt => self.0 > other.0,
+      CompareOp::Ge => self.0 >= other.0,
+    }
+  }
+}
+
+/// The meta data for the snapshot file
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[pyclass(frozen)]
+pub struct SnapshotMeta(ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>);
+
+impl From<ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>> for SnapshotMeta {
+  fn from(s: ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>) -> Self {
+    Self(s)
+  }
+}
+
+#[pymethods]
+impl SnapshotMeta {
+  /// The term when the snapshot was taken.
+  #[getter]
+  pub fn term(&self) -> u64 {
+    self.0.term()
+  }
+
+  /// The index when the snapshot was taken.
+  #[getter]
+  pub fn index(&self) -> u64 {
+    self.0.index()
+  }
+
+  /// The timestamp when the snapshot was taken.
+  #[getter]
+  pub fn timestamp(&self) -> u64 {
+    self.0.timestamp()
+  }
+
+  /// The size of the snapshot, in bytes.
+  #[getter]
+  pub fn size(&self) -> u64 {
+    self.0.size()
+  }
+
+  /// The index of the membership when the snapshot was taken.
+  #[getter]
+  pub fn membership_index(&self) -> u64 {
+    self.0.membership_index()
+  }
+
+  /// The membership at the time when the snapshot was taken.
+  pub fn membership(&self) -> crate::types::Membership {
+    self.0.membership().clone().into()
+  }
+
+  #[inline]
+  pub fn __str__(&self) -> PyResult<String> {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self.0))
+    }
+  }
+
+  #[inline]
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self.0)
+  }
+
+  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+    match op {
+      CompareOp::Lt => self.0 < other.0,
+      CompareOp::Le => self.0 <= other.0,
+      CompareOp::Eq => self.0 == other.0,
+      CompareOp::Ne => self.0 != other.0,
+      CompareOp::Gt => self.0 > other.0,
+      CompareOp::Ge => self.0 >= other.0,
+    }
+  }
+}
+
+pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
+  let subm = PyModule::new(py, "types")?;
+  subm.add_class::<NodeId>()?;
+  subm.add_class::<NodeAddress>()?;
+  subm.add_class::<Node>()?;
+  subm.add_class::<CommittedLog>()?;
+  subm.add_class::<RaftStats>()?;
+  subm.add_class::<Role>()?;
+  subm.add_class::<SnapshotId>()?;
+  subm.add_class::<SnapshotMeta>()?;
+  Ok(subm)
+}
+

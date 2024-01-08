@@ -18,7 +18,7 @@ macro_rules! wal {
       #[pymethods]
       impl [< $rt Wal >] {
         #[new]
-        pub fn new(db_options: DbOptions, snapshot_options: crate::storage::snapshot::FileSnapshotStorageOptions) -> pyo3::PyResult<Self> {
+        pub fn new(db_options: DbOptions, snapshot_options: crate::options::FileSnapshotStorageOptions) -> pyo3::PyResult<Self> {
           let snap = ruraft_snapshot::sync::FileSnapshotStorage::new(snapshot_options.into()).map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
           RustDb::new(db_options.into())
             .map(|db| Self(Arc::new(ruraft_lightwal::LightStorage::new(snap, db))))

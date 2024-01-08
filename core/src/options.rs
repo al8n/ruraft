@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use ruraft_utils::duration::PadDuration;
 use std::time::Duration;
 
@@ -22,10 +20,13 @@ pub enum ProtocolVersion {
   V1 = 1,
 }
 
+/// UnknownProtocolVersion is returned when a protocol version is 
+/// requested that is not understood by the server.
 #[derive(Debug)]
 pub struct UnknownProtocolVersion(u8);
 
 impl UnknownProtocolVersion {
+  /// Returns the version that was requested in byte.
   #[inline]
   pub const fn version(&self) -> u8 {
     self.0
@@ -69,6 +70,7 @@ pub enum SnapshotVersion {
 }
 
 impl SnapshotVersion {
+  /// Returns true if the snapshot version is valid.
   #[inline]
   pub const fn valid(&self) -> bool {
     match self {
@@ -77,10 +79,13 @@ impl SnapshotVersion {
   }
 }
 
+/// UnknownSnapshotVersion is returned when a snapshot version is
+/// requested that is not understood by the server.
 #[derive(Debug)]
 pub struct UnknownSnapshotVersion(u8);
 
 impl UnknownSnapshotVersion {
+  /// Returns the version that was requested in byte.
   #[inline]
   pub const fn version(&self) -> u8 {
     self.0
@@ -116,21 +121,25 @@ impl TryFrom<u8> for SnapshotVersion {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Options {
-  /// Allows a Raft server to inter-operate with older
-  /// Raft servers running an older version of the code. This is used to
-  /// version the wire protocol as well as Raft-specific log entries that
-  /// the server uses when _speaking_ to other servers. There is currently
-  /// no auto-negotiation of versions so all servers must be manually
-  /// configured with compatible versions. See ProtocolVersionMin and
-  /// ProtocolVersionMax for the versions of the protocol that this server
-  // can _understand_.
-  protocol_version: ProtocolVersion,
-
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get the time in follower state without a leader before we attempt an election."),
+    ),
+    setter(attrs(doc = "Set the time in follower state without a leader before we attempt an election. (Builder pattern)"),)
+  )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   heartbeat_timeout: Duration,
 
   /// Specifies the time in candidate state without contact
   /// from a leader before we attempt an election.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get the time in candidate state without a leader before we attempt an election."),
+    ),
+    setter(attrs(doc = "Set the time in candidate state without a leader before we attempt an election. (Builder pattern)"),)
+  )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   election_timeout: Duration,
 
@@ -138,6 +147,13 @@ pub struct Options {
   /// leader sends an AppendEntry RPC to followers, to ensure a timely commit of
   /// log entries.
   /// Due to random staggering, may be delayed as much as 2x this value.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get the time without an Apply operation before the leader sends an AppendEntry RPC to followers, to ensure a timely commit of log entries. Due to random staggering, may be delayed as much as 2x this value."),
+    ),
+    setter(attrs(doc = "Set the time without an Apply operation before the leader sends an AppendEntry RPC to followers, to ensure a timely commit of log entries. Due to random staggering, may be delayed as much as 2x this value. (Builder pattern)"),)
+  )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   commit_timeout: Duration,
 
@@ -145,6 +161,13 @@ pub struct Options {
   /// to send at once. We want to strike a balance between efficiency
   /// and avoiding waste if the follower is going to reject because of
   /// an inconsistent log.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get the maximum number of append entries to send at once. We want to strike a balance between efficiency and avoiding waste if the follower is going to reject because of an inconsistent log."),
+    ),
+    setter(attrs(doc = "Set the maximum number of append entries to send at once. We want to strike a balance between efficiency and avoiding waste if the follower is going to reject because of an inconsistent log. (Builder pattern)"),)
+  )]
   max_append_entries: usize,
 
   /// Indicates whether we should buffer apply channel
@@ -152,18 +175,39 @@ pub struct Options {
   /// but breaks the timeout guarantee on `apply`. Specifically,
   /// a log can be added to the apply channel buffer but not actually be
   /// processed until after the specified timeout.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get whether we should buffer apply channel to size `max_append_entries`. This enables batch log commitment,but breaks the timeout guarantee on `apply`. Specifically, a log can be added to the apply channel buffer but not actually be processed until after the specified timeout."),
+    ),
+    setter(attrs(doc = "Set whether we should buffer apply channel to size `max_append_entries`. This enables batch log commitment,but breaks the timeout guarantee on `apply`. Specifically, a log can be added to the apply channel buffer but not actually be processed until after the specified timeout. (Builder pattern)"),)
+  )]
   batch_apply: bool,
 
   /// If we are a member of a cluster, and `remove_peer` is invoked for the
   /// local node, then we forget all peers and transition into the follower state.
   /// If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise,
   /// we can become a leader of a cluster containing only this node.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get if we are a member of a cluster, and `remove_peer` is invoked for the local node, then we forget all peers and transition into the follower state. If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise, we can become a leader of a cluster containing only this node."),
+    ),
+    setter(attrs(doc = "Set if we are a member of a cluster, and `remove_peer` is invoked for the local node, then we forget all peers and transition into the follower state. If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise, we can become a leader of a cluster containing only this node. (Builder pattern)"),)
+  )]
   shutdown_on_remove: bool,
 
   /// Controls how many logs we leave after a snapshot. This is used
   /// so that we can quickly replay logs on a follower instead of being forced to
   /// send an entire snapshot. The value passed here is the initial setting used.
   /// This can be tuned during operation using `reload_config`.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get how many logs we leave after a snapshot. This is used so that we can quickly replay logs on a follower instead of being forced to send an entire snapshot. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."),
+    ),
+    setter(attrs(doc = "Set how many logs we leave after a snapshot. This is used so that we can quickly replay logs on a follower instead of being forced to send an entire snapshot. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"),)
+  )]
   trailing_logs: u64,
 
   /// Controls how often we check if we should perform a
@@ -171,6 +215,13 @@ pub struct Options {
   /// the entire cluster from performing a snapshot at once. The value passed
   /// here is the initial setting used. This can be tuned during operation using
   /// `reload_config`.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get how often we check if we should perform a snapshot. We randomly stagger between this value and 2x this value to avoid the entire cluster from performing a snapshot at once. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."),
+    ),
+    setter(attrs(doc = "Set how often we check if we should perform a snapshot. We randomly stagger between this value and 2x this value to avoid the entire cluster from performing a snapshot at once. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"),)
+  )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   snapshot_interval: Duration,
 
@@ -178,19 +229,40 @@ pub struct Options {
   /// we perform a snapshot. This is to prevent excessive snapshotting by
   /// replaying a small set of logs instead. The value passed here is the initial
   /// setting used. This can be tuned during operation using `reload_config`.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get how many outstanding logs there must be before we perform a snapshot. This is to prevent excessive snapshotting by replaying a small set of logs instead. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`."),
+    ),
+    setter(attrs(doc = "Set how many outstanding logs there must be before we perform a snapshot. This is to prevent excessive snapshotting by replaying a small set of logs instead. The value passed here is the initial setting used. This can be tuned during operation using `reload_config`. (Builder pattern)"),)
+  )]
   snapshot_threshold: u64,
 
   /// Used to control how long the "lease" lasts
   /// for being the leader without being able to contact a quorum
   /// of nodes. If we reach this interval without contact, we will
   /// step down as leader.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get how long the \"lease\" lasts for being the leader without being able to contact a quorum of nodes. If we reach this interval without contact, we will step down as leader."),
+    ),
+    setter(attrs(doc = "Set how long the \"lease\" lasts for being the leader without being able to contact a quorum of nodes. If we reach this interval without contact, we will step down as leader. (Builder pattern)"),)
+  )]
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   leader_lease_timeout: Duration,
 
   /// Controls if raft will restore a snapshot to the
-  /// FSM on start. This is useful if your FSM recovers from other mechanisms
+  /// [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms
   /// than raft snapshotting. Snapshot metadata will still be used to initialize
   /// raft's configuration and index values.
+  #[viewit(
+    getter(
+      const,
+      attrs(doc = "Get if raft will restore a snapshot to the [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms than raft snapshotting. Snapshot metadata will still be used to initialize raft's configuration and index values."),
+    ),
+    setter(attrs(doc = "Set if raft will restore a snapshot to the [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms than raft snapshotting. Snapshot metadata will still be used to initialize raft's configuration and index values. (Builder pattern)"),)
+  )]
   no_snapshot_restore_on_start: bool,
 }
 
@@ -207,7 +279,6 @@ impl Options {
   #[inline]
   pub const fn new() -> Self {
     Self {
-      protocol_version: ProtocolVersion::V1,
       heartbeat_timeout: Duration::from_millis(1000),
       election_timeout: Duration::from_millis(1000),
       commit_timeout: Duration::from_millis(50),
@@ -248,6 +319,99 @@ impl Options {
       election_timeout: other.election_timeout.to_std(),
       ..*self
     }
+  }
+
+  /// Set the time in follower state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub fn set_heartbeat_timeout(&mut self, timeout: Duration) {
+    self.heartbeat_timeout = timeout;
+  }
+
+  /// Set the time in candidate state without
+  /// a leader before we attempt an election.
+  #[inline]
+  pub fn set_election_timeout(&mut self, timeout: Duration) {
+    self.election_timeout = timeout;
+  }
+
+  /// Set the time without an Apply operation before the
+  /// leader sends an AppendEntry RPC to followers, to ensure a timely commit of
+  /// log entries.
+  /// Due to random staggering, may be delayed as much as 2x this value.
+  #[inline]
+  pub fn set_commit_timeout(&mut self, timeout: Duration) {
+    self.commit_timeout = timeout;
+  }
+
+  /// Sets the maximum number of append entries
+  /// to send at once. We want to strike a balance between efficiency
+  /// and avoiding waste if the follower is going to reject because of
+  /// an inconsistent log.
+  #[inline]
+  pub fn set_max_append_entries(&mut self, val: usize) {
+    self.max_append_entries = val;
+  }
+
+  /// Set whether we should buffer apply channel
+  /// to size `max_append_entries`. This enables batch log commitment,
+  /// but breaks the timeout guarantee on `apply`. Specifically,
+  /// a log can be added to the apply channel buffer but not actually be
+  /// processed until after the specified timeout.
+  #[inline]
+  pub fn set_batch_apply(&mut self, val: bool) {
+    self.batch_apply = val;
+  }
+
+  /// Set if we are a member of a cluster, and `remove_peer` is invoked for the
+  /// local node, then we forget all peers and transition into the follower state.
+  /// If `shutdown_on_remove` is set, we additional shutdown Raft. Otherwise,
+  /// we can become a leader of a cluster containing only this node
+  #[inline]
+  pub fn set_shutdown_on_remove(&mut self, val: bool) {
+    self.shutdown_on_remove = val;
+  }
+
+  /// Sets how many logs we leave after a snapshot. This is used
+  /// so that we can quickly replay logs on a follower instead of being forced to
+  /// send an entire snapshot. The value passed here is the initial setting used.
+  /// This can be tuned during operation using `reload_config`.
+  #[inline]
+  pub fn set_trailing_logs(&mut self, logs: u64) {
+    self.trailing_logs = logs;
+  }
+
+  /// Set how often we check if we should perform a snapshot.
+  #[inline]
+  pub fn set_snapshot_interval(&mut self, interval: Duration) {
+    self.snapshot_interval = interval;
+  }
+
+  /// Set how many outstanding logs there must be before
+  /// we perform a snapshot. This is to prevent excessive snapshotting by
+  /// replaying a small set of logs instead. The value passed here is the initial
+  /// setting used. This can be tuned during operation using `reload_config`.
+  #[inline]
+  pub fn set_snapshot_threshold(&mut self, val: u64) {
+    self.snapshot_threshold = val;
+  }
+
+  /// Set to control how long the "lease" lasts
+  /// for being the leader without being able to contact a quorum
+  /// of nodes. If we reach this interval without contact, we will
+  /// step down as leader.
+  #[inline]
+  pub fn set_leader_lease_timeout(&mut self, timeout: Duration) {
+    self.leader_lease_timeout = timeout;
+  }
+
+  /// Set if raft will restore a snapshot to the
+  /// [`FinateStateMachine`](crate::fsm::FinateStateMachine) on start. This is useful if your [`FinateStateMachine`](crate::fsm::FinateStateMachine) recovers from other mechanisms
+  /// than raft snapshotting. Snapshot metadata will still be used to initialize
+  /// raft's configuration and index values.
+  #[inline]
+  pub fn set_no_snapshot_restore_on_start(&mut self, val: bool) {
+    self.no_snapshot_restore_on_start = val;
   }
 }
 
@@ -461,18 +625,24 @@ impl ReloadableOptions {
   }
 }
 
+/// OptionsError is returned when an invalid configuration is
+/// provided to the Raft server.
 #[derive(Debug)]
 pub enum OptionsError {
   /// Returned when max_append_entries is zero, or larger than 1024
   BadMaxAppendEntries(usize),
   /// Returned when leader_lease_timeout larger than heartbeat_timeout
   BadLeaderLeaseTimeout {
+    /// The value of leader_lease_timeout
     leader_lease_timeout: Duration,
+    /// The value of heartbeat_timeout
     heartbeat_timeout: Duration,
   },
   /// Returns when election timeout less than heartbeat_timeout
   BadElectionTimeout {
+    /// The value of election_timeout
     election_timeout: Duration,
+    /// The value of heartbeat_timeout
     heartbeat_timeout: Duration,
   },
   /// Returned when commit_timeout is less than 5ms

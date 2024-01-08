@@ -276,7 +276,7 @@ where
     let leadership_transfer = self
       .candidate_from_leadership_transfer
       .load(Ordering::Acquire);
-    let protocol_version = self.options.protocol_version;
+    let protocol_version = self.transport.version();
 
     // For each peer, request a vote
     let vote_futs = latest.iter().filter_map(|(id, (addr, suffrage))| {

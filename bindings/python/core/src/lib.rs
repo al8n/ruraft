@@ -6,22 +6,22 @@ use agnostic::Runtime;
 use futures::{Future, FutureExt};
 use pyo3::{types::PyModule, *};
 
-mod fsm;
-mod raft;
+pub mod fsm;
+pub mod options;
+pub mod raft;
 pub mod storage;
-mod transport;
-mod types;
-mod utils;
+pub mod transport;
+pub mod types;
 
 const INLINED_U8: usize = 64;
 
-type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
+pub type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
 
-type RaftTransport<R> = ruraft_ffi::transport::SupportedTransport<RaftData, R>;
+pub type RaftTransport<R> = ruraft_bindings_common::transport::SupportedTransport<RaftData, R>;
 
-type RaftStorage<R> = ruraft_ffi::storage::SupportedStorage<RaftData, R>;
+pub type RaftStorage<R> = ruraft_bindings_common::storage::SupportedStorage<RaftData, R>;
 
-type Raft<R> = ruraft_ffi::Raft<fsm::FinateStateMachine<R>, RaftData, R>;
+pub type Raft<R> = ruraft_bindings_common::Raft<fsm::FinateStateMachine<R>, RaftData, R>;
 
 /// A fearless cell, which is highly unsafe
 ///
@@ -124,23 +124,4 @@ impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
   }
 }
 
-/// Expose [`ruraft`](https://crates.io/crates/ruraft) Raft protocol implementation to a Python module.
-#[pymodule]
-pub fn prufty(py: Python, m: &PyModule) -> PyResult<()> {
-  m.add_submodule(types::submodule(py)?)?;
 
-  #[cfg(feature = "tokio")]
-  {
-    let tokio = PyModule::new(py, "tokio")?;
-    tokio.add_class::<raft::TokioRaft>()?;
-    m.add_submodule(tokio)?;
-  }
-
-  #[cfg(feature = "async-std")]
-  {
-    let async_std = PyModule::new(py, "async_std")?;
-    async_std.add_class::<raft::AsyncStdRaft>()?;
-    m.add_submodule(async_std)?;
-  }
-  Ok(())
-}

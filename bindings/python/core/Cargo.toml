@@ -1,19 +1,34 @@
 [package]
-name = "prufty"
+name = "ruraft-python"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
-[lib]
-name = "prufty"
-crate-type = ["cdylib", "rlib"]
+# [lib]
+# name = "ruraft_python"
+# crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["metrics", "sled", "jammdb", "redb", "tokio", "serde"]
+default = ["metrics", "sled", "jammdb", "redb", "serde"]
 
-metrics = ["ruraft-lightwal/metrics", "ruraft-core/metrics", "ruraft-tcp/metrics", "ruraft-snapshot/metrics"]
+metrics = [
+  "ruraft-lightwal/metrics",
+  "ruraft-core/metrics",
+  "ruraft-tcp/metrics",
+  "ruraft-snapshot/metrics",
+]
 
-serde = ["dep:serde", "serde_json", "ruraft-core/serde", "ruraft-tcp/serde", "ruraft-snapshot/serde", "pyo3/serde", "nodecraft/serde", "smol_str/serde", "humantime-serde"]
+serde = [
+  "dep:serde",
+  "serde_json",
+  "ruraft-core/serde",
+  "ruraft-tcp/serde",
+  "ruraft-snapshot/serde",
+  "pyo3/serde",
+  "nodecraft/serde",
+  "smol_str/serde",
+  "humantime-serde",
+]
 
 tokio = ["agnostic/tokio", "pyo3-asyncio/tokio-runtime"]
 async-std = ["agnostic/async-std", "pyo3-asyncio/async-std-runtime"]
@@ -33,11 +48,17 @@ futures = { workspace = true }
 indexmap = "2"
 nodecraft = { workspace = true }
 paste = "1"
-pyo3 = { version = "0.20", features = ["smallvec", "indexmap", "either", "experimental-inspect", "chrono"] }
+pyo3 = { version = "0.20", features = [
+  "smallvec",
+  "indexmap",
+  "either",
+  "experimental-inspect",
+  "chrono",
+] }
 pyo3-asyncio = { version = "0.20", features = ["attributes"] }
 pin-project = { workspace = true }
 ruraft-core = { workspace = true }
-ruraft-ffi = { workspace = true }
+ruraft-bindings-common = { workspace = true }
 ruraft-lightwal = { workspace = true }
 ruraft-memory = { workspace = true }
 ruraft-snapshot = { workspace = true }

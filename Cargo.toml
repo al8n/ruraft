@@ -2,8 +2,8 @@
 members = [
   "autopilot",
   "core",
-  "ffi/common",
-  "ffi/python",
+  "bindings/common",
+  "bindings/python/*",
   "memory",
   "ruraft",
   "storage/snapshot",
@@ -28,7 +28,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-agnostic = "0.2" 
+agnostic = "0.2"
 async-channel = "2"
 async-lock = "3"
 bytes = "1.5"
@@ -40,7 +40,7 @@ nodecraft = { version = "0.2", features = ["transformable"] }
 pin-project = "1.1"
 pollster = "0.3"
 ruraft-core = { path = "./core" }
-ruraft-ffi = { path = "./ffi/common" }
+ruraft-bindings-common = { path = "./bindings/common" }
 ruraft-memory = { path = "./memory" }
 ruraft-net = { path = "./transport/net" }
 ruraft-snapshot = { path = "./storage/snapshot" }
@@ -57,4 +57,3 @@ tracing = { version = "0.1" }
 metrics = { version = "0.22" }
 viewit = { version = "0.1.5" }
 wg = { version = "0.4", features = ["async"] }
-

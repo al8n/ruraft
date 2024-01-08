@@ -1,5 +1,5 @@
 [package]
-name = "ruraft-ffi"
+name = "ruraft-bindings-common"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -11,7 +11,13 @@ metadata.workspace = true
 [features]
 default = ["sled"]
 
-metrics = ["ruraft-core/metrics", "ruraft-lightwal?/metrics", "ruraft-memory/metrics", "ruraft-snapshot/metrics", "ruraft-tcp/metrics"]
+metrics = [
+  "ruraft-core/metrics",
+  "ruraft-lightwal?/metrics",
+  "ruraft-memory/metrics",
+  "ruraft-snapshot/metrics",
+  "ruraft-tcp/metrics",
+]
 
 tls = ["ruraft-tcp/tls"]
 native-tls = ["ruraft-tcp/native-tls"]

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{storage::snapshot::SnapshotId, types::*};
+use crate::{types::*, options::*};
 
 macro_rules! raft {
   ($($rt: literal), +$(,)?) => {
@@ -13,7 +13,7 @@ macro_rules! raft {
         #[pymethods]
         impl [< $rt:camel Raft >] {
           #[staticmethod]
-          pub fn new() -> PyResult<Self> {
+          pub fn new() -> pyo3::PyResult<Self> {
             todo!()
           }
 
@@ -126,7 +126,7 @@ macro_rules! raft {
           /// since its effects will not be present in the `FinateStateMachine` after the restore.
           ///
           /// See also `apply_timeout`.
-          pub fn apply<'a>(&'a self, py: Python<'a>, data: RaftData) -> PyResult<&'a PyAny> {
+          pub fn apply<'a>(&'a self, py: pyo3::Python<'a>, data: RaftData) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel ApplyFuture >]::from(this.apply(data).await))
@@ -153,10 +153,10 @@ macro_rules! raft {
           /// See also `apply`.
           pub fn apply_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             data: RaftData,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel ApplyFuture >]::from(
@@ -165,7 +165,7 @@ macro_rules! raft {
                     data,
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -178,7 +178,7 @@ macro_rules! raft {
           /// must be run on the leader, or it will fail.
           ///
           /// See also `barrier_timeout`.
-          pub fn barrier<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
+          pub fn barrier<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel BarrierFuture >]::from(this.barrier().await))
@@ -195,9 +195,9 @@ macro_rules! raft {
           ///
           pub fn barrier_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel BarrierFuture >]::from(
@@ -205,7 +205,7 @@ macro_rules! raft {
                   .barrier_timeout(
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -215,7 +215,7 @@ macro_rules! raft {
           /// Used to ensure this peer is still the leader. It may be used
           /// to prevent returning stale data from the FSM after the peer has lost
           /// leadership.
-          pub fn verify_leader<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
+          pub fn verify_leader<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel VerifyFuture >]::from(this.verify_leader().await))
@@ -236,11 +236,11 @@ macro_rules! raft {
           /// See also `add_voter_timeout`.
           pub fn add_voter<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -265,12 +265,12 @@ macro_rules! raft {
           /// See also `add_voter`.
           pub fn add_voter_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -281,7 +281,7 @@ macro_rules! raft {
                     prev_index,
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -299,11 +299,11 @@ macro_rules! raft {
           /// See also `add_nonvoter_timeout`.
           pub fn add_nonvoter<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -323,12 +323,12 @@ macro_rules! raft {
           /// See also `add_nonvoter`.
           pub fn add_nonvoter_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -339,7 +339,7 @@ macro_rules! raft {
                     prev_index,
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -353,7 +353,7 @@ macro_rules! raft {
           /// For `prev_index`, see `add_voter`.
           ///
           /// See also `remove_timeout`.
-          pub fn remove<'a>(&'a self, py: Python<'a>, id: NodeId, prev_index: u64) -> PyResult<&'a PyAny> {
+          pub fn remove<'a>(&'a self, py: pyo3::Python<'a>, id: NodeId, prev_index: u64) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -371,11 +371,11 @@ macro_rules! raft {
           /// See also `remove`.
           pub fn remove_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             prev_index: u64,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -385,7 +385,7 @@ macro_rules! raft {
                     prev_index,
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -402,10 +402,10 @@ macro_rules! raft {
           /// See also `demote_voter_timeout`.
           pub fn demote_voter<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             prev_index: u64,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -424,11 +424,11 @@ macro_rules! raft {
           /// See also `demote_voter`.
           pub fn demote_voter_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             prev_index: u64,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -438,7 +438,7 @@ macro_rules! raft {
                     prev_index,
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -451,15 +451,15 @@ macro_rules! raft {
           /// if they are zero valued.
           pub fn reload_options<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             options: ReloadableOptions,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               this
                 .reload_options(options.into())
                 .await
-                .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
             })
           }
 
@@ -468,7 +468,7 @@ macro_rules! raft {
           /// It is safe to call this multiple times.
           ///
           /// Returns `true` if this call has shutdown the Raft and it was not shutdown already.
-          pub fn shutdown<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
+          pub fn shutdown<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move { Ok(this.shutdown().await) })
           }
@@ -478,7 +478,7 @@ macro_rules! raft {
           /// can be used to open the snapshot.
           ///
           /// See also `snapshot_timeout`.
-          pub fn snapshot<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
+          pub fn snapshot<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel SnapshotFuture >]::from(this.snapshot().await))
@@ -492,9 +492,9 @@ macro_rules! raft {
           /// See also `snapshot`.
           pub fn snapshot_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel SnapshotFuture >]::from(
@@ -502,7 +502,7 @@ macro_rules! raft {
                   .snapshot_timeout(
                     timeout
                       .to_std()
-                      .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                      .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                   )
                   .await,
               ))
@@ -525,18 +525,18 @@ macro_rules! raft {
           /// recovery into a fresh cluster, and should not be used in normal operations.
           ///
           /// See also `restore_timeout`.
-          pub fn restore<'a>(&'a self, py: Python<'a>, id: SnapshotId) -> PyResult<&'a PyAny> {
+          pub fn restore<'a>(&'a self, py: pyo3::Python<'a>, id: SnapshotId) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               let src = this
                 .open_snapshot(id.into())
                 .await
-                .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?;
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
               this
                 .restore(src)
                 .await
-                .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
             })
           }
 
@@ -560,26 +560,26 @@ macro_rules! raft {
           /// See also `restore`.
           pub fn restore_timeout<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: SnapshotId,
             timeout: ::chrono::Duration,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               let src = this
                 .open_snapshot(id.into())
                 .await
-                .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?;
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?;
 
               this
                 .restore_timeout(
                   src,
                   timeout
                     .to_std()
-                    .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))?,
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))?,
                 )
                 .await
-                .map_err(|e| PyErr::new::<exceptions::PyTypeError, _>(e.to_string()))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
             })
           }
 
@@ -593,7 +593,7 @@ macro_rules! raft {
           /// gracefully.
           ///
           /// See also `leadership_transfer_to_node`.
-          pub fn leadership_transfer<'a>(&'a self, py: Python<'a>, id: NodeId) -> PyResult<&'a PyAny> {
+          pub fn leadership_transfer<'a>(&'a self, py: pyo3::Python<'a>, id: NodeId) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel LeadershipTransferFuture >]::from(
@@ -610,10 +610,10 @@ macro_rules! raft {
           /// See also `leadership_transfer`.
           pub fn leadership_transfer_to_node<'a>(
             &'a self,
-            py: Python<'a>,
+            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
-          ) -> PyResult<&'a PyAny> {
+          ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel LeadershipTransferFuture >]::from(
@@ -626,7 +626,7 @@ macro_rules! raft {
 
           /// Return various internal stats. This
           /// should only be used for informative purposes or debugging.
-          pub fn stats<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
+          pub fn stats<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported()
               .future_into_py(py, async move { Ok(RaftStats::from(this.stats().await)) })

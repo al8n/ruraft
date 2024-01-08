@@ -423,11 +423,12 @@ impl LatestMembership {
   }
 }
 
-pub fn register(m: &PyModule) -> PyResult<()> {
-  m.add_class::<ServerSuffrage>()?;
-  m.add_class::<Server>()?;
-  m.add_class::<MembershipBuilder>()?;
-  m.add_class::<Membership>()?;
-  m.add_class::<LatestMembership>()?;
-  Ok(())
+pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
+  let subm = PyModule::new(py, "membership")?;
+  subm.add_class::<ServerSuffrage>()?;
+  subm.add_class::<Server>()?;
+  subm.add_class::<MembershipBuilder>()?;
+  subm.add_class::<Membership>()?;
+  subm.add_class::<LatestMembership>()?;
+  Ok(subm)
 }

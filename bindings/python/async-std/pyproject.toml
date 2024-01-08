@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "async-std-raft"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+description = "Rust's Raft implementation(ruraft) binding based on async-std runtime"
+license = { text = "MPL-2.0" }
+keywords = ["raft", "async", "rust", "distributed-system"]
+dependencies = ["asyncio>=3.4"]
+
+[project.optional-dependencies]
+docs = ["pdoc"]
+test = ["pytest", "python-dotenv", "pytest-asyncio"]
+
+[project.urls]
+Homepage = "https://github.com/al8n/ruraft"
+Repository = "https://github.com/al8n/ruraft"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "async_std_raft._internal"
+python-source = "python"

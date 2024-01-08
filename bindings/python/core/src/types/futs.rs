@@ -2,6 +2,7 @@ use super::*;
 use crate::IntoSupportedRuntime;
 use futures::StreamExt;
 
+#[macro_export]
 macro_rules! leadership_watcher {
   ($($rt: literal), +$(,)?) => {
     $(
@@ -18,7 +19,7 @@ macro_rules! leadership_watcher {
         #[cfg(feature = $rt)]
         #[pymethods]
         impl [< $rt:camel LeadershipWatcher >] {
-          pub fn next<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
+          pub fn next<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a PyAny> {
             let mut this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               futures::pin_mut!(this);
@@ -31,6 +32,7 @@ macro_rules! leadership_watcher {
   };
 }
 
+#[macro_export]
 macro_rules! wrap_fut {
   ($rt:literal::$ty:literal) => {
     paste::paste! {
@@ -39,8 +41,8 @@ macro_rules! wrap_fut {
       pub struct [< $rt:camel $ty >]([< $ty >] < ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] >);
 
       #[cfg(feature = $rt)]
-      impl From<ruraft_core::[< $ty >] <crate::fsm::FinateStateMachine<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, crate::RaftStorage<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, crate::RaftTransport<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime > ]>>> for [< $rt:camel $ty >] {
-        fn from(val: ruraft_core::[< $ty >] <crate::fsm::FinateStateMachine<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, crate::RaftStorage<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, crate::RaftTransport<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime > ]>>) -> Self {
+      impl From<ruraft_core::[< $ty >] <$crate::fsm::FinateStateMachine<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftStorage<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftTransport<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime > ]>>> for [< $rt:camel $ty >] {
+        fn from(val: ruraft_core::[< $ty >] <$crate::fsm::FinateStateMachine<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftStorage<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftTransport<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime > ]>>) -> Self {
           Self([< $ty >](Some(val)))
         }
       }
@@ -58,35 +60,36 @@ macro_rules! wrap_fut {
   };
 }
 
+#[macro_export]
 macro_rules! state_machine_futs {
   ($($ty:literal), +$(,)?) => {
     $(
       paste::paste! {
-        pub struct [< $ty >]<R>(Option<ruraft_core::[< $ty >] <crate::fsm::FinateStateMachine<R>, crate::RaftStorage<R>, crate::RaftTransport<R>>>)
+        pub struct [< $ty >]<R>(Option<ruraft_core::[< $ty >] <$crate::fsm::FinateStateMachine<R>, $crate::RaftStorage<R>, $crate::RaftTransport<R>>>)
         where
-          R: crate::IntoSupportedRuntime,
+          R: $crate::IntoSupportedRuntime,
           <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-          crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-          crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-          crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython;
+          $crate::storage::snapshot::SnapshotSink<R>: $crate::IntoPython,
+          $crate::storage::snapshot::SnapshotSource<R>: $crate::IntoPython,
+          $crate::fsm::FinateStateMachineSnapshot<R>: $crate::FromPython<Source = <$crate::fsm::FinateStateMachineSnapshot<R> as $crate::IntoPython>::Target> + $crate::IntoPython;
 
         impl<R> [< $ty >]<R>
         where
-          R: crate::IntoSupportedRuntime,
+          R: $crate::IntoSupportedRuntime,
           <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-          crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-          crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
-          crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target> + crate::IntoPython,
+          $crate::storage::snapshot::SnapshotSink<R>: $crate::IntoPython,
+          $crate::storage::snapshot::SnapshotSource<R>: $crate::IntoPython,
+          $crate::fsm::FinateStateMachineSnapshot<R>: $crate::FromPython<Source = <$crate::fsm::FinateStateMachineSnapshot<R> as $crate::IntoPython>::Target> + $crate::IntoPython,
         {
           pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             match self.0.take() {
               Some(f) => {
                 R::into_supported().future_into_py(py, async move {
-                  f.await.map_err(|e| PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
+                  f.await.map_err(|e| pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(e.to_string()))
                 })
               }
               None => {
-                Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(concat!(stringify!($ty), ".wait() have been consumed.")))
+                Err(pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(concat!(stringify!($ty), ".wait() have been consumed.")))
               }
             }
           }
@@ -104,18 +107,15 @@ macro_rules! register {
     $(
       paste::paste! {
         #[cfg(feature = $rt)]
-        pub fn [< register_ $rt:snake >](m: &PyModule) -> PyResult<()> {
-          let submodule = PyModule::new(m.py(), stringify!([< $rt:snake >]))?;
-
-          submodule.add_class::<[< $rt:camel ApplyFuture >]>()?;
-          submodule.add_class::<[< $rt:camel BarrierFuture >]>()?;
-          submodule.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
-          submodule.add_class::<[< $rt:camel VerifyFuture >]>()?;
-          submodule.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
-          submodule.add_class::<[< $rt:camel SnapshotFuture >]>()?;
-          submodule.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
-
-          m.add_submodule(submodule)?;
+        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> { 
+          m.add_class::<[< $rt:camel ApplyFuture >]>()?;
+          m.add_class::<[< $rt:camel BarrierFuture >]>()?;
+          m.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
+          m.add_class::<[< $rt:camel VerifyFuture >]>()?;
+          m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
+          m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
+          m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
+ 
           Ok(())
         }
       }
@@ -151,7 +151,7 @@ where
       Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
     > + crate::IntoPython,
 {
-  pub fn wait<'a>(&'a mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+  pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a PyAny> {
     use ruraft_core::storage::SnapshotSource;
 
     match self.0.take() {
@@ -165,16 +165,16 @@ where
                 crate::storage::snapshot::SnapshotSource::new(meta, cell),
               ))
             }
-            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            Err(e) => Err(pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(
               e.to_string(),
             )),
           },
-          Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+          Err(e) => Err(pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(
             e.to_string(),
           )),
         }
       }),
-      None => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+      None => Err(pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(
         "SnapshotFuture.wait() have been consumed.",
       )),
     }
