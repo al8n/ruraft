@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use ruraft_python::{*, storage::snapshot};
+use ruraft_python::{storage::snapshot, *};
 
 /// Expose [`ruraft`](https://crates.io/crates/ruraft) Raft protocol implementation to a Python module.
 #[pymodule]

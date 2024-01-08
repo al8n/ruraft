@@ -2,7 +2,6 @@ use std::{
   borrow::Cow,
   collections::HashMap,
   fmt::Display,
-  future::Future,
   sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -32,7 +31,7 @@ use crate::{
   sidecar::{NoopSidecar, Sidecar},
   storage::{
     CommittedLog, CommittedLogKind, Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage,
-    StableStorage, Storage, StorageError,
+    StableStorage, Storage, StorageError, SnapshotSource,
   },
   transport::{AddressResolver, Transport},
   FinateStateMachineError, FinateStateMachineSnapshot,
@@ -295,7 +294,6 @@ where
   /// Used to prevent concurrent shutdown
   shutdown: Arc<Shutdown>,
   transport: Arc<T>,
-  storage: Arc<S>,
 
   /// Stores the initial options to use. This is the most recent one
   /// provided. All reads of config values should use the options() helper method
@@ -308,26 +306,13 @@ where
   /// for any other operation e.g. reading config using options().
   reload_options_lock: Mutex<()>,
 
-  user_snapshot_tx: async_channel::Sender<
-    oneshot::Sender<
-      Result<
-        std::pin::Pin<
-          Box<
-            dyn Future<
-                Output = Result<
-                  <S::Snapshot as SnapshotStorage>::Source,
-                  <S::Snapshot as SnapshotStorage>::Error,
-                >,
-              > + Send,
-          >,
-        >,
-        Error<F, S, T>,
-      >,
-    >,
-  >,
+  user_snapshot_tx: async_channel::Sender<oneshot::Sender<Result<SnapshotSource<S>, Error<F, S, T>>>>,
 
   user_restore_tx: async_channel::Sender<(
-    <S::Snapshot as SnapshotStorage>::Source,
+    (
+      SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+      Box<dyn futures::AsyncRead + Unpin + Send + Sync + 'static>,
+    ),
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
 
@@ -563,7 +548,7 @@ where
     let num_snapshots = snaps.len();
 
     for snap in snaps {
-      let Ok(source) = ss.open(&snap.id()).await else {
+      let Ok((_meta, source)) = ss.open(snap.id()).await else {
         // Skip this one and try the next. We will detect if we
         // couldn't open any snapshots.
         continue;
@@ -933,7 +918,7 @@ where
     .spawn();
 
     SnapshotRunner::<F, S, T, R> {
-      store: storage.clone(),
+      store: storage,
       state: state.clone(),
       fsm_snapshot_tx,
       committed_membership_tx,
@@ -955,7 +940,6 @@ where
       state,
       shutdown,
       transport,
-      storage,
       membership_change_tx,
       apply_tx,
       user_snapshot_tx,
@@ -1043,8 +1027,8 @@ where
     let id = meta.id();
     tracing::info!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), "starting restore from snapshot");
 
-    match s.open(&id).await {
-      Ok(source) => {
+    match s.open(id).await {
+      Ok((meta, source)) => {
         if let Err(e) =
           FSMRunner::<F, S, T, R>::fsm_restore_and_measure(fsm, source, meta.size()).await
         {

@@ -6,7 +6,7 @@ use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
 use ruraft_core::storage::SnapshotMeta as RSnapshotMeta;
 use smallvec::SmallVec;
 
-use crate::{types::SnapshotId, FearlessCell, IntoSupportedRuntime, INLINED_U8, utils::Buffer};
+use crate::{types::SnapshotId, utils::Buffer, FearlessCell, IntoSupportedRuntime, INLINED_U8};
 
 pub struct SnapshotSink<R> {
   id: SnapshotId,

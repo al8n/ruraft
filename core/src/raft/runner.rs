@@ -28,8 +28,8 @@ use crate::{
   raft::snapshot::SnapshotRestoreMonitor,
   sidecar::Sidecar,
   storage::{
-    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotStorage,
-    StableStorage, Storage, StorageError,
+    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotMeta, SnapshotSink,
+    SnapshotStorage, StableStorage, Storage, StorageError,
   },
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatRequest,
@@ -156,7 +156,10 @@ where
   )>,
   pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
   pub(super) user_restore_rx: async_channel::Receiver<(
-    <S::Snapshot as SnapshotStorage>::Source,
+    (
+      SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+      Box<dyn futures::AsyncRead + Unpin + Send + Sync + 'static>,
+    ),
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
   pub(super) leader_tx: async_channel::Sender<bool>,

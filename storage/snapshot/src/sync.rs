@@ -15,7 +15,7 @@ use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
-  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
+  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotStorage},
   transport::{Address, Id, Transformable},
   CheapClone,
 };
@@ -314,11 +314,9 @@ where
   R: Runtime,
 {
   type Error = FileSnapshotStorageError;
-  type Sink = FileSnapshotSink<Self::Id, Self::Address, R>;
   type Id = I;
   type Address = A;
   type Runtime = R;
-  type Source = FileSnapshotSource<Self::Id, Self::Address, R>;
 
   async fn create(
     &self,
@@ -327,7 +325,7 @@ where
     term: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<Self::Sink, Self::Error> {
+  ) -> Result<impl SnapshotSink, Self::Error> {
     // Create a new path
     let id = SnapshotId::new(index, term);
     let path = self.path.join(id.temp_name());
@@ -410,7 +408,13 @@ where
   }
 
   /// Open takes a snapshot ID and provides a ReadCloser.
-  async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
+  async fn open(&self, id: SnapshotId) -> Result<
+    (
+      SnapshotMeta<Self::Id, Self::Address>,
+      impl futures::AsyncRead + Send + Sync + Unpin + 'static,
+    ),
+    Self::Error,
+  > {
     let filename = id.name();
     // Get the metadata
     let meta = self.read_meta(filename.as_str()).map_err(|e| {
@@ -444,11 +448,9 @@ where
       e
     })?;
 
-    Ok(FileSnapshotSource {
-      meta,
+    Ok((meta.meta, FileSnapshotSource {
       file: BufReader::new(state_file),
-      _runtime: std::marker::PhantomData,
-    })
+    }))
   }
 }
 
@@ -520,17 +522,12 @@ impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for FileSnapshotMeta<I, A
 impl<I: core::hash::Hash + Eq, A: PartialEq> Eq for FileSnapshotMeta<I, A> {}
 
 /// The [`SnapshotSource`] implementor for [`FileSnapshotStorage`].
-pub struct FileSnapshotSource<I, A, R> {
-  meta: FileSnapshotMeta<I, A>,
+#[repr(transparent)]
+pub struct FileSnapshotSource {
   file: BufReader<File>,
-  _runtime: std::marker::PhantomData<R>,
 }
 
-impl<I, A, R> futures::io::AsyncRead for FileSnapshotSource<I, A, R>
-where
-  I: Send + Sync + Unpin + 'static,
-  A: Send + Sync + Unpin + 'static,
-  R: Send + Sync + Unpin + 'static,
+impl futures::io::AsyncRead for FileSnapshotSource
 {
   fn poll_read(
     mut self: Pin<&mut Self>,
@@ -538,21 +535,6 @@ where
     buf: &mut [u8],
   ) -> Poll<io::Result<usize>> {
     Poll::Ready(self.file.read(buf))
-  }
-}
-
-impl<I, A, R> SnapshotSource for FileSnapshotSource<I, A, R>
-where
-  I: Id + Unpin,
-  A: Address + Unpin,
-  R: Runtime,
-{
-  type Runtime = R;
-  type Id = I;
-  type Address = A;
-
-  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
-    &self.meta.meta
   }
 }
 
@@ -742,8 +724,6 @@ where
   A::Error: Unpin,
   R: Runtime,
 {
-  type Runtime = R;
-
   fn id(&self) -> SnapshotId {
     self.meta.meta.id()
   }
@@ -907,7 +887,7 @@ pub mod tests {
     assert_eq!(latest.size, 13);
 
     // Read the snapshot
-    let mut src = snap.open(&latest.id()).await.unwrap();
+    let (_meta, mut src) = snap.open(latest.id()).await.unwrap();
 
     // Read out everything
     let mut buf = Vec::new();

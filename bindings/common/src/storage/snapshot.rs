@@ -1,6 +1,6 @@
 use agnostic::Runtime;
 use nodecraft::{NodeAddress, NodeId};
-use ruraft_core::storage::{SnapshotId, SnapshotStorage};
+use ruraft_core::storage::{SnapshotId, SnapshotStorage, SnapshotMeta, SnapshotSink};
 
 use std::{
   pin::Pin,
@@ -9,7 +9,7 @@ use std::{
 
 pub enum SupportedSnapshotSink<R> {
   File(ruraft_snapshot::sync::FileSnapshotSink<NodeId, NodeAddress, R>),
-  Memory(ruraft_memory::storage::snapshot::MemorySnapshotSink<NodeId, NodeAddress, R>),
+  Memory(ruraft_memory::storage::snapshot::MemorySnapshotSink<NodeId, NodeAddress>),
 }
 
 impl<R: Runtime> futures::AsyncWrite for SupportedSnapshotSink<R> {
@@ -40,8 +40,6 @@ impl<R: Runtime> futures::AsyncWrite for SupportedSnapshotSink<R> {
 }
 
 impl<R: Runtime> ruraft_core::storage::SnapshotSink for SupportedSnapshotSink<R> {
-  type Runtime = R;
-
   fn id(&self) -> SnapshotId {
     match self {
       Self::File(f) => f.id(),
@@ -57,12 +55,12 @@ impl<R: Runtime> ruraft_core::storage::SnapshotSink for SupportedSnapshotSink<R>
   }
 }
 
-pub enum SupportedSnapshotSource<R> {
-  File(ruraft_snapshot::sync::FileSnapshotSource<NodeId, NodeAddress, R>),
-  Memory(ruraft_memory::storage::snapshot::MemorySnapshotSource<NodeId, NodeAddress, R>),
+pub enum SupportedSnapshotSource {
+  File(ruraft_snapshot::sync::FileSnapshotSource),
+  Memory(ruraft_memory::storage::snapshot::MemorySnapshotSource),
 }
 
-impl<R: Runtime> futures::AsyncRead for SupportedSnapshotSource<R> {
+impl futures::AsyncRead for SupportedSnapshotSource {
   fn poll_read(
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
@@ -75,22 +73,6 @@ impl<R: Runtime> futures::AsyncRead for SupportedSnapshotSource<R> {
   }
 }
 
-impl<R: Runtime> ruraft_core::storage::SnapshotSource for SupportedSnapshotSource<R> {
-  /// The async runtime used by the storage.
-  type Runtime = R;
-  /// The id type used to identify nodes.
-  type Id = NodeId;
-  /// The address type of node.
-  type Address = NodeAddress;
-
-  /// Returns the snapshot meta information.
-  fn meta(&self) -> &ruraft_core::storage::SnapshotMeta<Self::Id, Self::Address> {
-    match self {
-      Self::File(f) => f.meta(),
-      Self::Memory(f) => f.meta(),
-    }
-  }
-}
 
 #[derive(derive_more::From, derive_more::Display)]
 pub enum SupportedSnapshotStorageError {
@@ -116,9 +98,7 @@ pub enum SupportedSnapshotStorage<R> {
 }
 
 impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
-  type Error = SupportedSnapshotStorageError;
-  type Sink = SupportedSnapshotSink<R>;
-  type Source = SupportedSnapshotSource<R>;
+  type Error = SupportedSnapshotStorageError; 
   type Runtime = R;
   type Id = NodeId;
   type Address = NodeAddress;
@@ -130,7 +110,7 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
     term: u64,
     membership: ruraft_core::membership::Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<Self::Sink, Self::Error> {
+  ) -> Result<impl SnapshotSink, Self::Error> {
     match self {
       Self::File(f) => f
         .create(version, term, index, membership, membership_index)
@@ -160,7 +140,13 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
     }
   }
 
-  async fn open(&self, id: &ruraft_core::storage::SnapshotId) -> Result<Self::Source, Self::Error> {
+  async fn open(&self, id: ruraft_core::storage::SnapshotId) -> Result<
+  (
+    SnapshotMeta<Self::Id, Self::Address>,
+    impl futures::AsyncRead + Send + Sync + Unpin + 'static,
+  ),
+  Self::Error,
+> {
     match self {
       Self::File(f) => f
         .open(id)

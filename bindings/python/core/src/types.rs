@@ -16,7 +16,7 @@ use ruraft_core::{
   Node as RNode,
 };
 
-use crate::{options::*, RaftData, fsm::FinateStateMachineResponse};
+use crate::{fsm::FinateStateMachineResponse, options::*, RaftData};
 
 pub mod futs;
 pub use futs::*;

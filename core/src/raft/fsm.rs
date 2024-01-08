@@ -15,8 +15,8 @@ use crate::{
   error::Error,
   fsm::{FinateStateMachine, FinateStateMachineSnapshot},
   storage::{
-    CommittedLog, CommittedLogBatch, CommittedLogKind, LogKind, SnapshotId, SnapshotSource,
-    SnapshotStorage, Storage,
+    CommittedLog, CommittedLogBatch, CommittedLogKind, LogKind, SnapshotId, SnapshotStorage,
+    Storage,
   },
   transport::Transport,
 };
@@ -152,9 +152,8 @@ where
               }) => {
                 // Open the snapshot
                 let store = storage.snapshot_store();
-                match store.open(&id).await {
-                  Ok(source) => {
-                    let meta = source.meta();
+                match store.open(id).await {
+                  Ok((meta, source)) => {
                     let size = meta.size();
                     let index = meta.index();
                     let term = meta.term();
@@ -257,7 +256,7 @@ where
 
   pub(super) async fn fsm_restore_and_measure(
     fsm: &F,
-    source: <S::Snapshot as SnapshotStorage>::Source,
+    source: impl futures::AsyncRead + Unpin + Send + Sync + 'static,
     snapshot_size: u64,
   ) -> Result<(), F::Error> {
     #[cfg(feature = "metrics")]

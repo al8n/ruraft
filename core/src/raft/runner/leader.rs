@@ -13,9 +13,7 @@ use super::*;
 use crate::{
   observer::{observe, Observation},
   raft::{ApplyRequest, ApplySender, LastSnapshot},
-  storage::{
-    remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotSource, StorageError,
-  },
+  storage::{remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, StorageError},
   transport::{TimeoutNowRequest, TransportError},
   utils::override_notify_bool,
 };
@@ -345,7 +343,7 @@ where
           saturation_metric.working();
 
           match ur {
-            Ok((src, tx)) => {
+            Ok(((meta, src), tx)) => {
               if leader_state.leadership_transfer_in_progress.load(Ordering::Acquire) {
                 let err = Error::<F, S, T>::leadership_transfer_in_progress();
                 tracing::debug!(target = "ruraft.leader", err=%err, "restore snapshot request received, but leadership transfer in progress");
@@ -356,7 +354,7 @@ where
                 continue;
               }
 
-              if tx.send(self.restore_user_snapshot(&mut leader_state, src).await).is_err() {
+              if tx.send(self.restore_user_snapshot(&mut leader_state, meta, src).await).is_err() {
                 tracing::error!(target = "ruraft.leader", "user restore snapshot response receiver closed");
               }
             }
@@ -912,7 +910,8 @@ where
   async fn restore_user_snapshot(
     &self,
     leader_state: &mut LeaderState<F, S, T>,
-    mut src: <S::Snapshot as SnapshotStorage>::Source,
+    meta: SnapshotMeta<S::Id, S::Address>,
+    mut src: Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>,
   ) -> Result<(), Error<F, S, T>> {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
@@ -948,7 +947,6 @@ where
     // replication will fault and send the snapshot.
     let term = self.current_term();
     let mut last_index = self.last_index();
-    let meta = src.meta();
     let meta_index = meta.index();
     let meta_size = meta.size();
     if meta_index > last_index {

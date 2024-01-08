@@ -15,7 +15,7 @@ use futures::{AsyncRead, AsyncWrite, FutureExt};
 use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
-  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
+  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotStorage},
   transport::{Address, Id},
 };
 
@@ -64,8 +64,6 @@ where
   R: Runtime,
 {
   type Error = io::Error;
-  type Sink = MemorySnapshotSink<Self::Id, Self::Address, R>;
-  type Source = MemorySnapshotSource<Self::Id, Self::Address, R>;
   type Runtime = R;
   type Id = I;
   type Address = A;
@@ -77,7 +75,7 @@ where
     term: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<Self::Sink, Self::Error> {
+  ) -> Result<impl SnapshotSink, Self::Error> {
     if !version.valid() {
       return Err(io::Error::new(
         io::ErrorKind::InvalidInput,
@@ -105,7 +103,6 @@ where
     Ok(MemorySnapshotSink {
       id: lock.as_ref().unwrap().meta.id(),
       snap: self.latest.clone(),
-      _runtime: std::marker::PhantomData,
     })
   }
 
@@ -123,10 +120,16 @@ where
     )
   }
 
-  async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
+  async fn open(&self, id: SnapshotId) -> Result<
+  (
+    SnapshotMeta<Self::Id, Self::Address>,
+    impl futures::AsyncRead + Send + Sync + Unpin + 'static,
+  ),
+  Self::Error,
+> {
     let lock = self.latest.read().await;
     if let Some(m) = lock.as_ref() {
-      if m.meta.id().ne(id) {
+      if m.meta.id().ne(&id) {
         return Err(io::Error::new(
           io::ErrorKind::NotFound,
           format!(
@@ -138,11 +141,9 @@ where
 
       // Make a copy of the contents, since a bytes.Buffer can only be read
       // once.
-      Ok(MemorySnapshotSource {
-        meta: m.meta.clone(),
+      Ok((m.meta.clone(), MemorySnapshotSource {
         contents: m.contents.clone(),
-        _runtime: std::marker::PhantomData,
-      })
+      }))
     } else {
       Err(io::Error::new(
         io::ErrorKind::NotFound,
@@ -166,17 +167,15 @@ struct MemorySnapshot<I, A> {
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSink<I, A, R> {
+pub struct MemorySnapshotSink<I, A> {
   snap: Arc<RwLock<Option<MemorySnapshot<I, A>>>>,
   id: SnapshotId,
-  _runtime: std::marker::PhantomData<R>,
 }
 
-impl<I: Id, A: Address, R: Runtime> AsyncWrite for MemorySnapshotSink<I, A, R>
+impl<I: Id, A: Address> AsyncWrite for MemorySnapshotSink<I, A>
 where
   I: Id,
   A: Address,
-  R: Runtime,
 {
   fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
     let write_lock = self.snap.write();
@@ -204,13 +203,11 @@ where
   }
 }
 
-impl<I, A, R> SnapshotSink for MemorySnapshotSink<I, A, R>
+impl<I, A> SnapshotSink for MemorySnapshotSink<I, A>
 where
   I: Id + Unpin,
   A: Address + Unpin,
-  R: Runtime,
 {
-  type Runtime = R;
 
   fn id(&self) -> SnapshotId {
     self.id
@@ -225,17 +222,11 @@ where
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.
 #[derive(Debug, Clone)]
-pub struct MemorySnapshotSource<I, A, R> {
-  meta: SnapshotMeta<I, A>,
+pub struct MemorySnapshotSource {
   contents: Vec<u8>,
-  _runtime: std::marker::PhantomData<R>,
 }
 
-impl<I, A, R> AsyncRead for MemorySnapshotSource<I, A, R>
-where
-  I: Id,
-  A: Address,
-  R: Runtime,
+impl AsyncRead for MemorySnapshotSource
 {
   fn poll_read(
     mut self: Pin<&mut Self>,
@@ -249,17 +240,3 @@ where
   }
 }
 
-impl<I: Id, A: Address, R: Runtime> SnapshotSource for MemorySnapshotSource<I, A, R>
-where
-  I: Id + Unpin,
-  A: Address + Unpin,
-  R: Runtime,
-{
-  type Runtime = R;
-  type Id = I;
-  type Address = A;
-
-  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
-    &self.meta
-  }
-}

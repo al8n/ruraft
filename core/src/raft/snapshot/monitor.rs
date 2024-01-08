@@ -10,8 +10,6 @@ use agnostic::Runtime;
 use futures::{AsyncRead, FutureExt, StreamExt};
 use wg::AsyncWaitGroup;
 
-use crate::storage::SnapshotSource;
-
 const SNAPSHOT_RESTORE_MONITOR_INTERVAL: Duration = Duration::from_secs(10);
 
 pub(crate) struct SnapshotRestoreMonitor<R: Runtime> {
@@ -114,15 +112,5 @@ impl<R: AsyncRead> AsyncRead for CountingSnapshotSourceReader<R> {
         num
       })
     })
-  }
-}
-
-impl<R: SnapshotSource> SnapshotSource for CountingSnapshotSourceReader<R> {
-  type Id = R::Id;
-
-  type Address = R::Address;
-
-  fn meta(&self) -> &crate::storage::SnapshotMeta<Self::Id, Self::Address> {
-    self.r.meta()
   }
 }

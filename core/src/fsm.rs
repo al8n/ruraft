@@ -5,7 +5,7 @@ use nodecraft::{Address, Id};
 use smallvec::SmallVec;
 
 use crate::{
-  storage::{CommittedLog, CommittedLogBatch, SnapshotSink, SnapshotSource},
+  storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
   Data,
 };
 
@@ -181,6 +181,6 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// state before restoring the snapshot.
   fn restore(
     &self,
-    snapshot: impl SnapshotSource<Id = Self::Id, Address = Self::Address>,
+    snapshot: impl futures::AsyncRead + Unpin + Send + Sync + 'static,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }

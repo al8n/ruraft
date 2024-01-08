@@ -15,7 +15,7 @@ use crate::{
   membership::{Membership, MembershipChangeCommand},
   options::{Options, ProtocolVersion, ReloadableOptions, SnapshotVersion},
   sidecar::Sidecar,
-  storage::{LogKind, SnapshotStorage, Storage},
+  storage::{LogKind, SnapshotSource, SnapshotMeta, Storage},
   transport::Transport,
   FinateStateMachine, Node, RaftCore, Role,
 };
@@ -527,21 +527,6 @@ where
     self.snapshot_in(Some(timeout)).await
   }
 
-  /// Used open a snapshot. This is useful for restoring from a
-  /// snapshot.
-  pub async fn open_snapshot(
-    &self,
-    id: crate::storage::SnapshotId,
-  ) -> Result<<S::Snapshot as SnapshotStorage>::Source, Error<F, S, T>> {
-    self
-      .inner
-      .storage
-      .snapshot_store()
-      .open(&id)
-      .await
-      .map_err(|e| Error::storage(<S::Error as crate::storage::StorageError>::snapshot(e)))
-  }
-
   /// Used to manually force Raft to consume an external snapshot, such
   /// as if restoring from a backup. We will use the current Raft membership,
   /// not the one from the snapshot, so that we can restore into a new cluster. We
@@ -562,9 +547,10 @@ where
   /// [`restore_timeout`]: struct.RaftCore.html#method.restore_timeout
   pub async fn restore(
     &self,
-    source: <S::Snapshot as SnapshotStorage>::Source,
+    meta: SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+    source: impl futures::AsyncRead + Send + Sync + Unpin + 'static,
   ) -> Result<(), Error<F, S, T>> {
-    self.restore_in(source, None).await
+    self.restore_in(meta, source, None).await
   }
 
   /// Used to manually force Raft to consume an external snapshot, such
@@ -589,10 +575,11 @@ where
   /// [`restore`]: struct.RaftCore.html#method.restore
   pub async fn restore_timeout(
     &self,
-    source: <S::Snapshot as SnapshotStorage>::Source,
+    meta: SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+    source: impl futures::AsyncRead + Send + Sync + Unpin + 'static,
     timeout: Duration,
   ) -> Result<(), Error<F, S, T>> {
-    self.restore_in(source, Some(timeout)).await
+    self.restore_in(meta, source, Some(timeout)).await
   }
 
   /// Transfer leadership to a node in the cluster.
@@ -848,7 +835,8 @@ where
 
   async fn restore_in(
     &self,
-    source: <S::Snapshot as SnapshotStorage>::Source,
+    meta: SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+    source: impl futures::AsyncRead + Send + Sync + Unpin + 'static,
     timeout: Option<Duration>,
   ) -> Result<(), Error<F, S, T>> {
     self.is_shutdown_error()?;
@@ -861,7 +849,12 @@ where
     // Perform the restore.
     match timeout {
       None => {
-        if let Err(e) = self.inner.user_restore_tx.send((source, tx)).await {
+        if let Err(e) = self
+          .inner
+          .user_restore_tx
+          .send(((meta, Box::new(source) as Box<_>), tx))
+          .await
+        {
           tracing::error!(target="ruraft", err=%e, "failed to send restore request to the raft: user restore channel closed");
           return Err(Error::closed("user restore channel closed"));
         }
@@ -907,7 +900,7 @@ where
             tracing::error!(target="ruraft", "failed to send restore request to the raft: restore channel closed");
             Err(Error::enqueue_timeout())
           }
-          rst = self.inner.user_restore_tx.send((source, tx)).fuse() => {
+          rst = self.inner.user_restore_tx.send(((meta, Box::new(source) as Box<_>), tx)).fuse() => {
             if let Err(e) = rst {
               tracing::error!(target="ruraft", err=%e, "failed to send restore request to the raft: restore channel closed");
               return Err(Error::closed("user restore channel closed"));
@@ -1219,14 +1212,7 @@ resp!(
   #[doc = "A future that can be used to verify the current node is still the leader. This is to prevent a stale read."]
   VerifyFuture<()>,
   #[doc = "A future that can be used to wait on the result of a snapshot. The returned future whose output is a [`SnapshotSource`](crate::storage::SnapshotSource)."]
-  SnapshotFuture<std::pin::Pin<Box<
-    dyn Future<
-      Output = Result<
-        <S::Snapshot as SnapshotStorage>::Source,
-        <S::Snapshot as SnapshotStorage>::Error,
-      >,
-    > + Send,
-  >>>,
+  SnapshotFuture<SnapshotSource<S>>,
   #[doc = "A future that can be used to wait on the result of a leadership transfer response."]
   LeadershipTransferFuture<()>,
 );

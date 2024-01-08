@@ -2,7 +2,6 @@
 use std::time::Instant;
 use std::{
   borrow::Cow,
-  future::Future,
   sync::{atomic::Ordering, Arc},
   time::Duration,
 };
@@ -18,7 +17,7 @@ use crate::{
   membership::Membership,
   options::ReloadableOptions,
   storage::{
-    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotStorage, Storage, StorageError,
+    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotSource, SnapshotStorage, Storage, StorageError,
   },
   transport::Transport,
   FinateStateMachine, FinateStateMachineError, FinateStateMachineSnapshot, LastSnapshot,
@@ -64,23 +63,8 @@ where
       >,
     >,
   >,
-  pub(super) user_snapshot_rx: async_channel::Receiver<
-    oneshot::Sender<
-      Result<
-        std::pin::Pin<
-          Box<
-            dyn Future<
-                Output = Result<
-                  <S::Snapshot as SnapshotStorage>::Source,
-                  <S::Snapshot as SnapshotStorage>::Error,
-                >,
-              > + Send,
-          >,
-        >,
-        Error<F, S, T>,
-      >,
-    >,
-  >,
+  pub(super) user_snapshot_rx:
+    async_channel::Receiver<oneshot::Sender<Result<SnapshotSource<S>, Error<F, S, T>>>>,
   pub(super) opts: Arc<Atomic<ReloadableOptions>>,
   pub(super) wg: AsyncWaitGroup,
   pub(super) shutdown_rx: async_channel::Receiver<()>,
@@ -140,9 +124,7 @@ where
               match res {
                 Ok(id) => {
                   let s = self.store.clone();
-                  let _ = tx.send(Ok(async move {
-                    s.snapshot_store().open(&id).await
-                  }.boxed()));
+                  let _ = tx.send(Ok(SnapshotSource::new(id, s)));
                 }
                 Err(e) => {
                   tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to take snapshot");

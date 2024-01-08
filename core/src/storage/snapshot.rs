@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use crate::{
   membership::Membership,
@@ -7,7 +7,10 @@ use crate::{
 };
 
 mod meta;
+// use futures::AsyncRead;
 pub use meta::*;
+
+use super::{Storage, StorageError};
 
 #[auto_impl::auto_impl(Box, Arc)]
 /// Used to allow for flexible implementations
@@ -17,6 +20,7 @@ pub use meta::*;
 pub trait SnapshotStorage: Send + Sync + 'static {
   /// The error type returned by the snapshot storage.
   type Error: std::error::Error + From<std::io::Error> + Send + Sync + 'static;
+
   /// The async runtime used by the storage.
   type Runtime: agnostic::Runtime;
 
@@ -25,8 +29,8 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   /// The address type of node.
   type Address: Address;
 
-  /// The source type used to read snapshots.
-  type Source: SnapshotSource<Id = Self::Id, Address = Self::Address>;
+  // /// The source type used to read snapshots.
+  // type Source: SnapshotSource<Id = Self::Id, Address = Self::Address>;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls
@@ -47,13 +51,23 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   ) -> impl Future<Output = Result<Vec<SnapshotMeta<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Open takes a snapshot ID and provides a reader.
-  fn open(&self, id: &SnapshotId)
-    -> impl Future<Output = Result<Self::Source, Self::Error>> + Send;
+  fn open(
+    &self,
+    id: SnapshotId,
+  ) -> impl Future<
+    Output = Result<
+      (
+        SnapshotMeta<Self::Id, Self::Address>,
+        impl futures::AsyncRead + Send + Sync + Unpin + 'static,
+      ),
+      Self::Error,
+    >,
+  > + Send;
 }
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static { 
+pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static {
   /// The snapshot id for the parent snapshot.
   fn id(&self) -> SnapshotId;
 
@@ -61,14 +75,46 @@ pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static 
   fn cancel(&mut self) -> impl Future<Output = std::io::Result<()>> + Send;
 }
 
-/// Returned by [`SnapshotStorage::open`]. The `FinateStateMachine` will read state
-/// from the source. On error, `cancel` will be invoked.
-pub trait SnapshotSource: futures::io::AsyncRead + Unpin + Send + Sync + 'static {
-  /// The id type used to identify nodes.
-  type Id: Id;
-  /// The address type of node.
-  type Address: Address;
+/// Used to open the snapshot when user get the result from [`snapshot`] or [`snapshot_timeout`].
+/// 
+/// [`snapshot`]: struct.RaftCore#method.snapshot
+/// [`snapshot_timeout`]: struct.RaftCore#method.snapshot_timeout
+pub struct SnapshotSource<S: Storage>(Option<(SnapshotId, Arc<S>)>);
 
-  /// Returns the snapshot meta information.
-  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address>;
+impl<S: Storage> Default for SnapshotSource<S> {
+  fn default() -> Self {
+    Self(None)
+  }
 }
+
+impl<S: Storage> SnapshotSource<S> {
+  pub(crate) fn new(id: SnapshotId, store: Arc<S>) -> Self {
+    Self(Some((id, store)))
+  }
+
+  /// Used to open the snapshot. This is filled in
+	/// once the future returns with no error.
+  pub async fn open(
+    &mut self,
+  ) -> Result<
+    (
+      SnapshotMeta<S::Id, S::Address>,
+      Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>,
+    ),
+    S::Error,
+  > {
+    match self.0.take() {
+      Some((id, store)) => {
+        store
+          .snapshot_store()
+          .open(id)
+          .await
+          .map(|(id, reader)| (id, Box::new(reader) as Box<_>))
+          .map_err(<S::Error as StorageError>::snapshot)
+      },
+      // TODO: error cleanup
+      None => Err(<S::Error as StorageError>::custom("no snapshot available")),
+    }
+  }
+}
+

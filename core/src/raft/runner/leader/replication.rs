@@ -23,7 +23,7 @@ use crate::{
   observer::{observe, Observation, Observer, ObserverId},
   options::ReloadableOptions,
   raft::Contact,
-  storage::{LogBatch, LogStorage, SnapshotSource, SnapshotStorage, Storage},
+  storage::{LogBatch, LogStorage, SnapshotStorage, Storage},
   transport::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
@@ -634,13 +634,12 @@ where
     }
     // Open the most recent snapshot
     let snap_id = snapshots[0].id();
-    let snap = snap_store.open(&snap_id).await.map_err(|e| {
+    let (meta, snap) = snap_store.open(snap_id).await.map_err(|e| {
       tracing::error!(target = "ruraft.repl", id=%snap_id, err=%e, "failed to open snapshot");
       Error::snapshot(e)
     })?;
 
     // Setup the request
-    let meta = snap.meta();
     let req = InstallSnapshotRequest {
       header: self.transport.header(),
       snapshot_version: meta.version(),
