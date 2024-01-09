@@ -1,4 +1,4 @@
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, pin::Pin, task::{Context, Poll}};
 
 use crate::{
   membership::Membership,
@@ -7,6 +7,7 @@ use crate::{
 };
 
 mod meta;
+use futures::AsyncWrite;
 // use futures::AsyncRead;
 pub use meta::*;
 
@@ -67,12 +68,52 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static {
-  /// The snapshot id for the parent snapshot.
+pub trait SnapshotSink: AsyncWrite + Send + Sync + Unpin + 'static {
+  /// The id of the snapshot being written.
   fn id(&self) -> SnapshotId;
 
-  /// Cancel the sink.
-  fn cancel(&mut self) -> impl Future<Output = std::io::Result<()>> + Send;
+  /// Attempt to cancel the snapshot sink.
+  ///
+  /// On success, returns `Poll::Ready(Ok(()))`.
+  ///
+  /// If cancelling cannot immediately complete, this function returns
+  /// `Poll::Pending` and arranges for the current task (via
+  /// `cx.waker().wake_by_ref()`) to receive a notification when the object can make
+  /// progress towards closing.
+  fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>>;
+}
+
+/// An extension trait which adds utility methods to `SnapshotSink` types.
+pub trait SnapshotSinkExt: SnapshotSink {
+  /// Creates a future which will entirely cancel this `SnapshotSink`.
+  fn cancel(&mut self) -> Cancel<'_, Self> where Self: Unpin {
+    Cancel::new(self)
+  }
+}
+
+impl<T: SnapshotSink + ?Sized> SnapshotSinkExt for T {}
+
+/// Future for the [`cancel`](SnapshotSinkExt::cancel) method.
+#[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+pub struct Cancel<'a, W: ?Sized> {
+  sink: &'a mut W,
+}
+
+impl<W: ?Sized + Unpin> Unpin for Cancel<'_, W> {}
+
+impl<'a, W: SnapshotSink + ?Sized + Unpin> Cancel<'a, W> {
+  pub(super) fn new(sink: &'a mut W) -> Self {
+      Self { sink }
+  }
+}
+
+impl<W: SnapshotSink + ?Sized + Unpin> Future for Cancel<'_, W> {
+  type Output = std::io::Result<()>;
+
+  fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    Pin::new(&mut *self.sink).poll_cancel(cx)
+  }
 }
 
 /// Used to open the snapshot when user get the result from [`snapshot`] or [`snapshot_timeout`].

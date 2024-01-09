@@ -213,7 +213,7 @@ pub mod tests {
   /// - open snapshot twice
   pub async fn memory_snapshot_storage_open_snapshot_twice<R: Runtime>() {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
-    use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
+    use ruraft_core::storage::{SnapshotSink, SnapshotSinkExt, SnapshotStorage};
 
     let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 

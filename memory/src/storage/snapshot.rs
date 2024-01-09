@@ -219,10 +219,11 @@ where
     self.id
   }
 
-  async fn cancel(&mut self) -> std::io::Result<()> {
-    Ok(())
+  fn poll_cancel(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    Poll::Ready(Ok(()))
   }
 }
+
 
 /// Implements [`SnapshotSource`] in memory
 ///

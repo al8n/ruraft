@@ -734,22 +734,23 @@ where
     self.meta.meta.id()
   }
 
-  async fn cancel(&mut self) -> io::Result<()> {
+  fn poll_cancel(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
     // Make sure close is idempotent
     if self.closed {
-      return Ok(());
+      return Poll::Ready(Ok(()));
     }
 
-    self.closed = true;
+    let this = self.get_mut();
+    this.closed = true;
 
     // Close the open handles
-    self
+    Poll::Ready(this
       .finalize()
       .map_err(|e| {
         tracing::error!(target = "ruraft.snapshot.file", err=%e, "failed to finalize snapshot");
         e
       })
-      .and_then(|_| fs::remove_dir_all(&self.dir))
+      .and_then(|_| fs::remove_dir_all(&this.dir)))
   }
 }
 
@@ -821,6 +822,7 @@ pub mod tests {
 
   use futures::{AsyncReadExt, AsyncWriteExt};
   use smol_str::SmolStr;
+  use ruraft_core::storage::SnapshotSinkExt;
 
   use super::*;
 
