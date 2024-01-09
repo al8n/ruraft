@@ -17,7 +17,8 @@ use crate::{
   membership::Membership,
   options::ReloadableOptions,
   storage::{
-    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotSource, SnapshotStorage, Storage, StorageError,
+    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotSource, SnapshotStorage, Storage,
+    StorageError,
   },
   transport::Transport,
   FinateStateMachine, FinateStateMachineError, FinateStateMachineSnapshot, LastSnapshot,

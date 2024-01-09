@@ -169,8 +169,6 @@ where
     > + crate::IntoPython,
 {
   pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a PyAny> {
-    use ruraft_core::storage::SnapshotSource;
-
     match self.0.take() {
       Some(f) => R::into_supported().future_into_py(py, async move {
         match f.await {

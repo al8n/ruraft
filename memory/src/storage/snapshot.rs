@@ -120,13 +120,16 @@ where
     )
   }
 
-  async fn open(&self, id: SnapshotId) -> Result<
-  (
-    SnapshotMeta<Self::Id, Self::Address>,
-    impl futures::AsyncRead + Send + Sync + Unpin + 'static,
-  ),
-  Self::Error,
-> {
+  async fn open(
+    &self,
+    id: SnapshotId,
+  ) -> Result<
+    (
+      SnapshotMeta<Self::Id, Self::Address>,
+      impl futures::AsyncRead + Send + Sync + Unpin + 'static,
+    ),
+    Self::Error,
+  > {
     let lock = self.latest.read().await;
     if let Some(m) = lock.as_ref() {
       if m.meta.id().ne(&id) {
@@ -141,9 +144,12 @@ where
 
       // Make a copy of the contents, since a bytes.Buffer can only be read
       // once.
-      Ok((m.meta.clone(), MemorySnapshotSource {
-        contents: m.contents.clone(),
-      }))
+      Ok((
+        m.meta.clone(),
+        MemorySnapshotSource {
+          contents: m.contents.clone(),
+        },
+      ))
     } else {
       Err(io::Error::new(
         io::ErrorKind::NotFound,
@@ -208,7 +214,6 @@ where
   I: Id + Unpin,
   A: Address + Unpin,
 {
-
   fn id(&self) -> SnapshotId {
     self.id
   }
@@ -226,8 +231,7 @@ pub struct MemorySnapshotSource {
   contents: Vec<u8>,
 }
 
-impl AsyncRead for MemorySnapshotSource
-{
+impl AsyncRead for MemorySnapshotSource {
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
@@ -239,4 +243,3 @@ impl AsyncRead for MemorySnapshotSource
     Poll::Ready(Ok(len))
   }
 }
-

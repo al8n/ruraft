@@ -76,7 +76,7 @@ pub trait SnapshotSink: futures::io::AsyncWrite + Send + Sync + Unpin + 'static 
 }
 
 /// Used to open the snapshot when user get the result from [`snapshot`] or [`snapshot_timeout`].
-/// 
+///
 /// [`snapshot`]: struct.RaftCore#method.snapshot
 /// [`snapshot_timeout`]: struct.RaftCore#method.snapshot_timeout
 pub struct SnapshotSource<S: Storage>(Option<(SnapshotId, Arc<S>)>);
@@ -93,7 +93,7 @@ impl<S: Storage> SnapshotSource<S> {
   }
 
   /// Used to open the snapshot. This is filled in
-	/// once the future returns with no error.
+  /// once the future returns with no error.
   pub async fn open(
     &mut self,
   ) -> Result<
@@ -104,17 +104,14 @@ impl<S: Storage> SnapshotSource<S> {
     S::Error,
   > {
     match self.0.take() {
-      Some((id, store)) => {
-        store
-          .snapshot_store()
-          .open(id)
-          .await
-          .map(|(id, reader)| (id, Box::new(reader) as Box<_>))
-          .map_err(<S::Error as StorageError>::snapshot)
-      },
+      Some((id, store)) => store
+        .snapshot_store()
+        .open(id)
+        .await
+        .map(|(id, reader)| (id, Box::new(reader) as Box<_>))
+        .map_err(<S::Error as StorageError>::snapshot),
       // TODO: error cleanup
       None => Err(<S::Error as StorageError>::custom("no snapshot available")),
     }
   }
 }
-

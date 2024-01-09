@@ -408,7 +408,10 @@ where
   }
 
   /// Open takes a snapshot ID and provides a ReadCloser.
-  async fn open(&self, id: SnapshotId) -> Result<
+  async fn open(
+    &self,
+    id: SnapshotId,
+  ) -> Result<
     (
       SnapshotMeta<Self::Id, Self::Address>,
       impl futures::AsyncRead + Send + Sync + Unpin + 'static,
@@ -448,9 +451,12 @@ where
       e
     })?;
 
-    Ok((meta.meta, FileSnapshotSource {
-      file: BufReader::new(state_file),
-    }))
+    Ok((
+      meta.meta,
+      FileSnapshotSource {
+        file: BufReader::new(state_file),
+      },
+    ))
   }
 }
 
@@ -527,8 +533,7 @@ pub struct FileSnapshotSource {
   file: BufReader<File>,
 }
 
-impl futures::io::AsyncRead for FileSnapshotSource
-{
+impl futures::io::AsyncRead for FileSnapshotSource {
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,

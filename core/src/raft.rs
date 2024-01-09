@@ -30,8 +30,8 @@ use crate::{
   },
   sidecar::{NoopSidecar, Sidecar},
   storage::{
-    CommittedLog, CommittedLogKind, Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage,
-    StableStorage, Storage, StorageError, SnapshotSource,
+    CommittedLog, CommittedLogKind, Log, LogKind, LogStorage, SnapshotMeta, SnapshotSource,
+    SnapshotStorage, StableStorage, Storage, StorageError,
   },
   transport::{AddressResolver, Transport},
   FinateStateMachineError, FinateStateMachineSnapshot,
@@ -306,7 +306,8 @@ where
   /// for any other operation e.g. reading config using options().
   reload_options_lock: Mutex<()>,
 
-  user_snapshot_tx: async_channel::Sender<oneshot::Sender<Result<SnapshotSource<S>, Error<F, S, T>>>>,
+  user_snapshot_tx:
+    async_channel::Sender<oneshot::Sender<Result<SnapshotSource<S>, Error<F, S, T>>>>,
 
   user_restore_tx: async_channel::Sender<(
     (

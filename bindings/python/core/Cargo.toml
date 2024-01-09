@@ -30,8 +30,8 @@ serde = [
   "humantime-serde",
 ]
 
-tokio = ["agnostic/tokio", "pyo3-asyncio/tokio-runtime"]
-async-std = ["agnostic/async-std", "pyo3-asyncio/async-std-runtime"]
+tokio = ["agnostic/tokio", "pyo3-asyncio/tokio-runtime", "pyo3io/tokio"]
+async-std = ["agnostic/async-std", "pyo3-asyncio/async-std-runtime", "pyo3io/async-std"]
 smol = ["agnostic/smol"]
 
 sled = ["ruraft-lightwal/sled"]
@@ -56,6 +56,7 @@ pyo3 = { version = "0.20", features = [
   "chrono",
 ] }
 pyo3-asyncio = { version = "0.20", features = ["attributes"] }
+pyo3io = { version = "0.1", default-features = false }
 pin-project = { workspace = true }
 ruraft-core = { workspace = true }
 ruraft-bindings-common = { workspace = true }

@@ -15,7 +15,7 @@ use crate::{
   membership::{Membership, MembershipChangeCommand},
   options::{Options, ProtocolVersion, ReloadableOptions, SnapshotVersion},
   sidecar::Sidecar,
-  storage::{LogKind, SnapshotSource, SnapshotMeta, Storage},
+  storage::{LogKind, SnapshotMeta, SnapshotSource, Storage},
   transport::Transport,
   FinateStateMachine, Node, RaftCore, Role,
 };

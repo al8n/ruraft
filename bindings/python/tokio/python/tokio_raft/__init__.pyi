@@ -1,6 +1,7 @@
 from typing import AsyncIterable, Optional, Protocol, List
 from datetime import timedelta
 from tokio_raft import types, options, membership
+from futuresio import AsyncWrite
 
 
 class Raft:
@@ -125,13 +126,5 @@ class SnapshotSource:
 
   # def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
 
-class SnapshotSink:
-  def id(self) -> types.SnapshotId: ...
-  
-  async def write(self, data: bytes) -> None: ...
-  
-  async def write_all(self, data: bytes) -> None: ...
-
-  # def __aenter__(self) -> SnapshotSink: ...
-
-  # def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
+class SnapshotSink(AsyncWrite):
+  def id(self) -> types.SnapshotId: ... 

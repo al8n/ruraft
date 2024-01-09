@@ -19,7 +19,7 @@ classifiers = [
 description = "Rust's Raft implementation(ruraft) binding based on tokio runtime"
 license = { text = "MPL-2.0" }
 keywords = ["raft", "async", "tokio", "rust", "distributed-system"]
-dependencies = ["asyncio>=3.4"]
+dependencies = ["asyncio>=3.4", "futuresio>=0.1"]
 
 [project.optional-dependencies]
 docs = ["pdoc"]
