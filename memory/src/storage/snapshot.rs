@@ -67,6 +67,7 @@ where
   type Runtime = R;
   type Id = I;
   type Address = A;
+  type Sink = MemorySnapshotSink<I, A>;
 
   async fn create(
     &self,
@@ -75,7 +76,7 @@ where
     term: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<impl SnapshotSink, Self::Error> {
+  ) -> Result<Self::Sink, Self::Error> {
     if !version.valid() {
       return Err(io::Error::new(
         io::ErrorKind::InvalidInput,

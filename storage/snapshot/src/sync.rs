@@ -317,6 +317,7 @@ where
   type Id = I;
   type Address = A;
   type Runtime = R;
+  type Sink = FileSnapshotSink<I, A, R>;
 
   async fn create(
     &self,
@@ -325,7 +326,7 @@ where
     term: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<impl SnapshotSink, Self::Error> {
+  ) -> Result<Self::Sink, Self::Error> {
     // Create a new path
     let id = SnapshotId::new(index, term);
     let path = self.path.join(id.temp_name());

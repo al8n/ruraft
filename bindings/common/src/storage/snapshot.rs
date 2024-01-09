@@ -1,37 +1,27 @@
 use agnostic::Runtime;
-use futures::{lock::Mutex, AsyncRead, AsyncWrite, Future};
+use futures::{AsyncRead, AsyncWrite};
 use nodecraft::{NodeAddress, NodeId};
 use ruraft_core::storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotStorage};
+use ruraft_memory::storage::snapshot::MemorySnapshotSink;
+use ruraft_snapshot::sync::FileSnapshotSink;
 
 use std::{
   pin::Pin,
-  sync::Arc,
   task::{Context, Poll},
 };
 
-pub enum SupportedSnapshotSink<F, M> {
-  File { id: SnapshotId, writer: F },
-  Memory { id: SnapshotId, writer: M },
+pub enum SupportedSnapshotSink<R> {
+  File {
+    id: SnapshotId,
+    writer: FileSnapshotSink<NodeId, NodeAddress, R>,
+  },
+  Memory {
+    id: SnapshotId,
+    writer: MemorySnapshotSink<NodeId, NodeAddress>,
+  },
 }
 
-impl<F: Clone, M: Clone> Clone for SupportedSnapshotSink<F, M> {
-  fn clone(&self) -> Self {
-    match self {
-      Self::File { id, writer } => Self::File {
-        id: *id,
-        writer: writer.clone(),
-      },
-      Self::Memory { id, writer } => Self::Memory {
-        id: *id,
-        writer: writer.clone(),
-      },
-    }
-  }
-}
-
-impl<F: AsyncWrite + Unpin, W: AsyncWrite + Unpin> futures::AsyncWrite
-  for SupportedSnapshotSink<F, W>
-{
+impl<R: Runtime> futures::AsyncWrite for SupportedSnapshotSink<R> {
   fn poll_write(
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
@@ -58,9 +48,7 @@ impl<F: AsyncWrite + Unpin, W: AsyncWrite + Unpin> futures::AsyncWrite
   }
 }
 
-impl<F: SnapshotSink, M: SnapshotSink> ruraft_core::storage::SnapshotSink
-  for SupportedSnapshotSink<F, M>
-{
+impl<R: Runtime> ruraft_core::storage::SnapshotSink for SupportedSnapshotSink<R> {
   fn id(&self) -> SnapshotId {
     match self {
       Self::File { id, .. } => *id,
@@ -76,32 +64,27 @@ impl<F: SnapshotSink, M: SnapshotSink> ruraft_core::storage::SnapshotSink
   }
 }
 
-#[derive(Clone)]
 #[repr(transparent)]
 pub struct SupportedSnapshotSource {
-  reader: Arc<Mutex<dyn AsyncRead + Send + Sync + Unpin + 'static>>,
+  reader: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>,
 }
 
 impl SupportedSnapshotSource {
   pub fn new(reader: impl AsyncRead + Send + Sync + Unpin + 'static) -> Self {
     Self {
-      reader: Arc::new(Mutex::new(reader)),
+      reader: Box::new(reader),
     }
   }
 }
 
 impl futures::AsyncRead for SupportedSnapshotSource {
   fn poll_read(
-    self: Pin<&mut Self>,
+    mut self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &mut [u8],
   ) -> Poll<std::io::Result<usize>> {
-    let lock = self.reader.lock();
-    futures::pin_mut!(lock);
-    match lock.poll(cx) {
-      Poll::Ready(mut guard) => Pin::new(&mut *guard).poll_read(cx, buf),
-      Poll::Pending => Poll::Pending,
-    }
+    let reader = self.reader.as_mut();
+    Pin::new(reader).poll_read(cx, buf)
   }
 }
 
@@ -133,6 +116,7 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
   type Runtime = R;
   type Id = NodeId;
   type Address = NodeAddress;
+  type Sink = SupportedSnapshotSink<R>;
 
   async fn create(
     &self,
@@ -141,7 +125,7 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
     term: u64,
     membership: ruraft_core::membership::Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> Result<impl SnapshotSink, Self::Error> {
+  ) -> Result<Self::Sink, Self::Error> {
     match self {
       Self::File(f) => f
         .create(version, term, index, membership, membership_index)

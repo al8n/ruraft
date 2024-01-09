@@ -29,8 +29,8 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   /// The address type of node.
   type Address: Address;
 
-  // /// The source type used to read snapshots.
-  // type Source: SnapshotSource<Id = Self::Id, Address = Self::Address>;
+  /// The sink type used to write snapshots.
+  type Sink: SnapshotSink;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls
@@ -42,7 +42,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
     index: u64,
     membership: Membership<Self::Id, Self::Address>,
     membership_index: u64,
-  ) -> impl Future<Output = Result<impl SnapshotSink, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Self::Sink, Self::Error>> + Send;
 
   /// Used to list the available snapshots in the store.
   /// It should return then in descending order, with the highest index first.

@@ -1,11 +1,12 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use agnostic::Runtime;
-use futures::AsyncWriteExt;
+use futures::{lock::Mutex, AsyncRead, AsyncWriteExt};
 use nodecraft::{NodeAddress, NodeId};
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyString};
+use ruraft_bindings_common::storage::SupportedSnapshotSource;
 use ruraft_core::{
-  storage::{CommittedLog, CommittedLogBatch},
+  storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
   ApplyBatchResponse as RApplyBatchResponse, FinateStateMachine as RFinateStateMachine,
   FinateStateMachineError as RFinateStateMachineError,
   FinateStateMachineResponse as RFinateStateMachineResponse,
@@ -13,10 +14,7 @@ use ruraft_core::{
 };
 use smallvec::SmallVec;
 
-use crate::{
-  storage::snapshot::{SnapshotSink, SnapshotSource},
-  FearlessCell, FromPython, IntoPython, IntoSupportedRuntime, RaftData,
-};
+use crate::{types::ApplyBatchResponse, FromPython, IntoPython, IntoSupportedRuntime, RaftData};
 
 #[derive(Clone)]
 #[pyclass]
@@ -108,89 +106,23 @@ impl<R> Clone for FinateStateMachineSnapshot<R> {
 
 impl<R: Runtime> RFinateStateMachineSnapshot for FinateStateMachineSnapshot<R>
 where
-  SnapshotSink<R>: IntoPython,
   R: IntoSupportedRuntime,
 {
   type Error = FinateStateMachineSnapshotError;
   type Runtime = R;
 
-  async fn persist(
-    &self,
-    sink: impl ruraft_core::storage::SnapshotSink<Runtime = Self::Runtime>,
-  ) -> Result<(), Self::Error> {
+  async fn persist(&self, sink: impl SnapshotSink) -> Result<(), Self::Error> {
     let id = sink.id();
-    let sink = FearlessCell::new(Box::new(sink));
-    // Safety:
-    // - SnapshotSink impl AsyncWrite
-    let snap = SnapshotSink::<R>::new(id.into(), unsafe { core::mem::transmute(sink.clone()) });
-    let res = Python::with_gil(|py| {
-      let arg = (snap.into_python().into_py(py),);
+    let snap = R::SnapshotSink::from(crate::storage::SnapshotSinkPtr::new(sink));
+
+    Python::with_gil(|py| {
+      let arg = (snap,);
       R::into_supported().into_future(self.snap.as_ref().as_ref(py).call_method1("persist", arg)?)
-    });
-    match res {
-      Ok(fut) => {
-        match fut.await {
-          Ok(_) => {
-            Python::with_gil(|py| {
-              R::into_supported().future_into_py(py, async move {
-                // Safety
-                // 1. hold GIL
-                // 2. no data race in rust side
-                let sink = unsafe { sink.get_mut() };
-                if let Err(e) = sink.close().await {
-                  tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to close snapshot sink.");
-                }
-                Ok(())
-              })
-              .map(|_| ())
-            })
-            .map_err(Into::into)
-          }
-          Err(err) => {
-            Python::with_gil(|py| {
-              R::into_supported().future_into_py(py, async move {
-                // Safety
-                // 1. hold GIL
-                // 2. no data race in rust side
-                let sink = unsafe { sink.get_mut() };
-                if let Err(e) = sink.cancel().await {
-                  tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to cancel snapshot sink.");
-                }
-
-                if let Err(e) = sink.close().await {
-                  tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to close snapshot sink.");
-                }
-
-                Ok(())
-              })
-              .map(|_| ())
-            })
-            .map_err(|_| err.into())
-          }
-        }
-      }
-      Err(err) => {
-        Python::with_gil(|py| {
-          R::into_supported().future_into_py(py, async move {
-            // Safety
-            // 1. hold GIL
-            // 2. no data race in rust side
-            let sink = unsafe { sink.get_mut() };
-            if let Err(e) = sink.cancel().await {
-              tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to cancel snapshot sink.");
-            }
-
-            if let Err(e) = sink.close().await {
-              tracing::error!(target = "ruraft.python.fsm.persist", err=%e, "failed to close snapshot sink.");
-            }
-
-            Ok(())
-          })
-          .map(|_| ())
-        })
-        .map_err(|_| err.into())
-      }
-    }
+    })
+    .map_err(FinateStateMachineSnapshotError::from)?
+    .await
+    .map(|_| ())
+    .map_err(FinateStateMachineSnapshotError::from)
   }
 
   async fn release(&mut self) -> Result<(), Self::Error> {
@@ -237,7 +169,6 @@ impl<R> Clone for FinateStateMachineError<R> {
 impl<R: agnostic::Runtime> RFinateStateMachineError for FinateStateMachineError<R>
 where
   R: IntoSupportedRuntime,
-  SnapshotSink<R>: IntoPython,
 {
   type Snapshot = FinateStateMachineSnapshot<R>;
 
@@ -321,8 +252,6 @@ impl<R> Clone for FinateStateMachine<R> {
 impl<R> RFinateStateMachine for FinateStateMachine<R>
 where
   R: IntoSupportedRuntime,
-  SnapshotSink<R>: IntoPython,
-  SnapshotSource<R>: IntoPython,
   FinateStateMachineSnapshot<R>:
     FromPython<Source = <FinateStateMachineSnapshot<R> as IntoPython>::Target> + IntoPython,
 {
@@ -426,17 +355,10 @@ where
   /// state before restoring the snapshot.
   async fn restore(
     &self,
-    snapshot: impl ruraft_core::storage::SnapshotSource<
-      Id = Self::Id,
-      Address = Self::Address,
-      Runtime = Self::Runtime,
-    >,
+    snapshot: impl AsyncRead + Unpin + Send + Sync + 'static,
   ) -> Result<(), Self::Error> {
-    let source = SnapshotSource::<R>::new(
-      snapshot.meta().clone(),
-      FearlessCell::new(Box::new(snapshot)),
-    )
-    .into_python();
+    let source = R::SnapshotSource::from(SupportedSnapshotSource::new(snapshot));
+
     Python::with_gil(|py| {
       R::into_supported().into_future(
         self
