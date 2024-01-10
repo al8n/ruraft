@@ -1,25 +1,16 @@
-use std::{pin::Pin, task::{Context, Poll}, io};
+use std::{
+  io,
+  pin::Pin,
+  task::{Context, Poll},
+};
 
-use futures::{AsyncRead, Future, io::Cursor};
-use pyo3::{*, types::PyBytes};
-
-pub struct MemoryBuffer(Py<PyBytes>);
-
-impl Clone for MemoryBuffer {
-  fn clone(&self) -> Self {
-    Self(self.0.clone())
-  }
-}
-
-impl AsRef<[u8]> for MemoryBuffer {
-  fn as_ref(&self) -> &[u8] {
-    Python::with_gil(|py| self.0.as_bytes(py))
-  }
-}
+use crate::RaftData;
+use futures::{io::Cursor, AsyncRead, Future};
+use pyo3::*;
 
 enum AsyncReaderInner<F> {
   File(F),
-  Memory(Cursor<MemoryBuffer>)
+  Memory(Cursor<RaftData>),
 }
 
 impl<F: AsyncRead + Unpin> AsyncRead for AsyncReaderInner<F> {
@@ -29,31 +20,28 @@ impl<F: AsyncRead + Unpin> AsyncRead for AsyncReaderInner<F> {
     buf: &mut [u8],
   ) -> Poll<io::Result<usize>> {
     match self.get_mut() {
-      Self::File(f) => {
-        Pin::new(f).poll_read(cx, buf)
-      },
-      Self::Memory(b) => {
-        Pin::new(b).poll_read(cx, buf)
-      }
+      Self::File(f) => Pin::new(f).poll_read(cx, buf),
+      Self::Memory(b) => Pin::new(b).poll_read(cx, buf),
     }
   }
 }
 
-
 #[cfg(feature = "tokio")]
-pub use self::tokio::{SnapshotSink as TokioSnapshotSink, SnapshotSource as TokioSnapshotSource, AsyncReader as TokioAsyncReader};
+pub use self::tokio::{
+  AsyncReader as TokioAsyncReader, Snapshot as TokioSnapshot, SnapshotSink as TokioSnapshotSink,
+};
 
 #[cfg(feature = "tokio")]
 mod tokio {
   use super::*;
-  use pyo3_asyncio::tokio::future_into_py;
   use ::tokio::fs::File;
+  use pyo3_asyncio::tokio::future_into_py;
   use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
   pyo3io_macros::async_reader!(future_into_py("AsyncReader": AsyncReaderInner<Compat<File>> {
     #[staticmethod]
-    pub fn memory(buf: Py<PyBytes>) -> Self {
-      Self::new(AsyncReaderInner::Memory(Cursor::new(MemoryBuffer(buf))))
+    pub fn memory(buf: &[u8]) -> Self {
+      Self::new(AsyncReaderInner::Memory(Cursor::new(RaftData::from(buf))))
     }
 
     #[staticmethod]
@@ -64,17 +52,17 @@ mod tokio {
     }
   }));
 
-  pyo3io_macros::async_reader!(future_into_py("SnapshotSource": ruraft_bindings_common::storage::SupportedSnapshotSource));
+  pyo3io_macros::async_reader!(future_into_py("Snapshot": ruraft_bindings_common::storage::SupportedSnapshot));
 
-  impl From<ruraft_bindings_common::storage::SupportedSnapshotSource> for SnapshotSource {
-    fn from(s: ruraft_bindings_common::storage::SupportedSnapshotSource) -> Self {
+  impl From<ruraft_bindings_common::storage::SupportedSnapshot> for Snapshot {
+    fn from(s: ruraft_bindings_common::storage::SupportedSnapshot) -> Self {
       Self::new(s)
     }
   }
 
-  impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SnapshotSource {
+  impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for Snapshot {
     fn from(s: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>) -> Self {
-      Self::new(ruraft_bindings_common::storage::SupportedSnapshotSource::from(s))
+      Self::new(ruraft_bindings_common::storage::SupportedSnapshot::from(s))
     }
   }
 
@@ -101,7 +89,10 @@ mod tokio {
 }
 
 #[cfg(feature = "async-std")]
-pub use self::async_std::{SnapshotSink as AsyncStdSnapshotSink, SnapshotSource as AsyncStdSnapshotSource, AsyncReader as AsyncStdAsyncReader};
+pub use self::async_std::{
+  AsyncReader as AsyncStdAsyncReader, Snapshot as AsyncStdSnapshot,
+  SnapshotSink as AsyncStdSnapshotSink,
+};
 
 #[cfg(feature = "async-std")]
 mod async_std {
@@ -114,8 +105,8 @@ mod async_std {
 
   pyo3io_macros::async_reader!(future_into_py("AsyncReader": AsyncReaderInner<File> {
     #[staticmethod]
-    pub fn memory(buf: Py<PyBytes>) -> Self {
-      Self::new(AsyncReaderInner::Memory(Cursor::new(MemoryBuffer(buf))))
+    pub fn memory(buf: &[u8]) -> Self {
+      Self::new(AsyncReaderInner::Memory(Cursor::new(RaftData::from(buf))))
     }
 
     #[staticmethod]
@@ -126,17 +117,17 @@ mod async_std {
     }
   }));
 
-  pyo3io_macros::async_reader!(future_into_py("SnapshotSource": ruraft_bindings_common::storage::SupportedSnapshotSource));
+  pyo3io_macros::async_reader!(future_into_py("Snapshot": ruraft_bindings_common::storage::SupportedSnapshot));
 
-  impl From<ruraft_bindings_common::storage::SupportedSnapshotSource> for SnapshotSource {
-    fn from(s: ruraft_bindings_common::storage::SupportedSnapshotSource) -> Self {
+  impl From<ruraft_bindings_common::storage::SupportedSnapshot> for Snapshot {
+    fn from(s: ruraft_bindings_common::storage::SupportedSnapshot) -> Self {
       Self::new(s)
     }
   }
 
-  impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SnapshotSource {
+  impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for Snapshot {
     fn from(s: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>) -> Self {
-      Self::new(ruraft_bindings_common::storage::SupportedSnapshotSource::from(s))
+      Self::new(ruraft_bindings_common::storage::SupportedSnapshot::from(s))
     }
   }
 
@@ -161,4 +152,3 @@ mod async_std {
     }
   }
 }
-

@@ -1,9 +1,13 @@
 from typing import AsyncIterable, Optional
 from datetime import timedelta
-from tokio_raft import types, options, membership
+from tokio_raft import types, options, membership, fsm
 
 
 class Raft:
+  async def new(fsm: fsm.FinateStateMachine, options: options.Options) -> Raft: ...
+
+  async def recover(fsm: fsm.FinateStateMachine, membership: membership.Membership, options: options.Options) -> None:...
+
   def reloadable_options(self) -> options.ReloadableOptions: ...
   
   def options(self) -> options.Options: ...

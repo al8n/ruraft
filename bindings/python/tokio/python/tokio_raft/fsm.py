@@ -50,5 +50,5 @@ class FinateStateMachine(ABC):
     pass
 
   @abstractmethod
-  async def restore(self, source: types.AsyncReader) -> None:
+  async def restore(self, source: types.Snapshot) -> None:
     pass

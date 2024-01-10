@@ -4,7 +4,7 @@ use agnostic::Runtime;
 use futures::AsyncRead;
 use nodecraft::{NodeAddress, NodeId};
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyString};
-use ruraft_bindings_common::storage::SupportedSnapshotSource;
+use ruraft_bindings_common::storage::SupportedSnapshot;
 use ruraft_core::{
   storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
   FinateStateMachine as RFinateStateMachine, FinateStateMachineError as RFinateStateMachineError,
@@ -358,7 +358,7 @@ where
     &self,
     snapshot: impl AsyncRead + Unpin + Send + Sync + 'static,
   ) -> Result<(), Self::Error> {
-    let source = R::SnapshotSource::from(SupportedSnapshotSource::new(snapshot));
+    let source = R::Snapshot::from(SupportedSnapshot::new(snapshot));
 
     Python::with_gil(|py| {
       R::into_supported().into_future(

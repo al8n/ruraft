@@ -1,6 +1,7 @@
+#![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
 
-use std::{cell::UnsafeCell, pin::Pin, sync::Arc};
+use std::pin::Pin;
 
 use agnostic::Runtime;
 use futures::{Future, FutureExt};
@@ -13,7 +14,6 @@ pub mod storage;
 pub use storage::RaftStorage;
 pub mod transport;
 pub mod types;
-mod utils;
 
 const INLINED_U8: usize = 64;
 
@@ -22,38 +22,6 @@ pub type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
 pub type RaftTransport<R> = ruraft_bindings_common::transport::SupportedTransport<RaftData, R>;
 
 pub type Raft<R> = ruraft_bindings_common::Raft<fsm::FinateStateMachine<R>, RaftData, R>;
-
-/// A fearless cell, which is highly unsafe
-///
-/// If your structure and its internals are safe to send to Python
-/// (they implement Send and do not have internal mutability that could cause thread-safety issues),
-/// and you don't plan to access it concurrently from Rust anymore,
-/// you can avoid using a Mutex. Just ensure that any interaction with it in Python is done in a thread-safe manner, respecting Python's GIL.
-struct FearlessCell<T: Sized>(Arc<UnsafeCell<T>>);
-
-impl<T> Clone for FearlessCell<T> {
-  fn clone(&self) -> Self {
-    Self(self.0.clone())
-  }
-}
-
-impl<T> FearlessCell<T> {
-  fn new(val: T) -> Self {
-    Self(Arc::new(UnsafeCell::new(val)))
-  }
-
-  /// # Safety
-  ///
-  /// - no data-race, struct will not be send back to Rust side anymore
-  /// - must be called with GIL holds
-  #[allow(clippy::mut_from_ref)]
-  unsafe fn get_mut(&self) -> &mut T {
-    &mut *self.0.get()
-  }
-}
-
-unsafe impl<T> Send for FearlessCell<T> {}
-unsafe impl<T> Sync for FearlessCell<T> {}
 
 trait IntoPython: Sized {
   type Target: pyo3::PyClass
@@ -105,10 +73,10 @@ impl SupportedRuntime {
 }
 
 trait IntoSupportedRuntime: Runtime {
-  type SnapshotSource: pyo3::PyClass
+  type Snapshot: pyo3::PyClass
     + pyo3::IntoPy<pyo3::Py<pyo3::PyAny>>
     + for<'source> pyo3::FromPyObject<'source>
-    + From<ruraft_bindings_common::storage::SupportedSnapshotSource>
+    + From<ruraft_bindings_common::storage::SupportedSnapshot>
     + From<Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>>;
 
   type SnapshotSink: pyo3::PyClass
@@ -121,7 +89,7 @@ trait IntoSupportedRuntime: Runtime {
 
 #[cfg(feature = "tokio")]
 impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
-  type SnapshotSource = crate::types::TokioSnapshotSource;
+  type Snapshot = crate::types::TokioSnapshot;
   type SnapshotSink = crate::types::TokioSnapshotSink;
 
   #[inline(always)]
@@ -132,7 +100,7 @@ impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
 
 #[cfg(feature = "async-std")]
 impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
-  type SnapshotSource = crate::types::AsyncStdSnapshotSource;
+  type Snapshot = crate::types::AsyncStdSnapshot;
   type SnapshotSink = crate::types::AsyncStdSnapshotSink;
 
   #[inline(always)]

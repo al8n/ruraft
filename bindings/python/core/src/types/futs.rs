@@ -117,7 +117,6 @@ macro_rules! state_machine_futs {
   };
 }
 
-
 pub struct SnapshotFuture<R>(
   Option<
     ruraft_core::SnapshotFuture<
@@ -175,4 +174,3 @@ state_machine_futs!(
 );
 
 leadership_watcher!("tokio", "async-std");
-

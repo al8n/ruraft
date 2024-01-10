@@ -1,6 +1,6 @@
 use pyo3::{exceptions::PyIOError, PyErr};
 
-use crate::{types::SnapshotMeta, IntoPython, IntoSupportedRuntime, RaftData};
+use crate::{types::SnapshotMeta, IntoSupportedRuntime, RaftData};
 
 pub mod light;
 
@@ -24,13 +24,13 @@ impl<R: IntoSupportedRuntime> Clone for SnapshotSource<R> {
 }
 
 impl<R: IntoSupportedRuntime> SnapshotSource<R> {
-  pub async fn open(&mut self) -> Result<(SnapshotMeta, R::SnapshotSource), PyErr> {
+  pub async fn open(&mut self) -> Result<(SnapshotMeta, R::Snapshot), PyErr> {
     self
       .0
       .open()
       .await
       .map_err(|e| PyIOError::new_err(e.to_string()))
-      .map(|(meta, source)| (meta.into(), R::SnapshotSource::from(source)))
+      .map(|(meta, source)| (meta.into(), R::Snapshot::from(source)))
   }
 }
 

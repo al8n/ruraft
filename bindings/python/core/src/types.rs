@@ -415,7 +415,7 @@ impl CommittedLog {
 }
 
 #[derive(Clone)]
-#[pyclass(frozen)]
+#[pyclass]
 pub struct ApplyBatchResponse(ruraft_core::ApplyBatchResponse<FinateStateMachineResponse>);
 
 impl From<ApplyBatchResponse> for ruraft_core::ApplyBatchResponse<FinateStateMachineResponse> {
@@ -702,7 +702,7 @@ macro_rules! register {
           m.add_class::<crate::storage:: [< $rt:camel SnapshotSource >]>()?;
           m.add_class::<[< $rt:camel AsyncReader >]>()?;
           m.add_class::<[< $rt:camel SnapshotSink >]>()?;
-          m.add_class::<[< $rt:camel SnapshotSource >]>()?;
+          m.add_class::<[< $rt:camel Snapshot >]>()?;
           Ok(())
         }
       }

@@ -45,17 +45,17 @@ impl ruraft_core::storage::SnapshotSink for SupportedSnapshotSink {
 }
 
 #[repr(transparent)]
-pub struct SupportedSnapshotSource {
+pub struct SupportedSnapshot {
   reader: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>,
 }
 
-impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SupportedSnapshotSource {
+impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SupportedSnapshot {
   fn from(value: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>) -> Self {
     Self { reader: value }
   }
 }
 
-impl SupportedSnapshotSource {
+impl SupportedSnapshot {
   pub fn new(reader: impl AsyncRead + Send + Sync + Unpin + 'static) -> Self {
     Self {
       reader: Box::new(reader),
@@ -63,7 +63,7 @@ impl SupportedSnapshotSource {
   }
 }
 
-impl futures::AsyncRead for SupportedSnapshotSource {
+impl futures::AsyncRead for SupportedSnapshot {
   fn poll_read(
     mut self: Pin<&mut Self>,
     cx: &mut Context<'_>,
@@ -155,12 +155,12 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
       Self::File(f) => f
         .open(id)
         .await
-        .map(|(meta, reader)| (meta, SupportedSnapshotSource::new(reader)))
+        .map(|(meta, reader)| (meta, SupportedSnapshot::new(reader)))
         .map_err(|e| SupportedSnapshotStorageError::Any(Box::new(e))),
       Self::Memory(m) => m
         .open(id)
         .await
-        .map(|(meta, reader)| (meta, SupportedSnapshotSource::new(reader)))
+        .map(|(meta, reader)| (meta, SupportedSnapshot::new(reader)))
         .map_err(|e| SupportedSnapshotStorageError::Any(Box::new(e))),
     }
   }
