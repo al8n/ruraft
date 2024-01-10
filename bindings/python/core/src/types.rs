@@ -1,6 +1,5 @@
 use std::{
   hash::{DefaultHasher, Hash, Hasher},
-  net::{IpAddr, Ipv4Addr, Ipv6Addr},
   time::Duration,
 };
 
@@ -570,10 +569,6 @@ impl SnapshotId {
   #[getter]
   pub fn timestamp(&self) -> u64 {
     self.0.timestamp()
-  }
-
-  pub fn to_snapshot_identifier(&self) -> String {
-    format!("{}", self.0)
   }
 
   pub fn __str__(&self) -> String {

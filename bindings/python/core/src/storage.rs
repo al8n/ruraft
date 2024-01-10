@@ -1,71 +1,70 @@
-use std::pin::Pin;
+use pyo3::{exceptions::PyIOError, PyErr};
 
-use futures::AsyncWrite;
-use ruraft_core::storage::SnapshotSink;
+use crate::{types::SnapshotMeta, IntoPython, IntoSupportedRuntime, RaftData};
 
 pub mod light;
 
-pub(crate) struct SnapshotSinkPtr {
-  ptr: *mut (),
+pub type RaftStorage<R> = ruraft_bindings_common::storage::SupportedStorage<RaftData, R>;
+
+#[derive(derive_more::From)]
+pub struct SnapshotSource<R: IntoSupportedRuntime>(
+  ruraft_core::storage::SnapshotSource<RaftStorage<R>>,
+);
+
+impl<R: IntoSupportedRuntime> core::fmt::Debug for SnapshotSource<R> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "{:?}", self.0)
+  }
 }
 
-unsafe impl Send for SnapshotSinkPtr {}
-unsafe impl Sync for SnapshotSinkPtr {}
+impl<R: IntoSupportedRuntime> Clone for SnapshotSource<R> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
+}
 
-impl SnapshotSinkPtr {
-  pub(crate) fn new<T: SnapshotSink>(sink: T) -> Self {
-    Self {
-      ptr: Box::into_raw(Box::new(sink)) as *mut (),
+impl<R: IntoSupportedRuntime> SnapshotSource<R> {
+  pub async fn open(&mut self) -> Result<(SnapshotMeta, R::SnapshotSource), PyErr> {
+    self
+      .0
+      .open()
+      .await
+      .map_err(|e| PyIOError::new_err(e.to_string()))
+      .map(|(meta, source)| (meta.into(), R::SnapshotSource::from(source)))
+  }
+}
+
+macro_rules! snapshot_source {
+  ($rt: literal) => {
+    paste::paste! {
+      #[pyo3::pyclass(name = "SnapshotSource")]
+      #[derive(Clone, Debug)]
+      pub struct [< $rt:camel SnapshotSource >] (SnapshotSource< agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] >);
+
+      impl crate::IntoPython for SnapshotSource<agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]> {
+        type Target = [< $rt:camel SnapshotSource >];
+
+        fn into_python(self) -> Self::Target {
+          [< $rt:camel SnapshotSource >] (self)
+        }
+      }
+
+      #[pyo3::pymethods]
+      impl [< $rt:camel SnapshotSource >] {
+        /// Open the snapshot source.
+        pub fn open<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          let mut this = self.0.clone();
+          pyo3_asyncio::[< $rt:snake >]::future_into_py(py, async move {
+            this.open().await.map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+          })
+        }
+      }
     }
-  }
-
-  pub(crate) fn as_ref(&self) -> &impl SnapshotSink {
-    unsafe { &*(self.ptr as *const dyn SnapshotSink) }
-  }
-
-  pub(crate) fn as_mut(&mut self) -> &mut impl SnapshotSink {
-    unsafe { &mut *(self.ptr as *mut _) }
-  }
+  };
 }
 
-impl AsyncWrite for SnapshotSinkPtr {
-  fn poll_write(
-    self: Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-    buf: &[u8],
-  ) -> std::task::Poll<std::io::Result<usize>> {
-    Pin::new(self.get_mut().as_mut()).poll_write(cx, buf)
-  }
+#[cfg(feature = "tokio")]
+snapshot_source!("tokio");
 
-  fn poll_flush(
-    self: Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<std::io::Result<()>> {
-    Pin::new(self.get_mut().as_mut()).poll_flush(cx)
-  }
-
-  fn poll_close(
-    self: Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<std::io::Result<()>> {
-    Pin::new(self.get_mut().as_mut()).poll_close(cx)
-  }
-}
-
-impl SnapshotSink for SnapshotSinkPtr {
-  fn id(&self) -> &str {
-    self.as_mut().id()
-  }
-
-  fn cancel(&mut self) -> impl futures::prelude::Future<Output = std::io::Result<()>> + Send {
-    self.as_mut().cancel()
-  }
-}
-
-impl Drop for SnapshotSinkPtr {
-  fn drop(&mut self) {
-    unsafe {
-      Box::from_raw(self.ptr);
-    }
-  }
-}
+#[cfg(feature = "async-std")]
+snapshot_source!("async-std");

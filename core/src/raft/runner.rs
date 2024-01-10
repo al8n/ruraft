@@ -28,8 +28,8 @@ use crate::{
   raft::snapshot::SnapshotRestoreMonitor,
   sidecar::Sidecar,
   storage::{
-    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotMeta, SnapshotSink, SnapshotSinkExt,
-    SnapshotStorage, StableStorage, Storage, StorageError,
+    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotMeta, SnapshotSink,
+    SnapshotSinkExt, SnapshotStorage, StableStorage, Storage, StorageError,
   },
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatRequest,

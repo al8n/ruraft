@@ -86,16 +86,14 @@ macro_rules! state_machine_futs {
         where
           R: $crate::IntoSupportedRuntime,
           <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-          $crate::storage::snapshot::SnapshotSink<R>: $crate::IntoPython,
-          $crate::storage::snapshot::SnapshotSource<R>: $crate::IntoPython,
+          $crate::storage::SnapshotSource<R>: $crate::IntoPython,
           $crate::fsm::FinateStateMachineSnapshot<R>: $crate::FromPython<Source = <$crate::fsm::FinateStateMachineSnapshot<R> as $crate::IntoPython>::Target> + $crate::IntoPython;
 
         impl<R> [< $ty >]<R>
         where
           R: $crate::IntoSupportedRuntime,
           <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-          $crate::storage::snapshot::SnapshotSink<R>: $crate::IntoPython,
-          $crate::storage::snapshot::SnapshotSource<R>: $crate::IntoPython,
+          $crate::storage::SnapshotSource<R>: $crate::IntoPython,
           $crate::fsm::FinateStateMachineSnapshot<R>: $crate::FromPython<Source = <$crate::fsm::FinateStateMachineSnapshot<R> as $crate::IntoPython>::Target> + $crate::IntoPython,
         {
           pub fn wait<'a>(&'a mut self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
@@ -132,6 +130,7 @@ macro_rules! register {
           m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
           m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
           m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
+          m.add_class::<crate::storage:: [< $rt:camel SnapshotSource >]>()?;
 
           Ok(())
         }
@@ -144,7 +143,7 @@ pub struct SnapshotFuture<R>(
   Option<
     ruraft_core::SnapshotFuture<
       crate::fsm::FinateStateMachine<R>,
-      crate::RaftStorage<R>,
+      crate::storage::RaftStorage<R>,
       crate::RaftTransport<R>,
     >,
   >,
@@ -152,8 +151,7 @@ pub struct SnapshotFuture<R>(
 where
   R: crate::IntoSupportedRuntime,
   <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-  crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-  crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
+  crate::storage::SnapshotSource<R>: crate::IntoPython,
   crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
       Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
     > + crate::IntoPython;
@@ -161,9 +159,8 @@ where
 impl<R> SnapshotFuture<R>
 where
   R: crate::IntoSupportedRuntime,
+  crate::storage::SnapshotSource<R>: crate::IntoPython,
   <<R as agnostic::Runtime>::Sleep as futures::Future>::Output: Send,
-  crate::storage::snapshot::SnapshotSink<R>: crate::IntoPython,
-  crate::storage::snapshot::SnapshotSource<R>: crate::IntoPython,
   crate::fsm::FinateStateMachineSnapshot<R>: crate::FromPython<
       Source = <crate::fsm::FinateStateMachineSnapshot<R> as crate::IntoPython>::Target,
     > + crate::IntoPython,
@@ -172,18 +169,9 @@ where
     match self.0.take() {
       Some(f) => R::into_supported().future_into_py(py, async move {
         match f.await {
-          Ok(res) => match res.await {
-            Ok(res) => {
-              let meta = res.meta().clone();
-              let cell = crate::FearlessCell::new(Box::new(res) as Box<_>);
-              Ok(crate::IntoPython::into_python(
-                crate::storage::snapshot::SnapshotSource::new(meta, cell),
-              ))
-            }
-            Err(e) => Err(pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-              e.to_string(),
-            )),
-          },
+          Ok(res) => Ok(crate::IntoPython::into_python(
+            crate::storage::SnapshotSource::from(res),
+          )),
           Err(e) => Err(pyo3::PyErr::new::<pyo3::exceptions::PyTypeError, _>(
             e.to_string(),
           )),

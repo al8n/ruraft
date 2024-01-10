@@ -1,4 +1,9 @@
-use std::{future::Future, sync::Arc, pin::Pin, task::{Context, Poll}};
+use std::{
+  future::Future,
+  pin::Pin,
+  sync::Arc,
+  task::{Context, Poll},
+};
 
 use crate::{
   membership::Membership,
@@ -31,7 +36,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
   type Address: Address;
 
   /// The sink type used to write snapshots.
-  type Sink: SnapshotSink;
+  type Sink: SnapshotSink + Unpin;
 
   /// Used to begin a snapshot at a given index and term, and with
   /// the given committed configuration. The version parameter controls
@@ -68,7 +73,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: AsyncWrite + Send + Sync + Unpin + 'static {
+pub trait SnapshotSink: AsyncWrite + Send + Sync {
   /// The id of the snapshot being written.
   fn id(&self) -> SnapshotId;
 
@@ -83,10 +88,33 @@ pub trait SnapshotSink: AsyncWrite + Send + Sync + Unpin + 'static {
   fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>>;
 }
 
+impl<T: SnapshotSink + Unpin> SnapshotSink for Box<T> {
+  fn id(&self) -> SnapshotId {
+    T::id(self)
+  }
+
+  fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    Pin::new(&mut **self.get_mut()).poll_cancel(cx)
+  }
+}
+
+impl<T: SnapshotSink + Unpin> SnapshotSink for &mut T {
+  fn id(&self) -> SnapshotId {
+    T::id(self)
+  }
+
+  fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    Pin::new(&mut **self.get_mut()).poll_cancel(cx)
+  }
+}
+
 /// An extension trait which adds utility methods to `SnapshotSink` types.
 pub trait SnapshotSinkExt: SnapshotSink {
   /// Creates a future which will entirely cancel this `SnapshotSink`.
-  fn cancel(&mut self) -> Cancel<'_, Self> where Self: Unpin {
+  fn cancel(&mut self) -> Cancel<'_, Self>
+  where
+    Self: Unpin,
+  {
     Cancel::new(self)
   }
 }
@@ -104,7 +132,7 @@ impl<W: ?Sized + Unpin> Unpin for Cancel<'_, W> {}
 
 impl<'a, W: SnapshotSink + ?Sized + Unpin> Cancel<'a, W> {
   pub(super) fn new(sink: &'a mut W) -> Self {
-      Self { sink }
+    Self { sink }
   }
 }
 
@@ -120,19 +148,35 @@ impl<W: SnapshotSink + ?Sized + Unpin> Future for Cancel<'_, W> {
 ///
 /// [`snapshot`]: struct.RaftCore#method.snapshot
 /// [`snapshot_timeout`]: struct.RaftCore#method.snapshot_timeout
-pub struct SnapshotSource<S: Storage>(Option<(SnapshotId, Arc<S>)>);
+pub struct SnapshotSource<S>(Option<(SnapshotId, Arc<S>)>);
 
-impl<S: Storage> Default for SnapshotSource<S> {
+impl<S> core::fmt::Debug for SnapshotSource<S> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("SnapshotSource")
+      .field("id", &self.0.as_ref().map(|(id, _)| id))
+      .finish()
+  }
+}
+
+impl<S> Clone for SnapshotSource<S> {
+  fn clone(&self) -> Self {
+    Self(self.0.clone())
+  }
+}
+
+impl<S> Default for SnapshotSource<S> {
   fn default() -> Self {
     Self(None)
   }
 }
 
-impl<S: Storage> SnapshotSource<S> {
+impl<S> SnapshotSource<S> {
   pub(crate) fn new(id: SnapshotId, store: Arc<S>) -> Self {
     Self(Some((id, store)))
   }
+}
 
+impl<S: Storage> SnapshotSource<S> {
   /// Used to open the snapshot. This is filled in
   /// once the future returns with no error.
   pub async fn open(

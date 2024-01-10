@@ -2,71 +2,57 @@ use agnostic::Runtime;
 use futures::{AsyncRead, AsyncWrite};
 use nodecraft::{NodeAddress, NodeId};
 use ruraft_core::storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotStorage};
-use ruraft_memory::storage::snapshot::MemorySnapshotSink;
-use ruraft_snapshot::sync::FileSnapshotSink;
 
 use std::{
   pin::Pin,
   task::{Context, Poll},
 };
 
-pub enum SupportedSnapshotSink<R> {
-  File {
-    id: SnapshotId,
-    writer: FileSnapshotSink<NodeId, NodeAddress, R>,
-  },
-  Memory {
-    id: SnapshotId,
-    writer: MemorySnapshotSink<NodeId, NodeAddress>,
-  },
+pub struct SupportedSnapshotSink(Box<dyn SnapshotSink>);
+
+impl SupportedSnapshotSink {
+  pub fn new(sink: impl SnapshotSink) -> Self {
+    Self(Box::new(sink))
+  }
 }
 
-impl<R: Runtime> futures::AsyncWrite for SupportedSnapshotSink<R> {
+impl AsyncWrite for SupportedSnapshotSink {
   fn poll_write(
     self: Pin<&mut Self>,
     cx: &mut Context<'_>,
     buf: &[u8],
   ) -> Poll<std::io::Result<usize>> {
-    match self.get_mut() {
-      Self::File { id: _, writer } => Pin::new(writer).poll_write(cx, buf),
-      Self::Memory { id: _, writer } => Pin::new(writer).poll_write(cx, buf),
-    }
+    Pin::new(&mut self.get_mut()).poll_write(cx, buf)
   }
 
   fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-    match self.get_mut() {
-      Self::File { id: _, writer } => Pin::new(writer).poll_flush(cx),
-      Self::Memory { id: _, writer } => Pin::new(writer).poll_flush(cx),
-    }
+    Pin::new(&mut self.get_mut()).poll_flush(cx)
   }
 
   fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-    match self.get_mut() {
-      Self::File { id: _, writer } => Pin::new(writer).poll_close(cx),
-      Self::Memory { id: _, writer } => Pin::new(writer).poll_close(cx),
-    }
+    Pin::new(&mut self.get_mut()).poll_close(cx)
   }
 }
 
-impl<R: Runtime> ruraft_core::storage::SnapshotSink for SupportedSnapshotSink<R> {
+impl ruraft_core::storage::SnapshotSink for SupportedSnapshotSink {
   fn id(&self) -> SnapshotId {
-    match self {
-      Self::File { id, .. } => *id,
-      Self::Memory { id, .. } => *id,
-    }
+    self.0.id()
   }
 
-  async fn cancel(&mut self) -> std::io::Result<()> {
-    match self {
-      Self::File { id: _, writer } => writer.cancel().await,
-      Self::Memory { id: _, writer } => writer.cancel().await,
-    }
+  fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    Pin::new(self.get_mut().0.as_mut()).poll_cancel(cx)
   }
 }
 
 #[repr(transparent)]
 pub struct SupportedSnapshotSource {
   reader: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>,
+}
+
+impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SupportedSnapshotSource {
+  fn from(value: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>) -> Self {
+    Self { reader: value }
+  }
 }
 
 impl SupportedSnapshotSource {
@@ -116,7 +102,7 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
   type Runtime = R;
   type Id = NodeId;
   type Address = NodeAddress;
-  type Sink = SupportedSnapshotSink<R>;
+  type Sink = SupportedSnapshotSink;
 
   async fn create(
     &self,
@@ -130,18 +116,12 @@ impl<R: Runtime> SnapshotStorage for SupportedSnapshotStorage<R> {
       Self::File(f) => f
         .create(version, term, index, membership, membership_index)
         .await
-        .map(|sink| SupportedSnapshotSink::File {
-          id: sink.id(),
-          writer: sink,
-        })
+        .map(|sink| SupportedSnapshotSink(Box::new(sink)))
         .map_err(|e| SupportedSnapshotStorageError::Any(Box::new(e))),
       Self::Memory(m) => m
         .create(version, term, index, membership, membership_index)
         .await
-        .map(|sink| SupportedSnapshotSink::Memory {
-          id: sink.id(),
-          writer: sink,
-        })
+        .map(|sink| SupportedSnapshotSink(Box::new(sink)))
         .map_err(|e| SupportedSnapshotStorageError::Any(Box::new(e))),
     }
   }

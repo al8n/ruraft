@@ -1,14 +1,13 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use agnostic::Runtime;
-use futures::{lock::Mutex, AsyncRead, AsyncWriteExt};
+use futures::AsyncRead;
 use nodecraft::{NodeAddress, NodeId};
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyString};
 use ruraft_bindings_common::storage::SupportedSnapshotSource;
 use ruraft_core::{
   storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
-  ApplyBatchResponse as RApplyBatchResponse, FinateStateMachine as RFinateStateMachine,
-  FinateStateMachineError as RFinateStateMachineError,
+  FinateStateMachine as RFinateStateMachine, FinateStateMachineError as RFinateStateMachineError,
   FinateStateMachineResponse as RFinateStateMachineResponse,
   FinateStateMachineSnapshot as RFinateStateMachineSnapshot,
 };
@@ -112,11 +111,13 @@ where
   type Runtime = R;
 
   async fn persist(&self, sink: impl SnapshotSink) -> Result<(), Self::Error> {
-    let id = sink.id();
-    let snap = R::SnapshotSink::from(crate::storage::SnapshotSinkPtr::new(sink));
+    let id: crate::types::SnapshotId = sink.id().into();
+    let snap = R::SnapshotSink::from(ruraft_bindings_common::storage::SupportedSnapshotSink::new(
+      sink,
+    ));
 
     Python::with_gil(|py| {
-      let arg = (snap,);
+      let arg = (id, snap);
       R::into_supported().into_future(self.snap.as_ref().as_ref(py).call_method1("persist", arg)?)
     })
     .map_err(FinateStateMachineSnapshotError::from)?

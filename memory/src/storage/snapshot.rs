@@ -224,7 +224,6 @@ where
   }
 }
 
-
 /// Implements [`SnapshotSource`] in memory
 ///
 /// **N.B.** This struct should only be used in test, and never be used in production.

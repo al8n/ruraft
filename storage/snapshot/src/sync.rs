@@ -744,13 +744,15 @@ where
     this.closed = true;
 
     // Close the open handles
-    Poll::Ready(this
-      .finalize()
-      .map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err=%e, "failed to finalize snapshot");
-        e
-      })
-      .and_then(|_| fs::remove_dir_all(&this.dir)))
+    Poll::Ready(
+      this
+        .finalize()
+        .map_err(|e| {
+          tracing::error!(target = "ruraft.snapshot.file", err=%e, "failed to finalize snapshot");
+          e
+        })
+        .and_then(|_| fs::remove_dir_all(&this.dir)),
+    )
   }
 }
 
@@ -821,8 +823,8 @@ pub mod tests {
   use std::net::SocketAddr;
 
   use futures::{AsyncReadExt, AsyncWriteExt};
-  use smol_str::SmolStr;
   use ruraft_core::storage::SnapshotSinkExt;
+  use smol_str::SmolStr;
 
   use super::*;
 
