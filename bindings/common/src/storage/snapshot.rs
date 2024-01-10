@@ -8,10 +8,10 @@ use std::{
   task::{Context, Poll},
 };
 
-pub struct SupportedSnapshotSink(Box<dyn SnapshotSink>);
+pub struct SupportedSnapshotSink(Box<dyn SnapshotSink + 'static>);
 
 impl SupportedSnapshotSink {
-  pub fn new(sink: impl SnapshotSink) -> Self {
+  pub fn new(sink: impl SnapshotSink + 'static) -> Self {
     Self(Box::new(sink))
   }
 }

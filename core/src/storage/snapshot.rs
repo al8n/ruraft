@@ -73,7 +73,7 @@ pub trait SnapshotStorage: Send + Sync + 'static {
 
 /// Returned by `start_snapshot`. The `FinateStateMachine` will write state
 /// to the sink. On error, `cancel` will be invoked.
-pub trait SnapshotSink: AsyncWrite + Send + Sync {
+pub trait SnapshotSink: AsyncWrite + Send + Sync + Unpin {
   /// The id of the snapshot being written.
   fn id(&self) -> SnapshotId;
 
@@ -88,7 +88,7 @@ pub trait SnapshotSink: AsyncWrite + Send + Sync {
   fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>>;
 }
 
-impl<T: SnapshotSink + Unpin> SnapshotSink for Box<T> {
+impl<T: SnapshotSink> SnapshotSink for Box<T> {
   fn id(&self) -> SnapshotId {
     T::id(self)
   }
@@ -98,7 +98,7 @@ impl<T: SnapshotSink + Unpin> SnapshotSink for Box<T> {
   }
 }
 
-impl<T: SnapshotSink + Unpin> SnapshotSink for &mut T {
+impl<T: SnapshotSink> SnapshotSink for &mut T {
   fn id(&self) -> SnapshotId {
     T::id(self)
   }

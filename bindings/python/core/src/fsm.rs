@@ -110,7 +110,7 @@ where
   type Error = FinateStateMachineSnapshotError;
   type Runtime = R;
 
-  async fn persist(&self, sink: impl SnapshotSink) -> Result<(), Self::Error> {
+  async fn persist(&self, sink: impl SnapshotSink + 'static) -> Result<(), Self::Error> {
     let id: crate::types::SnapshotId = sink.id().into();
     let snap = R::SnapshotSink::from(ruraft_bindings_common::storage::SupportedSnapshotSink::new(
       sink,

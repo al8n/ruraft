@@ -30,8 +30,8 @@ serde = [
   "humantime-serde",
 ]
 
-tokio = ["agnostic/tokio", "pyo3-asyncio/tokio-runtime", "pyo3io/tokio"]
-async-std = ["agnostic/async-std", "pyo3-asyncio/async-std-runtime", "pyo3io/async-std"]
+tokio = ["dep:tokio", "tokio-util", "agnostic/tokio", "pyo3-asyncio/tokio-runtime", "pyo3io/tokio"]
+async-std = ["dep:async-std", "agnostic/async-std", "pyo3-asyncio/async-std-runtime", "pyo3io/async-std"]
 smol = ["agnostic/smol"]
 
 sled = ["ruraft-lightwal/sled"]
@@ -39,6 +39,7 @@ jammdb = ["ruraft-lightwal/jammdb", "page_size"]
 redb = ["ruraft-lightwal/redb"]
 
 [dependencies]
+arcmut = "0.1"
 agnostic = { workspace = true }
 async-lock = { workspace = true }
 chrono = "0.4"
@@ -74,3 +75,7 @@ tracing = { workspace = true }
 transformable = { version = "0.1", features = ["bytes", "smallvec"] }
 
 page_size = { version = "0.6", optional = true }
+
+tokio = { version = "1", default_features = false, optional = true, features = ["fs"] }
+tokio-util = { version = "0.7", default_features = false, optional = true, features = ["compat"]}
+async-std = { version = "1", optional = true }

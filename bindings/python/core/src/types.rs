@@ -23,6 +23,9 @@ pub use futs::*;
 pub mod membership;
 pub use membership::*;
 
+pub mod io;
+pub use io::*;
+
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
 #[pyclass(frozen)]
 #[derive(Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Debug, derive_more::From)]
@@ -614,6 +617,12 @@ impl From<ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>> for Snapsho
   }
 }
 
+impl From<SnapshotMeta> for ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress> {
+  fn from(s: SnapshotMeta) -> Self {
+    s.0
+  }
+}
+
 #[pymethods]
 impl SnapshotMeta {
   /// The term when the snapshot was taken.
@@ -676,6 +685,32 @@ impl SnapshotMeta {
     }
   }
 }
+
+macro_rules! register {
+  ($($rt: literal), +$(,)?) => {
+    $(
+      paste::paste! {
+        #[cfg(feature = $rt)]
+        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> {
+          m.add_class::<[< $rt:camel ApplyFuture >]>()?;
+          m.add_class::<[< $rt:camel BarrierFuture >]>()?;
+          m.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
+          m.add_class::<[< $rt:camel VerifyFuture >]>()?;
+          m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
+          m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
+          m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
+          m.add_class::<crate::storage:: [< $rt:camel SnapshotSource >]>()?;
+          m.add_class::<[< $rt:camel AsyncReader >]>()?;
+          m.add_class::<[< $rt:camel SnapshotSink >]>()?;
+          m.add_class::<[< $rt:camel SnapshotSource >]>()?;
+          Ok(())
+        }
+      }
+    )*
+  };
+}
+
+register!("tokio", "async-std");
 
 pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
   let subm = PyModule::new(py, "types")?;

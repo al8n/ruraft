@@ -120,45 +120,9 @@ trait IntoSupportedRuntime: Runtime {
 }
 
 #[cfg(feature = "tokio")]
-mod _tokio {
-  use futures::{AsyncRead, Future};
-  use pyo3::*;
-  use pyo3_asyncio::tokio::future_into_py;
-
-  pyo3io_macros::async_reader!(future_into_py("SnapshotSource": ruraft_bindings_common::storage::SupportedSnapshotSource));
-
-  impl From<ruraft_bindings_common::storage::SupportedSnapshotSource> for SnapshotSource {
-    fn from(s: ruraft_bindings_common::storage::SupportedSnapshotSource) -> Self {
-      Self::new(s)
-    }
-  }
-
-  impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SnapshotSource {
-    fn from(s: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>) -> Self {
-      Self::new(ruraft_bindings_common::storage::SupportedSnapshotSource::from(s))
-    }
-  }
-
-  pyo3io_macros::async_writer!(future_into_py("SnapshotSink": ruraft_bindings_common::storage::SupportedSnapshotSink {
-    pub fn cancel<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
-      let this = self.0.clone();
-      future_into_py(py, async move {
-        this.lock().await.cancel().await.map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
-      })
-    }
-  }));
-
-  impl From<ruraft_bindings_common::storage::SupportedSnapshotSink> for SnapshotSink {
-    fn from(s: ruraft_bindings_common::storage::SupportedSnapshotSink) -> Self {
-      Self::new(s)
-    }
-  }
-}
-
-#[cfg(feature = "tokio")]
 impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
-  type SnapshotSource = _tokio::SnapshotSource;
-  type SnapshotSink = _tokio::SnapshotSink;
+  type SnapshotSource = crate::types::TokioSnapshotSource;
+  type SnapshotSink = crate::types::TokioSnapshotSink;
 
   #[inline(always)]
   fn into_supported() -> SupportedRuntime {
@@ -167,48 +131,9 @@ impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
 }
 
 #[cfg(feature = "async-std")]
-mod _async_std {
-  use futures::{AsyncRead, Future};
-  use pyo3::*;
-  use pyo3_asyncio::async_std::future_into_py;
-
-  pyo3io_macros::async_reader!(future_into_py("SnapshotSource": ruraft_bindings_common::storage::SupportedSnapshotSource));
-
-  impl From<ruraft_bindings_common::storage::SupportedSnapshotSource> for SnapshotSource {
-    fn from(s: ruraft_bindings_common::storage::SupportedSnapshotSource) -> Self {
-      Self::new(s)
-    }
-  }
-
-  impl From<Box<dyn AsyncRead + Send + Sync + Unpin + 'static>> for SnapshotSource {
-    fn from(s: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>) -> Self {
-      Self::new(ruraft_bindings_common::storage::SupportedSnapshotSource::from(s))
-    }
-  }
-
-  pyo3io_macros::async_writer!(future_into_py("SnapshotSink": ruraft_bindings_common::storage::SupportedSnapshotSink {
-    pub fn cancel<'a>(&'a self, py: Python<'a>) -> PyResult<&'a PyAny> {
-      use ruraft_core::storage::SnapshotSinkExt;
-
-      let this = self.0.clone();
-      future_into_py(py, async move {
-        let mut guard = this.lock().await;
-        (&mut *guard).cancel().await.map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
-      })
-    }
-  }));
-
-  impl From<ruraft_bindings_common::storage::SupportedSnapshotSink> for SnapshotSink {
-    fn from(s: ruraft_bindings_common::storage::SupportedSnapshotSink) -> Self {
-      Self::new(s)
-    }
-  }
-}
-
-#[cfg(feature = "async-std")]
 impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
-  type SnapshotSource = _async_std::SnapshotSource;
-  type SnapshotSink = _async_std::SnapshotSink;
+  type SnapshotSource = crate::types::AsyncStdSnapshotSource;
+  type SnapshotSink = crate::types::AsyncStdSnapshotSink;
 
   #[inline(always)]
   fn into_supported() -> SupportedRuntime {

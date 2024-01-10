@@ -117,27 +117,6 @@ macro_rules! state_machine_futs {
   };
 }
 
-macro_rules! register {
-  ($($rt: literal), +$(,)?) => {
-    $(
-      paste::paste! {
-        #[cfg(feature = $rt)]
-        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> {
-          m.add_class::<[< $rt:camel ApplyFuture >]>()?;
-          m.add_class::<[< $rt:camel BarrierFuture >]>()?;
-          m.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
-          m.add_class::<[< $rt:camel VerifyFuture >]>()?;
-          m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
-          m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
-          m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
-          m.add_class::<crate::storage:: [< $rt:camel SnapshotSource >]>()?;
-
-          Ok(())
-        }
-      }
-    )*
-  };
-}
 
 pub struct SnapshotFuture<R>(
   Option<
@@ -196,4 +175,4 @@ state_machine_futs!(
 );
 
 leadership_watcher!("tokio", "async-std");
-register!("tokio", "async-std");
+

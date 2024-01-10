@@ -27,7 +27,7 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// [`close`](futures::AsyncWriteExt::close) on `sink` should be invoked.
   fn persist(
     &self,
-    sink: impl SnapshotSink,
+    sink: impl SnapshotSink + 'static,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Release is invoked when we are finished with the snapshot.
