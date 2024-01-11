@@ -1,20 +1,27 @@
 use std::{
+  net::SocketAddr,
   pin::Pin,
   task::{Context, Poll},
 };
 
 use agnostic::Runtime;
 use futures::{AsyncRead, Future, StreamExt};
-use nodecraft::{resolver::dns::DnsResolver, NodeAddress, NodeId};
+use nodecraft::{
+  resolver::dns::{DnsResolver, DnsResolverOptions},
+  NodeAddress, NodeId,
+};
 use ruraft_core::{options::ProtocolVersion, transport::*, Data, Node};
-use ruraft_tcp::TcpTransport;
+use ruraft_tcp::{net::resolver::dns::read_resolv_conf, Tcp, TcpTransport};
 
 #[cfg(feature = "tls")]
-use ruraft_tcp::tls::TlsTransport;
+use ruraft_tcp::tls::*;
 
 #[cfg(feature = "native-tls")]
-use ruraft_tcp::native_tls::NativeTlsTransport;
+use ruraft_tcp::native_tls::*;
 use ruraft_wire::LpeWire;
+
+mod options;
+pub use options::*;
 
 pub struct SupportedAppendEntriesPipelineConsumer<W: Wire, R: Runtime>(
   Pin<
@@ -22,7 +29,7 @@ pub struct SupportedAppendEntriesPipelineConsumer<W: Wire, R: Runtime>(
       dyn futures::Stream<
           Item = Result<
             PipelineAppendEntriesResponse<NodeId, NodeAddress>,
-            ruraft_net::Error<NodeId, DnsResolver<R>, W>,
+            ruraft_tcp::net::Error<NodeId, DnsResolver<R>, W>,
           >,
         > + Send
         + 'static,
@@ -33,7 +40,7 @@ pub struct SupportedAppendEntriesPipelineConsumer<W: Wire, R: Runtime>(
 impl<W: Wire, R: Runtime> futures::Stream for SupportedAppendEntriesPipelineConsumer<W, R> {
   type Item = Result<
     PipelineAppendEntriesResponse<NodeId, NodeAddress>,
-    ruraft_net::Error<NodeId, DnsResolver<R>, W>,
+    ruraft_tcp::net::Error<NodeId, DnsResolver<R>, W>,
   >;
 
   fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -47,12 +54,20 @@ pub enum SupportedAppendEntriesPipeline<
   W: Wire<Id = NodeId, Address = NodeAddress, Data = D>,
   R: Runtime,
 > {
-  Tcp(ruraft_net::NetAppendEntriesPipeline<NodeId, DnsResolver<R>, D, ruraft_tcp::Tcp<R>, W>),
+  Tcp(ruraft_tcp::net::NetAppendEntriesPipeline<NodeId, DnsResolver<R>, D, ruraft_tcp::Tcp<R>, W>),
   #[cfg(feature = "tls")]
-  Tls(ruraft_net::NetAppendEntriesPipeline<NodeId, DnsResolver<R>, D, ruraft_tcp::tls::Tls<R>, W>),
+  Tls(
+    ruraft_tcp::net::NetAppendEntriesPipeline<
+      NodeId,
+      DnsResolver<R>,
+      D,
+      ruraft_tcp::tls::Tls<R>,
+      W,
+    >,
+  ),
   #[cfg(feature = "native-tls")]
   NativeTls(
-    ruraft_net::NetAppendEntriesPipeline<
+    ruraft_tcp::net::NetAppendEntriesPipeline<
       NodeId,
       DnsResolver<R>,
       D,
@@ -67,7 +82,7 @@ impl<D: Data, W: Wire<Id = NodeId, Address = NodeAddress, Data = D>, R: Runtime>
 where
   <R::Sleep as Future>::Output: Send + 'static,
 {
-  type Error = ruraft_net::Error<Self::Id, DnsResolver<R>, W>;
+  type Error = ruraft_tcp::net::Error<Self::Id, DnsResolver<R>, W>;
 
   type Id = NodeId;
 
@@ -123,11 +138,102 @@ pub enum SupportedTransport<D, R: Runtime> {
   NativeTls(NativeTlsTransport<NodeId, DnsResolver<R>, D, LpeWire<NodeId, NodeAddress, D>>),
 }
 
+impl<D, R: Runtime> SupportedTransport<D, R>
+where
+  D: Data,
+  <R::Sleep as Future>::Output: Send + 'static,
+{
+  pub async fn new(
+    local_header: Header<NodeId, NodeAddress>,
+    bind_addr: SocketAddr,
+    opts: SupportedTransportOptions,
+  ) -> Result<Self, <Self as Transport>::Error> {
+    let resl_conf = |path: Option<&std::path::PathBuf>| match path {
+      Some(resolv_conf) => {
+        let resolv_conf = read_resolv_conf(resolv_conf)?;
+        DnsResolver::<R>::new(Some(
+          DnsResolverOptions::new()
+            .with_resolver_config(resolv_conf.0)
+            .with_resolver_opts(resolv_conf.1),
+        ))
+        .map_err(<<Self as Transport>::Error as TransportError>::resolver)
+      }
+      None => {
+        DnsResolver::new(None).map_err(<<Self as Transport>::Error as TransportError>::resolver)
+      }
+    };
+    match opts {
+      SupportedTransportOptions::Tcp(opts) => {
+        let resolver = resl_conf(opts.resolv_conf.as_ref())?;
+        TcpTransport::new(
+          local_header,
+          bind_addr,
+          resolver,
+          Tcp::new(),
+          opts.transport_options,
+        )
+        .await
+        .map(Self::Tcp)
+      }
+      #[cfg(feature = "native-tls")]
+      SupportedTransportOptions::NativeTls(opts) => {
+        let resolver = resl_conf(opts.resolv_conf())?;
+        let identity = opts
+          .identity
+          .try_into()
+          .map_err(<<Self as Transport>::Error as TransportError>::custom)?;
+
+        let acceptor = ruraft_tcp::native_tls::TlsAcceptor::from(
+          ruraft_tcp::native_tls::native_tls::TlsAcceptor::new(identity)
+            .map_err(<<Self as Transport>::Error as TransportError>::custom)?,
+        );
+        let connector =
+          ruraft_tcp::native_tls::TlsConnector::new().danger_accept_invalid_certs(true);
+
+        NativeTlsTransport::new(
+          local_header,
+          bind_addr,
+          resolver,
+          NativeTls::new(opts.domain, acceptor, connector),
+          opts.opts.transport_options,
+        )
+        .await
+        .map(Self::NativeTls)
+      }
+      #[cfg(feature = "tls")]
+      SupportedTransportOptions::Tls(opts) => {
+        let resolver = resl_conf(opts.resolv_conf())?;
+        let cfg = opts
+          .server_config
+          .into_server_config()
+          .map_err(<<Self as Transport>::Error as TransportError>::custom)?;
+        let acceptor = ruraft_tcp::tls::TlsAcceptor::from(std::sync::Arc::new(cfg));
+        let cfg = opts
+          .client_config
+          .into_client_config()
+          .map_err(<<Self as Transport>::Error as TransportError>::custom)?;
+        let connector = ruraft_tcp::tls::TlsConnector::from(std::sync::Arc::new(cfg));
+        let domain_name = ruraft_tcp::tls::ServerName::try_from(opts.domain)
+          .map_err(<<Self as Transport>::Error as TransportError>::custom)?;
+        TlsTransport::new(
+          local_header,
+          bind_addr,
+          resolver,
+          Tls::new(domain_name, acceptor, connector),
+          opts.opts.transport_options,
+        )
+        .await
+        .map(Self::Tls)
+      }
+    }
+  }
+}
+
 impl<D: Data, R: Runtime> Transport for SupportedTransport<D, R>
 where
   <R::Sleep as Future>::Output: Send + 'static,
 {
-  type Error = ruraft_net::Error<Self::Id, Self::Resolver, Self::Wire>;
+  type Error = ruraft_tcp::net::Error<Self::Id, Self::Resolver, Self::Wire>;
 
   type Runtime = R;
 

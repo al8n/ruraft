@@ -1,6 +1,7 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pyo3::exceptions::PyTypeError;
+use ruraft_bindings_common::transport::*;
 
 use super::*;
 

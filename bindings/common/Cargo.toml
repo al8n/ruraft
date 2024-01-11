@@ -19,12 +19,27 @@ metrics = [
   "ruraft-tcp/metrics",
 ]
 
+dns = ["ruraft-tcp/dns"]
+dns-over-quic = ["dns", "ruraft-tcp/dns-over-quic"]
+dns-over-h3 = ["dns", "ruraft-tcp/dns-over-h3"]
+dns-over-https-rustls = ["dns", "ruraft-tcp/dns-over-https-rustls"]
+dns-over-rustls = ["dns", "ruraft-tcp/dns-over-rustls"]
+dns-over-openssl = ["dns", "ruraft-tcp/dns-over-openssl"]
+dns-over-native-tls = ["dns", "ruraft-tcp/dns-over-native-tls"]
+dns-webpki-roots = ["dns", "ruraft-tcp/dns-webpki-roots"]
+dns-native-certs = ["dns", "ruraft-tcp/dns-native-certs"]
+dnssec-openssl = ["dns", "ruraft-tcp/dnssec-openssl"]
+dnssec-ring = ["dns", "ruraft-tcp/dnssec-ring"]
+dnssec = ["dns", "ruraft-tcp/dnssec"]
+
 tls = ["ruraft-tcp/tls"]
 native-tls = ["ruraft-tcp/native-tls"]
 
 sled = ["ruraft-lightwal/sled"]
 redb = ["ruraft-lightwal/redb"]
 jammdb = ["ruraft-lightwal/jammdb"]
+
+serde = ["dep:serde"]
 
 [dependencies]
 agnostic = { workspace = true }
@@ -39,7 +54,8 @@ ruraft-core = { workspace = true }
 ruraft-lightwal = { workspace = true, default-features = false, optional = true }
 ruraft-memory = { workspace = true }
 ruraft-snapshot = { workspace = true }
-ruraft-net = { workspace = true }
-ruraft-tcp = { workspace = true, default-features = false }
+ruraft-tcp = { workspace = true, default-features = false, features = ["dns", "serde"] }
 ruraft-utils = { workspace = true }
 ruraft-wire = { workspace = true }
+
+serde = { workspace = true, optional = true }

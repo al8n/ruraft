@@ -59,7 +59,7 @@ pub mod wire {
 
 /// Re-exports [`nodecraft`]'s address resolver.
 pub mod resolver {
-  pub use nodecraft::resolver::{dns::DnsResolver, socket_addr::SocketAddrResolver};
+  pub use nodecraft::resolver::{address, dns, socket_addr};
 }
 
 mod pipeline;
@@ -224,7 +224,7 @@ pub struct NetTransportOptions {
   /// Controls how many connections we will pool
   #[viewit(
     getter(const, attrs(doc = "Returns how many connections we will pool.")),
-    setter(attrs(doc = "Sets how many connections we will pool."))
+    setter(attrs(doc = "Sets how many connections we will pool. (Builder pattern)"))
   )]
   max_pool: usize,
 
@@ -253,7 +253,7 @@ pub struct NetTransportOptions {
   /// products this way.
   #[viewit(
     getter(const, attrs(doc = "Returns the max inflight requests.")),
-    setter(attrs(doc = "Sets the max inflight requests."))
+    setter(attrs(doc = "Sets the max inflight requests. (Builder pattern)"))
   )]
   max_inflight_requests: usize,
 
@@ -262,7 +262,7 @@ pub struct NetTransportOptions {
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   #[viewit(
     getter(const, attrs(doc = "Returns the timeout used to apply I/O deadlines.")),
-    setter(attrs(doc = "Sets the timeout used to apply I/O deadlines."))
+    setter(attrs(doc = "Sets the timeout used to apply I/O deadlines. (Builder pattern)"))
   )]
   timeout: Duration,
 }
@@ -282,6 +282,24 @@ impl NetTransportOptions {
       max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
       timeout: Duration::from_secs(10),
     }
+  }
+
+  /// Set the max pooled connections.
+  #[inline]
+  pub fn set_max_pool(&mut self, max_pool: usize) {
+    self.max_pool = max_pool;
+  }
+
+  /// Set the max inflight requests.
+  #[inline]
+  pub fn set_max_inflight_requests(&mut self, max_inflight_requests: usize) {
+    self.max_inflight_requests = max_inflight_requests;
+  }
+
+  /// Set the timeout used to apply I/O deadlines.
+  #[inline]
+  pub fn set_timeout(&mut self, timeout: Duration) {
+    self.timeout = timeout;
   }
 }
 

@@ -561,7 +561,7 @@ macro_rules! raft {
             timeout: ::chrono::Duration,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
-            ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move { 
+            ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               this
                 .restore_timeout(
                   meta.into(),
