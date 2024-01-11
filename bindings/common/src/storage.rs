@@ -9,7 +9,7 @@ use std::{
 use agnostic::Runtime;
 use nodecraft::{NodeAddress, NodeId, Transformable};
 use ruraft_core::{
-  storage::{Log, LogStorage, RaftStorage, RaftStorageError, StableStorage, Storage},
+  storage::{Log, LogStorage, RaftStorage, RaftStorageError, StableStorage, Storage, StorageError},
   Data,
 };
 use ruraft_memory::storage::{
@@ -25,6 +25,22 @@ pub use snapshot::*;
 mod light;
 #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
 pub use light::*;
+
+#[derive(Clone, Debug, derive_more::From)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum BackendOptions {
+  Memory,
+  Light(LightBackendOptions),
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+pub struct SupportedStorageOptions {
+  snapshot: SnapshotStorageOptions,
+  #[cfg_attr(feature = "serde", serde(flatten))]
+  backend: BackendOptions,
+}
 
 #[derive(derive_more::From, derive_more::Display)]
 pub enum SupportedLogStorageError<D: Data> {
@@ -232,19 +248,60 @@ pub struct SupportedStorage<D: Data, R: Runtime>(
 );
 
 impl<D: Data, R: Runtime> SupportedStorage<D, R> {
-  #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
-  pub fn light(snap: SupportedSnapshotStorage<R>, backend: SupportedLightBackend<D, R>) -> Self {
-    let log = SupportedLogStorage::Light(backend.clone());
-    let stable = SupportedStableStorage::Light(backend);
-    Self(RaftStorage::new(log, stable, snap))
-  }
+  pub async fn new(opts: SupportedStorageOptions) -> Result<Self, <Self as Storage>::Error> {
+    let snapshot = match opts.snapshot {
+      SnapshotStorageOptions::Memory => {
+        SupportedSnapshotStorage::Memory(MemorySnapshotStorage::default())
+      }
+      SnapshotStorageOptions::File(opts) => SupportedSnapshotStorage::File(
+        ruraft_snapshot::sync::FileSnapshotStorage::new(opts).map_err(|e| {
+          <<Self as Storage>::Error as StorageError>::snapshot(SupportedSnapshotStorageError::from(
+            e,
+          ))
+        })?,
+      ),
+    };
 
-  pub fn memory(
-    log: MemoryLogStorage<NodeId, NodeAddress, D, R>,
-    stable: MemoryStableStorage<NodeId, NodeAddress, R>,
-    snap: MemorySnapshotStorage<NodeId, NodeAddress, R>,
-  ) -> Self {
-    Self(RaftStorage::new(log.into(), stable.into(), snap.into()))
+    #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
+    macro_rules! light {
+      ($opts:ident -> $ty:ty) => {{
+        <$ty>::new($opts.into())
+          .map(|db| {
+            let db = Arc::new(db);
+            let log = SupportedLogStorage::Light(SupportedLightBackend::from(db.clone()));
+            let stable = SupportedStableStorage::Light(SupportedLightBackend::from(db));
+            Self(RaftStorage::new(log, stable, snapshot))
+          })
+          .map_err(|e| {
+            <<Self as Storage>::Error as StorageError>::log(
+              SupportedLightBackendError::from(e).into(),
+            )
+          })
+      }};
+    }
+
+    match opts.backend {
+      BackendOptions::Memory => Ok(Self(RaftStorage::new(
+        SupportedLogStorage::Memory(MemoryLogStorage::default()),
+        SupportedStableStorage::Memory(MemoryStableStorage::default()),
+        snapshot,
+      ))),
+      #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
+      BackendOptions::Light(opts) => match opts {
+        #[cfg(feature = "sled")]
+        LightBackendOptions::Sled(opts) => {
+          light!(opts -> ruraft_lightwal::sled::Db::<_, _, _, _>)
+        }
+        #[cfg(feature = "redb")]
+        LightBackendOptions::Redb(opts) => {
+          light!(opts -> ruraft_lightwal::redb::Db::<_, _, _, _>)
+        }
+        #[cfg(feature = "jammdb")]
+        LightBackendOptions::Jammdb(opts) => {
+          light!(opts -> ruraft_lightwal::jammdb::Db::<_, _, _, _>)
+        }
+      },
+    }
   }
 }
 

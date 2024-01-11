@@ -4,6 +4,9 @@ use ruraft_core::storage::{Log, LogStorage};
 
 use super::*;
 
+mod options;
+pub use options::*;
+
 #[derive(derive_more::From, derive_more::Display)]
 pub enum SupportedLightBackendError<D: Transformable> {
   #[cfg(feature = "sled")]

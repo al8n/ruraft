@@ -8,6 +8,14 @@ use std::{
   task::{Context, Poll},
 };
 
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum SnapshotStorageOptions {
+  Memory,
+  File(ruraft_snapshot::sync::FileSnapshotStorageOptions),
+}
+
 pub struct SupportedSnapshotSink(Box<dyn SnapshotSink + 'static>);
 
 impl SupportedSnapshotSink {
@@ -76,6 +84,7 @@ impl futures::AsyncRead for SupportedSnapshot {
 
 #[derive(derive_more::From, derive_more::Display)]
 pub enum SupportedSnapshotStorageError {
+  File(ruraft_snapshot::sync::FileSnapshotStorageError),
   Any(Box<dyn std::error::Error + Send + Sync + 'static>),
   IO(std::io::Error),
 }
@@ -83,6 +92,7 @@ pub enum SupportedSnapshotStorageError {
 impl core::fmt::Debug for SupportedSnapshotStorageError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
+      Self::File(e) => write!(f, "{e:?}"),
       Self::Any(e) => write!(f, "{e:?}"),
       Self::IO(e) => write!(f, "{e:?}"),
     }

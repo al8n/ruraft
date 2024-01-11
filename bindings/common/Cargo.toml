@@ -37,25 +37,30 @@ native-tls = ["ruraft-tcp/native-tls"]
 
 sled = ["ruraft-lightwal/sled"]
 redb = ["ruraft-lightwal/redb"]
-jammdb = ["ruraft-lightwal/jammdb"]
+jammdb = ["ruraft-lightwal/jammdb", "page_size"]
+
+python = ["pyo3"]
 
 serde = ["dep:serde"]
 
 [dependencies]
-agnostic = { workspace = true }
-bytes = { workspace = true }
-derive_more = "0.99"
-enum_dispatch = "0.3"
-nodecraft = { workspace = true }
-futures = { workspace = true }
+agnostic.workspace = true
+bytes.workspace = true
+derive_more.workspace = true 
+nodecraft.workspace = true
+futures.workspace = true
 paste = "1"
-pin-project = { workspace = true }
-ruraft-core = { workspace = true }
+pin-project.workspace = true
+ruraft-core.workspace = true
 ruraft-lightwal = { workspace = true, default-features = false, optional = true }
-ruraft-memory = { workspace = true }
-ruraft-snapshot = { workspace = true }
+ruraft-memory.workspace = true
+ruraft-snapshot.workspace = true
 ruraft-tcp = { workspace = true, default-features = false, features = ["dns", "serde"] }
-ruraft-utils = { workspace = true }
-ruraft-wire = { workspace = true }
+ruraft-utils.workspace = true
+ruraft-wire.workspace = true
 
 serde = { workspace = true, optional = true }
+
+pyo3 = { version = "0.20", optional = true }
+
+page_size = { version = "0.6", optional = true }
