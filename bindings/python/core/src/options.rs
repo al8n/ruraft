@@ -2,7 +2,6 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pyo3::exceptions::PyTypeError;
 
-
 use super::*;
 
 mod transport;
@@ -535,5 +534,6 @@ pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
   submodule.add_class::<SnapshotVersion>()?;
   submodule.add_class::<ProtocolVersion>()?;
   register_storage_options(submodule)?;
+  register_transport_options(submodule)?;
   Ok(submodule)
 }

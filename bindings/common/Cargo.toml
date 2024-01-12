@@ -58,6 +58,7 @@ ruraft-snapshot.workspace = true
 ruraft-tcp = { workspace = true, default-features = false, features = ["dns", "serde"] }
 ruraft-utils.workspace = true
 ruraft-wire.workspace = true
+smallvec.workspace = true
 
 serde = { workspace = true, optional = true }
 

@@ -1,6 +1,6 @@
 use std::hash::{Hash, Hasher};
 
-use pyo3::{*, exceptions::PyTypeError, types::PyModule};
+use pyo3::{exceptions::PyTypeError, types::PyModule, *};
 use ruraft_bindings_common::storage::SnapshotStorageOptions as SupportedSnapshotStorageOptions;
 
 /// Configurations for a `SnapshotStorage`

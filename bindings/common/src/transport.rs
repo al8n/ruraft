@@ -1,5 +1,4 @@
 use std::{
-  net::SocketAddr,
   pin::Pin,
   task::{Context, Poll},
 };
@@ -143,11 +142,7 @@ where
   D: Data,
   <R::Sleep as Future>::Output: Send + 'static,
 {
-  pub async fn new(
-    local_header: Header<NodeId, NodeAddress>,
-    bind_addr: SocketAddr,
-    opts: SupportedTransportOptions,
-  ) -> Result<Self, <Self as Transport>::Error> {
+  pub async fn new(opts: SupportedTransportOptions) -> Result<Self, <Self as Transport>::Error> {
     let resl_conf = |path: Option<&std::path::PathBuf>| match path {
       Some(resolv_conf) => {
         let resolv_conf = read_resolv_conf(resolv_conf)?;
@@ -166,8 +161,8 @@ where
       SupportedTransportOptions::Tcp(opts) => {
         let resolver = resl_conf(opts.resolv_conf.as_ref())?;
         TcpTransport::new(
-          local_header,
-          bind_addr,
+          opts.header,
+          opts.bind_addr,
           resolver,
           Tcp::new(),
           opts.transport_options,
@@ -191,8 +186,8 @@ where
           ruraft_tcp::native_tls::TlsConnector::new().danger_accept_invalid_certs(true);
 
         NativeTlsTransport::new(
-          local_header,
-          bind_addr,
+          opts.opts.header,
+          opts.opts.bind_addr,
           resolver,
           NativeTls::new(opts.domain, acceptor, connector),
           opts.opts.transport_options,
@@ -216,8 +211,8 @@ where
         let domain_name = ruraft_tcp::tls::ServerName::try_from(opts.domain)
           .map_err(<<Self as Transport>::Error as TransportError>::custom)?;
         TlsTransport::new(
-          local_header,
-          bind_addr,
+          opts.opts.header,
+          opts.opts.bind_addr,
           resolver,
           Tls::new(domain_name, acceptor, connector),
           opts.opts.transport_options,

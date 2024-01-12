@@ -1,12 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pyo3::*;
 use pyo3::exceptions::PyTypeError;
+use pyo3::*;
 use ruraft_bindings_common::storage::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
 
 /// The high-level database mode, according to the trade-offs of the RUM conjecture.
 #[pyclass(name = "SledMode")]
@@ -153,10 +152,8 @@ impl From<PythonSledOptions> for SledOptions {
     opts.set_path(db_options.path.as_ref().clone());
     opts.set_cache_capacity(db_options.cache_capacity);
     opts.set_mode(db_options.mode.into());
-    opts
-      .set_use_compression(db_options.use_compression);
-    opts
-      .set_compression_factor(db_options.compression_factor);
+    opts.set_use_compression(db_options.use_compression);
+    opts.set_compression_factor(db_options.compression_factor);
     opts.set_temporary(db_options.temporary);
     opts.set_create_new(db_options.create_new);
     opts.set_print_profile_on_drop(db_options.print_profile_on_drop);

@@ -3,7 +3,7 @@ use std::{
   path::PathBuf,
 };
 
-use pyo3::{prelude::*, exceptions::PyTypeError};
+use pyo3::{exceptions::PyTypeError, prelude::*};
 use ruraft_bindings_common::storage::*;
 
 /// Options used to create Db.

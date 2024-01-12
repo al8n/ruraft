@@ -22,6 +22,7 @@ pub type RaftData = ::smallvec::SmallVec<[u8; INLINED_U8]>;
 pub type RaftTransport<R> = ruraft_bindings_common::transport::SupportedTransport<RaftData, R>;
 
 pub type Raft<R> = ruraft_bindings_common::Raft<fsm::FinateStateMachine<R>, RaftData, R>;
+pub type RaftError<R> = ruraft_bindings_common::RaftError<fsm::FinateStateMachine<R>, RaftData, R>;
 
 trait IntoPython: Sized {
   type Target: pyo3::PyClass

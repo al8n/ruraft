@@ -1,61 +1,107 @@
-use std::{path::PathBuf, hash::{Hash, Hasher}};
+use std::{
+  hash::{Hash, Hasher},
+  net::SocketAddr,
+  path::PathBuf,
+};
 
-use pyo3::{*, exceptions::PyTypeError};
+use pyo3::{exceptions::PyTypeError, types::PyModule, *};
+use ruraft_bindings_common::transport::Array;
+
+use super::PythonTcpTransportOptions;
+use crate::types::Header;
 
 /// Identity used for TLS.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, derive_more::From)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-#[pyclass]
-pub struct Identity(ruraft_bindings_common::transport::Identity);
+#[pyclass(name = "Identity")]
+pub struct PythonIdentity(ruraft_bindings_common::transport::Identity);
 
-impl From<Identity> for ruraft_bindings_common::transport::Identity {
-  fn from(identity: Identity) -> Self {
+impl From<PythonIdentity> for ruraft_bindings_common::transport::Identity {
+  fn from(identity: PythonIdentity) -> Self {
     identity.0
   }
 }
 
 #[pymethods]
-impl Identity {
+impl PythonIdentity {
   #[staticmethod]
-  pub fn pkcs12(cert: Vec<u8>, password: String) -> Self {
-    Self(ruraft_bindings_common::transport::Identity::pkcs12(cert, password))
+  pub fn pkcs12(cert: Array, password: String) -> Self {
+    Self(ruraft_bindings_common::transport::Identity::pkcs12(
+      cert, password,
+    ))
   }
 
   #[staticmethod]
-  pub fn pkcs8(cert: Vec<u8>, key: Vec<u8>) -> Self {
-    Self(ruraft_bindings_common::transport::Identity::pkcs8(cert, key))
+  pub fn pkcs8(cert: Array, key: Array) -> Self {
+    Self(ruraft_bindings_common::transport::Identity::pkcs8(
+      cert, key,
+    ))
   }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, derive_more::From)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-#[pyclass]
-pub struct NativeTlsTransportOptions(ruraft_bindings_common::transport::NativeTlsTransportOptions);
+#[pyclass(name = "NativeTlsTransportOptions")]
+pub struct PythonNativeTlsTransportOptions(
+  ruraft_bindings_common::transport::NativeTlsTransportOptions,
+);
 
-impl From<NativeTlsTransportOptions> for ruraft_bindings_common::transport::NativeTlsTransportOptions {
-  fn from(opts: NativeTlsTransportOptions) -> Self {
+impl From<PythonNativeTlsTransportOptions>
+  for ruraft_bindings_common::transport::NativeTlsTransportOptions
+{
+  fn from(opts: PythonNativeTlsTransportOptions) -> Self {
     opts.0
   }
 }
 
-
 #[pymethods]
-impl NativeTlsTransportOptions {
+impl PythonNativeTlsTransportOptions {
   /// Creates a new `NativeTlsTransportOptions` with the default configuration.
-  /// 
+  ///
   /// Arguments:
   ///   domain: The domain name of the server.
   ///   identity: The identity used for TLS.
+  ///   opts: The options used to configure the TCP transport.
   #[new]
-  pub fn new(domain: String, identity: Identity) -> Self {
-    Self(ruraft_bindings_common::transport::NativeTlsTransportOptions::new(domain, identity.into()))
+  pub fn new(domain: String, identity: PythonIdentity, opts: PythonTcpTransportOptions) -> Self {
+    Self(
+      ruraft_bindings_common::transport::NativeTlsTransportOptions::new(
+        domain,
+        identity.into(),
+        opts.into(),
+      ),
+    )
+  }
+
+  /// Sets the address to bind to.
+  pub fn set_bind_addr(&mut self, bind_addr: &str) -> PyResult<()> {
+    let addr = bind_addr
+      .parse::<SocketAddr>()
+      .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+    self.0.set_bind_addr(addr);
+    Ok(())
+  }
+
+  /// Returns the address to bind to.
+  pub fn bind_addr(&self) -> String {
+    self.0.bind_addr().to_string()
+  }
+
+  /// Sets the header used to identify the node.
+  pub fn set_header(&mut self, header: Header) {
+    self.0.set_header(header.into());
+  }
+
+  /// Returns the header used to identify the node.
+  pub fn header(&self) -> Header {
+    self.0.header().clone().into()
   }
 
   /// Sets the domain name of the server.
   pub fn set_domain(&mut self, domain: String) {
-    self.set_domain(domain);
+    self.0.set_domain(domain);
   }
 
   /// Returns the domain name of the server.
@@ -64,12 +110,12 @@ impl NativeTlsTransportOptions {
   }
 
   /// Sets the identity used for TLS.
-  pub fn set_identity(&mut self, identity: Identity) {
+  pub fn set_identity(&mut self, identity: PythonIdentity) {
     self.0.set_identity(identity.into());
   }
 
   /// Returns the identity used for TLS.
-  pub fn identity(&self) -> Identity {
+  pub fn identity(&self) -> PythonIdentity {
     self.0.identity().clone().into()
   }
 
@@ -145,3 +191,8 @@ impl NativeTlsTransportOptions {
   }
 }
 
+pub fn register_native_tls_transport_options(module: &PyModule) -> PyResult<()> {
+  module.add_class::<PythonNativeTlsTransportOptions>()?;
+  module.add_class::<PythonIdentity>()?;
+  Ok(())
+}

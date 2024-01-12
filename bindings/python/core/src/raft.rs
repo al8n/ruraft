@@ -1,5 +1,7 @@
 use super::*;
-use crate::{options::*, types::*};
+use crate::{fsm::*, options::*, types::*};
+use pyo3::exceptions::PyTypeError;
+use ruraft_bindings_common::{storage::SupportedStorage, transport::SupportedTransport};
 
 macro_rules! raft {
   ($($rt: literal), +$(,)?) => {
@@ -9,12 +11,87 @@ macro_rules! raft {
         #[cfg(feature = $rt)]
         pub struct [< $rt:camel Raft >](Raft<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>);
 
+        impl Clone for [< $rt:camel Raft >] {
+          fn clone(&self) -> Self {
+            Self(self.0.clone())
+          }
+        }
+
         #[cfg(feature = $rt)]
         #[pymethods]
         impl [< $rt:camel Raft >] {
+          /// Creates a new Raft node.
+          ///
+          /// **N.B.**
+          /// - If there is no old state, then will initialize a new Raft cluster which contains only one voter node(self), users can then invoke `add_voter` on it to add other servers to the cluster.
+          /// - If there are any
+          /// old state, such as snapshots, logs, peers, etc, all those will be restored
+          /// when creating the Raft node.
+          ///
+          /// Arguments:
+          ///   fsm: The `FinateStateMachine` to use.
+          ///   storage_opts: The options used to configure the storage.
+          ///   transport_opts: The options used to configure the transport.
+          ///   opts: The options used to configure the Raft node.
           #[staticmethod]
-          pub fn new() -> pyo3::PyResult<Self> {
-            todo!()
+          pub fn new<'a>(
+            fsm: Py<PyAny>,
+            storage_opts: StorageOptions,
+            transport_opts: PythonTransportOptions,
+            opts: Options,
+            py: pyo3::Python<'a>
+          ) -> pyo3::PyResult<Self> {
+            let fsm = FinateStateMachine::new(fsm);
+            ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] ::into_supported().future_into_py(py, async move {
+              let storage = SupportedStorage::new(storage_opts.into()).await.map_err(|e| RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
+              let transport = SupportedTransport::new(transport_opts.into()).await.map_err(|e| RaftError::transport(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
+              Raft::< ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] > :: new(fsm, storage, transport, opts.into()).await.map(Self).map_err(|e| PyTypeError::new_err(e.to_string()))
+            })
+            .and_then(|raft| raft.extract())
+          }
+
+          /// `recover` is used to manually force a new membership in order to
+          /// recover from a loss of quorum where the current membership cannot be
+          /// restored, such as when several servers die at the same time. This works by
+          /// reading all the current state for this server, creating a snapshot with the
+          /// supplied membership, and then truncating the Raft log. This is the only
+          /// safe way to force a given membership without actually altering the log to
+          /// insert any new entries, which could cause conflicts with other servers with
+          /// different state.
+          ///
+          /// **WARNING!** This operation implicitly commits all entries in the Raft log, so
+          /// in general this is an extremely unsafe operation. If you've lost your other
+          /// servers and are performing a manual recovery, then you've also lost the
+          /// commit information, so this is likely the best you can do, but you should be
+          /// aware that calling this can cause Raft log entries that were in the process
+          /// of being replicated but not yet be committed to be committed.
+          ///
+          /// Note the `FinateStateMachine` passed here is used for the snapshot operations and will be
+          /// left in a state that should not be used by the application. Be sure to
+          /// discard this `FinateStateMachine` and any associated state and provide a fresh one when
+          /// calling `new` later.
+          ///
+          /// A typical way to recover the cluster is to shut down all servers and then
+          /// run RecoverCluster on every server using an identical membership. When
+          /// the cluster is then restarted, and election should occur and then Raft will
+          /// resume normal operation. If it's desired to make a particular server the
+          /// leader, this can be used to inject a new membership with that server as
+          /// the sole voter, and then join up other new clean-state peer servers using
+          /// the usual APIs in order to bring the cluster back into a known state.
+          #[staticmethod]
+          pub fn recover<'a>(
+            fsm: Py<PyAny>,
+            storage: StorageOptions,
+            membership: Membership,
+            opts: Options,
+            py: pyo3::Python<'a>
+          ) -> PyResult<()> {
+            let fsm = FinateStateMachine::new(fsm);
+            ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] ::into_supported().future_into_py(py, async move {
+              let storage = SupportedStorage::new(storage.into()).await.map_err(|e| RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
+              Raft::< ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] > :: recover(fsm, storage, membership.into(), opts.into()).await.map_err(|e| PyTypeError::new_err(e.to_string()))
+            })
+            .map(|_| ())
           }
 
           /// Provides the local unique identifier, helping in distinguishing this node from its peers.

@@ -1,11 +1,17 @@
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
+#[cfg(feature = "tls")]
+use ::smallvec::SmallVec;
+use nodecraft::{NodeAddress, NodeId};
+use ruraft_core::transport::Header;
 #[cfg(feature = "tls")]
 use std::sync::Arc;
 
+pub type Array = SmallVec<[u8; 64]>;
+
 use ruraft_tcp::net::NetTransportOptions;
 
-#[derive(Clone, derive_more::From)]
+#[derive(Debug, Clone, derive_more::From)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "snake_case"))]
 pub enum SupportedTransportOptions {
@@ -38,39 +44,61 @@ pub struct TcpTransportOptions {
   pub(super) resolv_conf: Option<PathBuf>,
   #[cfg_attr(feature = "serde", serde(flatten))]
   pub(super) transport_options: NetTransportOptions,
-}
-
-impl Default for TcpTransportOptions {
-  fn default() -> Self {
-    Self::new()
-  }
+  pub(super) header: Header<NodeId, NodeAddress>,
+  pub(super) bind_addr: SocketAddr,
 }
 
 impl TcpTransportOptions {
   #[cfg(unix)]
-  pub fn new() -> Self {
+  pub fn new(header: Header<NodeId, NodeAddress>, bind_addr: SocketAddr) -> Self {
     Self {
       resolv_conf: Some(PathBuf::from("/etc/resolv.conf")),
       transport_options: NetTransportOptions::new(),
+      header,
+      bind_addr,
     }
   }
 
   #[cfg(windows)]
-  pub fn new() -> Self {
+  pub fn new(header: Header<NodeId, NodeAddress>, bind_addr: SocketAddr) -> Self {
     Self {
       resolv_conf: Some(PathBuf::from(
         "C:\\Windows\\System32\\drivers\\etc\\resolv.conf",
       )),
       transport_options: NetTransportOptions::new(),
+      header,
+      bind_addr,
     }
   }
 
   #[cfg(not(any(windows, unix)))]
-  pub fn new() -> Self {
+  pub fn new(header: Header<NodeId, NodeAddress>, bind_addr: SocketAddr) -> Self {
     Self {
       resolv_conf: None,
       transport_options: NetTransportOptions::new(),
+      header,
+      bind_addr,
     }
+  }
+
+  /// Sets the address to bind to.
+  pub fn set_bind_addr(&mut self, bind_addr: SocketAddr) {
+    self.bind_addr = bind_addr;
+  }
+
+  /// Returns the address to bind to.
+  pub fn bind_addr(&self) -> &SocketAddr {
+    &self.bind_addr
+  }
+
+  /// Sets the header used to identify the node.
+  pub fn set_header(&mut self, header: Header<NodeId, NodeAddress>) {
+    self.header = header;
+  }
+
+  /// Returns the header used to identify the node.
+  pub fn header(&self) -> &Header<NodeId, NodeAddress> {
+    &self.header
   }
 
   /// Sets the path to the resolv.conf file, this is used for DNS address resolve.
@@ -121,16 +149,16 @@ impl TcpTransportOptions {
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[cfg(feature = "native-tls")]
 pub enum Identity {
-  Pkcs12 { cert: Vec<u8>, password: String },
-  Pkcs8 { cert: Vec<u8>, key: Vec<u8> },
+  Pkcs12 { cert: Array, password: String },
+  Pkcs8 { cert: Array, key: Array },
 }
 
 impl Identity {
-  pub fn pkcs12(cert: Vec<u8>, password: String) -> Self {
+  pub fn pkcs12(cert: Array, password: String) -> Self {
     Identity::Pkcs12 { cert, password }
   }
 
-  pub fn pkcs8(cert: Vec<u8>, key: Vec<u8>) -> Self {
+  pub fn pkcs8(cert: Array, key: Array) -> Self {
     Identity::Pkcs8 { cert, key }
   }
 }
@@ -165,16 +193,36 @@ pub struct NativeTlsTransportOptions {
 #[cfg(feature = "native-tls")]
 impl NativeTlsTransportOptions {
   /// Creates a new `NativeTlsTransportOptions` with the default configuration.
-  /// 
+  ///
   /// Arguments:
   ///   domain: The domain name of the server.
   ///   identity: The identity used for TLS.
-  pub fn new(domain: String, identity: Identity) -> Self {
+  pub fn new(domain: String, identity: Identity, opts: TcpTransportOptions) -> Self {
     Self {
       domain,
-      opts: TcpTransportOptions::new(),
+      opts,
       identity,
     }
+  }
+
+  /// Sets the address to bind to.
+  pub fn set_bind_addr(&mut self, bind_addr: SocketAddr) {
+    self.opts.set_bind_addr(bind_addr);
+  }
+
+  /// Returns the address to bind to.
+  pub fn bind_addr(&self) -> &SocketAddr {
+    self.opts.bind_addr()
+  }
+
+  /// Sets the header used to identify the node.
+  pub fn set_header(&mut self, header: Header<NodeId, NodeAddress>) {
+    self.opts.set_header(header);
+  }
+
+  /// Returns the header used to identify the node.
+  pub fn header(&self) -> &Header<NodeId, NodeAddress> {
+    self.opts.header()
   }
 
   /// Sets the domain name of the server.
@@ -240,41 +288,66 @@ impl NativeTlsTransportOptions {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[cfg(feature = "tls")]
-pub enum PriviteKey {
-  Pkcs1(Vec<u8>),
-  Pkcs8(Vec<u8>),
-  Sec1(Vec<u8>),
+pub enum PrivateKey {
+  Pkcs1(Array),
+  Pkcs8(Array),
+  Sec1(Array),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg(feature = "tls")]
 pub struct CertAndPrivateKey {
-  cert_chain: Vec<Vec<u8>>,
-  private_key: PriviteKey,
+  cert_chain: Vec<Array>,
+  private_key: PrivateKey,
 }
 
-#[derive(Clone)]
+impl CertAndPrivateKey {
+  pub fn new(cert_chain: Vec<Array>, pk: PrivateKey) -> Self {
+    Self {
+      cert_chain,
+      private_key: pk,
+    }
+  }
+
+  pub fn set_cert_chain(&mut self, cert_chain: Vec<Array>) {
+    self.cert_chain = cert_chain;
+  }
+
+  pub fn cert_chain(&self) -> &Vec<Array> {
+    &self.cert_chain
+  }
+
+  pub fn set_private_key(&mut self, pk: PrivateKey) {
+    self.private_key = pk;
+  }
+
+  pub fn private_key(&self) -> &PrivateKey {
+    &self.private_key
+  }
+}
+
+#[derive(Clone, Debug)]
 #[cfg(feature = "tls")]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TlsServerConfig {
   #[cfg_attr(feature = "serde", serde(skip))]
-  client_auth_verifier:
+  client_cert_verifier:
     Option<Arc<dyn ruraft_tcp::tls::rustls::server::danger::ClientCertVerifier>>,
   #[cfg_attr(feature = "serde", serde(flatten))]
   cert_and_private_key: CertAndPrivateKey,
-  ocsp: Option<Vec<u8>>,
+  ocsp: Option<Array>,
 }
 
 #[cfg(feature = "tls")]
 impl TlsServerConfig {
-  pub fn new(cert_chain: Vec<Vec<u8>>, pk: PriviteKey) -> Self {
+  pub fn new(cert_chain: Vec<Array>, pk: PrivateKey) -> Self {
     Self {
-      client_auth_verifier: None,
+      client_cert_verifier: None,
       cert_and_private_key: CertAndPrivateKey {
         cert_chain,
         private_key: pk,
@@ -283,23 +356,23 @@ impl TlsServerConfig {
     }
   }
 
-  pub fn set_client_auth_verifier(
+  pub fn set_client_cert_verifier(
     &mut self,
     verifier: Option<Arc<dyn ruraft_tcp::tls::rustls::server::danger::ClientCertVerifier>>,
   ) {
-    self.client_auth_verifier = verifier;
+    self.client_cert_verifier = verifier;
   }
 
-  pub fn client_auth_verifier(
+  pub fn client_cert_verifier(
     &self,
   ) -> Option<&dyn ruraft_tcp::tls::rustls::server::danger::ClientCertVerifier> {
-    self.client_auth_verifier.as_deref()
+    self.client_cert_verifier.as_deref()
   }
 
   pub fn set_cert_chain_and_private_key(
     &mut self,
-    cert_chain: Vec<Vec<u8>>,
-    private_key: PriviteKey,
+    cert_chain: Vec<Array>,
+    private_key: PrivateKey,
   ) {
     self.cert_and_private_key = CertAndPrivateKey {
       cert_chain,
@@ -311,11 +384,11 @@ impl TlsServerConfig {
     &self.cert_and_private_key
   }
 
-  pub fn set_ocsp(&mut self, ocsp: Option<Vec<u8>>) {
+  pub fn set_ocsp(&mut self, ocsp: Option<Array>) {
     self.ocsp = ocsp;
   }
 
-  pub fn ocsp(&self) -> Option<&Vec<u8>> {
+  pub fn ocsp(&self) -> Option<&Array> {
     self.ocsp.as_ref()
   }
 
@@ -329,22 +402,22 @@ impl TlsServerConfig {
       ServerConfig,
     };
     let pk = match self.cert_and_private_key.private_key {
-      PriviteKey::Pkcs8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8)),
-      PriviteKey::Pkcs1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12)),
-      PriviteKey::Sec1(sec1) => PrivateKeyDer::from(PrivateSec1KeyDer::from(sec1)),
+      PrivateKey::Pkcs8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8.to_vec())),
+      PrivateKey::Pkcs1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12.to_vec())),
+      PrivateKey::Sec1(sec1) => PrivateKeyDer::from(PrivateSec1KeyDer::from(sec1.to_vec())),
     };
     let cert_chain = self
       .cert_and_private_key
       .cert_chain
       .into_iter()
-      .map(CertificateDer::from)
+      .map(|c| CertificateDer::from(c.to_vec()))
       .collect();
 
-    if let Some(verifier) = self.client_auth_verifier {
+    if let Some(verifier) = self.client_cert_verifier {
       if let Some(ocsp) = self.ocsp {
         ServerConfig::builder()
           .with_client_cert_verifier(verifier)
-          .with_single_cert_with_ocsp(cert_chain, pk, ocsp)
+          .with_single_cert_with_ocsp(cert_chain, pk, ocsp.to_vec())
       } else {
         ServerConfig::builder()
           .with_client_cert_verifier(verifier)
@@ -353,7 +426,7 @@ impl TlsServerConfig {
     } else if let Some(ocsp) = self.ocsp {
       ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_cert_with_ocsp(cert_chain, pk, ocsp)
+        .with_single_cert_with_ocsp(cert_chain, pk, ocsp.to_vec())
     } else {
       ServerConfig::builder()
         .with_no_client_auth()
@@ -362,7 +435,7 @@ impl TlsServerConfig {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg(feature = "tls")]
 pub struct TlsClientConfig {
@@ -371,7 +444,7 @@ pub struct TlsClientConfig {
     Option<Arc<dyn ruraft_tcp::tls::rustls::client::danger::ServerCertVerifier>>,
   #[cfg_attr(feature = "serde", serde(flatten))]
   cert_and_private_key: Option<CertAndPrivateKey>,
-  root_certs: Option<Vec<Vec<u8>>>,
+  root_certs: Option<Vec<Array>>,
 }
 
 impl Default for TlsClientConfig {
@@ -403,22 +476,22 @@ impl TlsClientConfig {
     self.server_cert_verifier.as_deref()
   }
 
-  pub fn set_cert_and_private_key(&mut self, cert_chain: Vec<Vec<u8>>, pk: PriviteKey) {
+  pub fn set_cert_chain_and_private_key(&mut self, cert_chain: Vec<Array>, pk: PrivateKey) {
     self.cert_and_private_key = Some(CertAndPrivateKey {
       cert_chain,
       private_key: pk,
     });
   }
 
-  pub fn cert_and_private_key(&self) -> Option<&CertAndPrivateKey> {
+  pub fn cert_chain_and_private_key(&self) -> Option<&CertAndPrivateKey> {
     self.cert_and_private_key.as_ref()
   }
 
-  pub fn set_root_certs(&mut self, root_certs: Option<Vec<Vec<u8>>>) {
+  pub fn set_root_certs(&mut self, root_certs: Option<Vec<Array>>) {
     self.root_certs = root_certs;
   }
 
-  pub fn root_certs(&self) -> Option<&Vec<Vec<u8>>> {
+  pub fn root_certs(&self) -> Option<&Vec<Array>> {
     self.root_certs.as_ref()
   }
 
@@ -443,7 +516,7 @@ impl TlsClientConfig {
         Some(root_certs) => {
           let mut root_store = RootCertStore::empty();
           for cert in root_certs {
-            root_store.add(CertificateDer::from(cert))?;
+            root_store.add(CertificateDer::from(cert.to_vec()))?;
           }
           Ok(
             ClientConfig::builder()
@@ -460,21 +533,23 @@ impl TlsClientConfig {
       ),
       (Some(auth_cert), verifier) => {
         let pk = match auth_cert.private_key {
-          PriviteKey::Pkcs8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8)),
-          PriviteKey::Pkcs1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12)),
-          PriviteKey::Sec1(sec1) => PrivateKeyDer::from(PrivateSec1KeyDer::from(sec1)),
+          PrivateKey::Pkcs8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8.to_vec())),
+          PrivateKey::Pkcs1(pkcs12) => {
+            PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12.to_vec()))
+          }
+          PrivateKey::Sec1(sec1) => PrivateKeyDer::from(PrivateSec1KeyDer::from(sec1.to_vec())),
         };
         let cert_chain = auth_cert
           .cert_chain
           .into_iter()
-          .map(CertificateDer::from)
+          .map(|c| CertificateDer::from(c.to_vec()))
           .collect();
         match verifier {
           None => {
             let mut root_store = RootCertStore::empty();
             if let Some(root_certs) = self.root_certs {
               for cert in root_certs {
-                root_store.add(CertificateDer::from(cert))?;
+                root_store.add(CertificateDer::from(cert.to_vec()))?;
               }
             }
 
@@ -492,7 +567,7 @@ impl TlsClientConfig {
   }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[cfg(feature = "tls")]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TlsTransportOptions {
@@ -517,6 +592,96 @@ impl TlsTransportOptions {
       client_config,
       domain,
     }
+  }
+
+  /// Sets the address to bind to.
+  pub fn set_bind_addr(&mut self, bind_addr: SocketAddr) {
+    self.opts.set_bind_addr(bind_addr);
+  }
+
+  /// Returns the address to bind to.
+  pub fn bind_addr(&self) -> &SocketAddr {
+    self.opts.bind_addr()
+  }
+
+  /// Sets the header used to identify the node.
+  pub fn set_header(&mut self, header: Header<NodeId, NodeAddress>) {
+    self.opts.set_header(header);
+  }
+
+  /// Returns the header used to identify the node.
+  pub fn header(&self) -> &Header<NodeId, NodeAddress> {
+    self.opts.header()
+  }
+
+  pub fn set_tls_server_cert_verifier(
+    &mut self,
+    verifier: Option<Arc<dyn ruraft_tcp::tls::rustls::server::danger::ClientCertVerifier>>,
+  ) {
+    self.server_config.set_client_cert_verifier(verifier);
+  }
+
+  pub fn tls_server_cert_verifier(
+    &self,
+  ) -> Option<&dyn ruraft_tcp::tls::rustls::server::danger::ClientCertVerifier> {
+    self.server_config.client_cert_verifier()
+  }
+
+  pub fn set_tls_server_cert_chain_and_private_key(
+    &mut self,
+    cert_chain: Vec<Array>,
+    pk: PrivateKey,
+  ) {
+    self
+      .server_config
+      .set_cert_chain_and_private_key(cert_chain, pk);
+  }
+
+  pub fn tls_server_cert_chain_and_private_key(&self) -> &CertAndPrivateKey {
+    self.server_config.cert_and_private_key()
+  }
+
+  pub fn set_tls_server_ocsp(&mut self, ocsp: Option<Array>) {
+    self.server_config.set_ocsp(ocsp);
+  }
+
+  pub fn tls_server_ocsp(&self) -> Option<&Array> {
+    self.server_config.ocsp()
+  }
+
+  pub fn set_tls_client_cert_verifier(
+    &mut self,
+    verifier: Option<Arc<dyn ruraft_tcp::tls::rustls::client::danger::ServerCertVerifier>>,
+  ) {
+    self.client_config.set_server_cert_verifier(verifier);
+  }
+
+  pub fn tls_client_cert_verifier(
+    &self,
+  ) -> Option<&dyn ruraft_tcp::tls::rustls::client::danger::ServerCertVerifier> {
+    self.client_config.server_cert_verifier()
+  }
+
+  pub fn set_tls_client_cert_chain_and_private_key(
+    &mut self,
+    cert_chain: Vec<Array>,
+    pk: PrivateKey,
+  ) {
+    self
+      .client_config
+      .set_cert_chain_and_private_key(cert_chain, pk);
+  }
+
+  pub fn tls_client_cert_chain_and_private_key(&self) -> Option<&CertAndPrivateKey> {
+    self.client_config.cert_chain_and_private_key()
+  }
+
+  pub fn set_tls_client_root_certificates(&mut self, root_certs: Option<Vec<Array>>) {
+    self.client_config.set_root_certs(root_certs);
+  }
+
+  pub fn tls_client_root_certificates(&self) -> Option<&Vec<Array>> {
+    self.client_config.root_certs()
   }
 
   pub fn set_domain(&mut self, domain: String) {

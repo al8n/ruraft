@@ -1,29 +1,63 @@
-use std::{path::PathBuf, hash::{Hash, Hasher}};
+use std::{
+  hash::{Hash, Hasher},
+  net::SocketAddr,
+  path::PathBuf,
+};
 
-use pyo3::{*, exceptions::PyTypeError};
+use crate::types::Header;
+use pyo3::{exceptions::PyTypeError, *};
 
 /// Options for the TCP transport.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, derive_more::From)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-#[pyclass]
-pub struct TcpTransportOptions(ruraft_bindings_common::transport::TcpTransportOptions);
+#[pyclass(name = "TcpTransportOptions")]
+pub struct PythonTcpTransportOptions(ruraft_bindings_common::transport::TcpTransportOptions);
 
-impl From<TcpTransportOptions> for ruraft_bindings_common::transport::TcpTransportOptions {
-  fn from(opts: TcpTransportOptions) -> Self {
+impl From<PythonTcpTransportOptions> for ruraft_bindings_common::transport::TcpTransportOptions {
+  fn from(opts: PythonTcpTransportOptions) -> Self {
     opts.0
   }
 }
 
 #[pymethods]
-impl TcpTransportOptions {
+impl PythonTcpTransportOptions {
   /// Creates a new `TcpTransportOptions` with the default configuration.
   #[new]
-  pub fn new() -> Self {
-    Self(ruraft_bindings_common::transport::TcpTransportOptions::default())
+  pub fn new(header: Header, bind_addr: &str) -> PyResult<Self> {
+    let addr = bind_addr
+      .parse::<SocketAddr>()
+      .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+    Ok(Self(
+      ruraft_bindings_common::transport::TcpTransportOptions::new(header.into(), addr),
+    ))
   }
 
-    /// Sets the path to the resolv.conf file, this is used for DNS address resolve.
+  /// Sets the address to bind to.
+  pub fn set_bind_addr(&mut self, bind_addr: &str) -> PyResult<()> {
+    let addr = bind_addr
+      .parse::<SocketAddr>()
+      .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+    self.0.set_bind_addr(addr);
+    Ok(())
+  }
+
+  /// Returns the address to bind to.
+  pub fn bind_addr(&self) -> String {
+    self.0.bind_addr().to_string()
+  }
+
+  /// Sets the header used to identify the node.
+  pub fn set_header(&mut self, header: Header) {
+    self.0.set_header(header.into());
+  }
+
+  /// Returns the header used to identify the node.
+  pub fn header(&self) -> Header {
+    self.0.header().clone().into()
+  }
+
+  /// Sets the path to the resolv.conf file, this is used for DNS address resolve.
   /// If you can make sure all addresses you used in the
   /// Raft cluster is a socket address, then you can ignore this option.
   pub fn set_resolv_conf(&mut self, resolv_conf: Option<PathBuf>) {

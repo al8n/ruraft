@@ -5,13 +5,19 @@ use std::{
 
 use ::either::Either;
 use nodecraft::{NodeAddress as RNodeAddress, NodeId as RNodeId, Transformable};
-use pyo3::{exceptions::PyTypeError, pyclass::CompareOp, types::PyModule, *};
+use pyo3::{
+  exceptions::{PyIndexError, PyTypeError},
+  pyclass::CompareOp,
+  types::PyModule,
+  *,
+};
 use ruraft_core::{
   membership::{
     Membership as RMembership, MembershipBuilder as RMembershipBuilder, Server as RServer,
     ServerSuffrage as RServerSuffrage,
   },
   storage::{CommittedLog as RCommittedLog, CommittedLogKind as RCommittedLogKind},
+  transport::Header as RHeader,
   Node as RNode,
 };
 
@@ -358,6 +364,100 @@ impl Node {
   }
 }
 
+/// An identifier of Raft node in the cluster.
+#[pyclass]
+#[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Header(RHeader<RNodeId, RNodeAddress>);
+
+impl From<Header> for RHeader<RNodeId, RNodeAddress> {
+  fn from(n: Header) -> Self {
+    n.0
+  }
+}
+
+impl From<RHeader<RNodeId, RNodeAddress>> for Header {
+  fn from(n: RHeader<RNodeId, RNodeAddress>) -> Self {
+    Self(n)
+  }
+}
+
+#[pymethods]
+impl Header {
+  /// Construct a new [`NodeId`] from a string.
+  #[new]
+  pub fn new(protocol_version: ProtocolVersion, id: NodeId, address: NodeAddress) -> Self {
+    Header(RHeader::new(
+      protocol_version.into(),
+      id.into(),
+      address.into(),
+    ))
+  }
+
+  /// Get the id of the node.
+  #[getter]
+  pub fn id(&self) -> NodeId {
+    NodeId(self.0.id().clone())
+  }
+
+  /// Set the id of the node.
+  #[setter]
+  pub fn set_id(&mut self, id: NodeId) {
+    self.0.set_id(id.0);
+  }
+
+  /// Get the address of the node.
+  #[getter]
+  pub fn address(&self) -> NodeAddress {
+    NodeAddress(self.0.addr().clone())
+  }
+
+  /// Set the address of the node.
+  #[setter]
+  pub fn set_address(&mut self, address: NodeAddress) {
+    self.0.set_addr(address.0);
+  }
+
+  /// Get the protocol version of the node.
+  #[getter]
+  pub fn protocol_version(&self) -> ProtocolVersion {
+    self.0.protocol_version().into()
+  }
+
+  /// Set the protocol version of the node.
+  #[setter]
+  pub fn set_protocol_version(&mut self, protocol_version: ProtocolVersion) {
+    self.0.set_protocol_version(protocol_version.into());
+  }
+
+  fn __hash__(&self) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    self.0.hash(&mut hasher);
+    hasher.finish()
+  }
+
+  pub fn __str__(&self) -> PyResult<String> {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self.0))
+    }
+  }
+
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self.0)
+  }
+
+  pub fn __eq__(&self, other: &Self) -> bool {
+    self.0.eq(&other.0)
+  }
+
+  pub fn __ne__(&self, other: &Self) -> bool {
+    self.0.ne(&other.0)
+  }
+}
+
 /// A committed log, which may contains two kinds of data: a bytes array or [`Membership`].
 #[pyclass(frozen)]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -429,6 +529,25 @@ impl ApplyBatchResponse {
   #[new]
   pub fn new(resps: ::smallvec::SmallVec<[FinateStateMachineResponse; 2]>) -> Self {
     Self(resps.into())
+  }
+
+  pub fn __len__(&self) -> usize {
+    self.0.len()
+  }
+
+  pub fn __getitem__(&self, index: isize) -> PyResult<FinateStateMachineResponse> {
+    let len = self.0.len() as isize;
+    if index < 0 {
+      if -index > len {
+        return Err(PyIndexError::new_err("index out of range"));
+      }
+      Ok(self.0[(len + index) as usize].clone())
+    } else {
+      if index >= len {
+        return Err(PyIndexError::new_err("index out of range"));
+      }
+      Ok(self.0[index as usize].clone())
+    }
   }
 }
 
@@ -717,6 +836,7 @@ pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
   subm.add_class::<NodeId>()?;
   subm.add_class::<NodeAddress>()?;
   subm.add_class::<Node>()?;
+  subm.add_class::<Header>()?;
   subm.add_class::<CommittedLog>()?;
   subm.add_class::<ApplyBatchResponse>()?;
   subm.add_class::<RaftStats>()?;

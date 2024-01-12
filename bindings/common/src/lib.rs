@@ -12,3 +12,9 @@ pub type Raft<F, D, R> = RaftCore<
   NoopSidecar<R>,
   R,
 >;
+
+pub type RaftError<F, D, R> = ruraft_core::error::Error<
+  F,
+  storage::SupportedStorage<D, R>,
+  transport::SupportedTransport<D, R>,
+>;
