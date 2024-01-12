@@ -11,6 +11,7 @@ macro_rules! raft {
         #[cfg(feature = $rt)]
         pub struct [< $rt:camel Raft >](Raft<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>);
 
+        #[cfg(feature = $rt)]
         impl Clone for [< $rt:camel Raft >] {
           fn clone(&self) -> Self {
             Self(self.0.clone())
@@ -203,7 +204,7 @@ macro_rules! raft {
           /// since its effects will not be present in the `FinateStateMachine` after the restore.
           ///
           /// See also `apply_timeout`.
-          pub fn apply<'a>(&'a self, py: pyo3::Python<'a>, data: RaftData) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          pub fn apply<'a>(&'a self, data: RaftData, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel ApplyFuture >]::from(this.apply(data).await))
@@ -230,9 +231,9 @@ macro_rules! raft {
           /// See also `apply`.
           pub fn apply_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             data: RaftData,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -272,8 +273,8 @@ macro_rules! raft {
           ///
           pub fn barrier_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -313,10 +314,10 @@ macro_rules! raft {
           /// See also `add_voter_timeout`.
           pub fn add_voter<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -342,11 +343,11 @@ macro_rules! raft {
           /// See also `add_voter`.
           pub fn add_voter_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -376,10 +377,10 @@ macro_rules! raft {
           /// See also `add_nonvoter_timeout`.
           pub fn add_nonvoter<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -400,11 +401,11 @@ macro_rules! raft {
           /// See also `add_nonvoter`.
           pub fn add_nonvoter_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
             prev_index: u64,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -430,7 +431,7 @@ macro_rules! raft {
           /// For `prev_index`, see `add_voter`.
           ///
           /// See also `remove_timeout`.
-          pub fn remove<'a>(&'a self, py: pyo3::Python<'a>, id: NodeId, prev_index: u64) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          pub fn remove<'a>(&'a self, id: NodeId, prev_index: u64, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel MembershipChangeFuture >]::from(
@@ -448,10 +449,10 @@ macro_rules! raft {
           /// See also `remove`.
           pub fn remove_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             prev_index: u64,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -479,9 +480,9 @@ macro_rules! raft {
           /// See also `demote_voter_timeout`.
           pub fn demote_voter<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             prev_index: u64,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -501,10 +502,10 @@ macro_rules! raft {
           /// See also `demote_voter`.
           pub fn demote_voter_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             prev_index: u64,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -528,8 +529,8 @@ macro_rules! raft {
           /// if they are zero valued.
           pub fn reload_options<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             options: ReloadableOptions,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -569,8 +570,8 @@ macro_rules! raft {
           /// See also `snapshot`.
           pub fn snapshot_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -602,7 +603,7 @@ macro_rules! raft {
           /// recovery into a fresh cluster, and should not be used in normal operations.
           ///
           /// See also `restore_timeout`.
-          pub fn restore<'a>(&'a self, py: pyo3::Python<'a>, meta: SnapshotMeta, src: crate::types::[< $rt:camel AsyncReader >]) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          pub fn restore<'a>(&'a self, meta: SnapshotMeta, src: crate::types::[< $rt:camel AsyncReader >], py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               this
@@ -632,10 +633,10 @@ macro_rules! raft {
           /// See also `restore`.
           pub fn restore_timeout<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             meta: SnapshotMeta,
             src: crate::types::[< $rt:camel AsyncReader >],
             timeout: ::chrono::Duration,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
@@ -662,7 +663,7 @@ macro_rules! raft {
           /// gracefully.
           ///
           /// See also `leadership_transfer_to_node`.
-          pub fn leadership_transfer<'a>(&'a self, py: pyo3::Python<'a>, id: NodeId) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          pub fn leadership_transfer<'a>(&'a self, id: NodeId, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel LeadershipTransferFuture >]::from(
@@ -679,9 +680,9 @@ macro_rules! raft {
           /// See also `leadership_transfer`.
           pub fn leadership_transfer_to_node<'a>(
             &'a self,
-            py: pyo3::Python<'a>,
             id: NodeId,
             addr: NodeAddress,
+            py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {

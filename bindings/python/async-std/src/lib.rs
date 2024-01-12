@@ -5,22 +5,28 @@ use ruraft_python::*;
 #[pymodule]
 pub fn _internal(py: Python, m: &PyModule) -> PyResult<()> {
   let typem = types::register(py)?;
-  types::futs::register_async_std(typem)?;
+  types::register_async_std(typem)?;
+  m.add_submodule(typem)?;
   py.import("sys")?
     .getattr("modules")?
-    .set_item("async_raft.types", typem)?;
+    .set_item("asyn_std_raft.types", typem)?;
 
   let membershipm = types::membership::register(py)?;
+  m.add_submodule(membershipm)?;
   py.import("sys")?
     .getattr("modules")?
-    .set_item("async_raft.membership", membershipm)?;
+    .set_item("asyn_std_raft.membership", membershipm)?;
 
   let optionsm = options::register(py)?;
+  m.add_submodule(optionsm)?;
   py.import("sys")?
     .getattr("modules")?
-    .set_item("async_raft.options", optionsm)?;
+    .set_item("asyn_std_raft.options", optionsm)?;
 
   m.add_class::<raft::AsyncStdRaft>()?;
+  m.add_class::<fsm::async_std::AsyncStdFinateStateMachine>()?;
+  m.add_class::<fsm::async_std::AsyncStdFinateStateMachineSnapshot>()?;
+  m.add_class::<fsm::FinateStateMachineResponse>()?;
 
   Ok(())
 }

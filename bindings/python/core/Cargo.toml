@@ -9,7 +9,7 @@ publish = false
 # crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["metrics", "sled", "jammdb", "redb", "serde"]
+default = ["metrics", "sled", "jammdb", "redb", "serde", "tls", "native-tls"]
 
 metrics = [
   "ruraft-lightwal/metrics",
@@ -24,6 +24,7 @@ serde = [
   "ruraft-core/serde",
   "ruraft-tcp/serde",
   "ruraft-snapshot/serde",
+  "ruraft-bindings-common/serde",
   "pyo3/serde",
   "nodecraft/serde",
   "smol_str/serde",
@@ -34,15 +35,14 @@ tokio = ["dep:tokio", "tokio-util", "agnostic/tokio", "pyo3-asyncio/tokio-runtim
 async-std = ["dep:async-std", "agnostic/async-std", "pyo3-asyncio/async-std-runtime", "pyo3io/async-std"]
 smol = ["agnostic/smol"]
 
-sled = ["ruraft-lightwal/sled"]
-jammdb = ["ruraft-lightwal/jammdb", "page_size"]
-redb = ["ruraft-lightwal/redb"]
+sled = ["ruraft-lightwal/sled", "ruraft-bindings-common/sled"]
+jammdb = ["ruraft-lightwal/jammdb", "page_size", "ruraft-bindings-common/jammdb"]
+redb = ["ruraft-lightwal/redb", "ruraft-bindings-common/redb"]
 
 tls = ["ruraft-tcp/tls", "ruraft-bindings-common/tls"]
 native-tls = ["ruraft-tcp/native-tls", "ruraft-bindings-common/native-tls"]
 
 [dependencies]
-arcmut = "0.1"
 agnostic = { workspace = true }
 async-lock = { workspace = true }
 chrono = "0.4"
@@ -80,5 +80,5 @@ transformable = { version = "0.1", features = ["bytes", "smallvec"] }
 page_size = { version = "0.6", optional = true }
 
 tokio = { version = "1", default_features = false, optional = true, features = ["fs"] }
-tokio-util = { version = "0.7", default_features = false, optional = true, features = ["compat"]}
+tokio-util = { version = "0.7", default_features = false, optional = true, features = ["compat"] }
 async-std = { version = "1", optional = true }

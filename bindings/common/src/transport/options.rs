@@ -1,13 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-#[cfg(feature = "tls")]
-use ::smallvec::SmallVec;
 use nodecraft::{NodeAddress, NodeId};
 use ruraft_core::transport::Header;
 #[cfg(feature = "tls")]
 use std::sync::Arc;
 
-pub type Array = SmallVec<[u8; 64]>;
+#[cfg(feature = "tls")]
+pub type Array = ::smallvec::SmallVec<[u8; 64]>;
 
 use ruraft_tcp::net::NetTransportOptions;
 
@@ -153,6 +152,7 @@ pub enum Identity {
   Pkcs8 { cert: Array, key: Array },
 }
 
+#[cfg(feature = "native-tls")]
 impl Identity {
   pub fn pkcs12(cert: Array, password: String) -> Self {
     Identity::Pkcs12 { cert, password }
@@ -306,6 +306,7 @@ pub struct CertAndPrivateKey {
   private_key: PrivateKey,
 }
 
+#[cfg(feature = "tls")]
 impl CertAndPrivateKey {
   pub fn new(cert_chain: Vec<Array>, pk: PrivateKey) -> Self {
     Self {
@@ -447,6 +448,7 @@ pub struct TlsClientConfig {
   root_certs: Option<Vec<Array>>,
 }
 
+#[cfg(feature = "tls")]
 impl Default for TlsClientConfig {
   fn default() -> Self {
     Self::new()

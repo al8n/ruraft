@@ -45,7 +45,7 @@ mod tokio {
     }
 
     #[staticmethod]
-    pub fn file<'a>(py: Python<'a>, path: &str) -> PyResult<Self> {
+    pub fn file<'a>(path: &str, py: Python<'a>) -> PyResult<Self> {
       std::fs::File::open(path)
         .map(|f| Self::new(AsyncReaderInner::File(File::from_std(f).compat())))
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))

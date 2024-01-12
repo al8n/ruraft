@@ -5,6 +5,7 @@ pub use tcp::*;
 
 #[cfg(feature = "tls")]
 mod tls;
+#[cfg(feature = "tls")]
 pub use tls::*;
 
 #[cfg(feature = "native-tls")]

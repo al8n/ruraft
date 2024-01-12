@@ -13,4 +13,4 @@ crate-type = ["cdylib"]
 chrono = "0.4"
 pyo3 = "0.20"
 ruraft-python = { path = "../core", features = ["tokio"] }
-smallvec = "1"
+smallvec.workspace = true
