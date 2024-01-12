@@ -83,7 +83,7 @@ pub enum FileSnapshotStorageError {
   getters(vis_all = "pub"),
   setters(vis_all = "pub", prefix = "with")
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileSnapshotStorageOptions {
   /// The base directory to store snapshots in.

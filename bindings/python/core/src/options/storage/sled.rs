@@ -1,24 +1,20 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pyo3::{types::PyModule, *};
-use ruraft_lightwal::sled::{Db as RustDb, DbOptions as RustDbOptions, Mode as RustMode};
+use pyo3::*;
+use pyo3::exceptions::PyTypeError;
+use ruraft_bindings_common::storage::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-#[cfg(feature = "tokio")]
-use agnostic::tokio::TokioRuntime as Tokio;
-
-#[cfg(feature = "async-std")]
-use agnostic::async_std::AsyncStdRuntime as AsyncStd;
 
 /// The high-level database mode, according to the trade-offs of the RUM conjecture.
-#[pyclass]
+#[pyclass(name = "SledMode")]
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u8)]
-pub enum Mode {
+pub enum PythonSledMode {
   /// In this mode, the database will make decisions that favor using less space instead of supporting the highest possible write throughput. This mode will also rewrite data more frequently as it strives to reduce fragmentation.
   #[default]
   LowSpace = 0,
@@ -26,8 +22,26 @@ pub enum Mode {
   HighThroughput = 1,
 }
 
+impl From<SledMode> for PythonSledMode {
+  fn from(mode: SledMode) -> Self {
+    match mode {
+      SledMode::LowSpace => Self::LowSpace,
+      SledMode::HighThroughput => Self::HighThroughput,
+    }
+  }
+}
+
+impl From<PythonSledMode> for SledMode {
+  fn from(mode: PythonSledMode) -> Self {
+    match mode {
+      PythonSledMode::LowSpace => Self::LowSpace,
+      PythonSledMode::HighThroughput => Self::HighThroughput,
+    }
+  }
+}
+
 #[pymethods]
-impl Mode {
+impl PythonSledMode {
   /// Construct the default mode [`Mode::LowSpace`].
   #[inline]
   #[new]
@@ -71,8 +85,8 @@ impl Mode {
   #[inline]
   pub fn __repr__(&self) -> PyResult<&'static str> {
     match self {
-      Self::LowSpace => Ok("Mode::LowSpace"),
-      Self::HighThroughput => Ok("Mode::HighThroughput"),
+      Self::LowSpace => Ok("SledMode::LowSpace"),
+      Self::HighThroughput => Ok("SledMode::HighThroughput"),
     }
   }
 
@@ -96,16 +110,16 @@ impl Mode {
 }
 
 /// Top-level configuration for the system.
-#[pyclass]
+#[pyclass(name = "SledOptions")]
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-pub struct DbOptions {
+pub struct PythonSledOptions {
   /// Set the path of the database (builder).
   path: Arc<PathBuf>,
   /// maximum size in bytes for the system page cache
   cache_capacity: u64,
   /// specify whether the system should run in "low_space" or "high_throughput" mode
-  mode: Mode,
+  mode: PythonSledMode,
   /// whether to use zstd compression
   use_compression: bool,
   /// the compression factor to use with zstd compression. Ranges from 1 up to 22. Levels >= 20 are ‘ultra’.
@@ -118,53 +132,50 @@ pub struct DbOptions {
   print_profile_on_drop: bool,
 }
 
-impl From<RustDbOptions> for DbOptions {
-  fn from(db_options: RustDbOptions) -> Self {
+impl From<SledOptions> for PythonSledOptions {
+  fn from(db_options: SledOptions) -> Self {
     Self {
-      path: db_options.path.clone().into(),
-      cache_capacity: db_options.cache_capacity,
-      mode: match db_options.mode {
-        RustMode::LowSpace => Mode::LowSpace,
-        RustMode::HighThroughput => Mode::HighThroughput,
-      },
-      use_compression: db_options.use_compression,
-      compression_factor: db_options.compression_factor,
-      temporary: db_options.temporary,
-      create_new: db_options.create_new,
-      print_profile_on_drop: db_options.print_profile_on_drop,
+      path: db_options.path().clone().into(),
+      cache_capacity: db_options.cache_capacity(),
+      mode: db_options.mode().into(),
+      use_compression: db_options.use_compression(),
+      compression_factor: db_options.compression_factor(),
+      temporary: db_options.temporary(),
+      create_new: db_options.create_new(),
+      print_profile_on_drop: db_options.print_profile_on_drop(),
     }
   }
 }
 
-impl From<DbOptions> for RustDbOptions {
-  fn from(db_options: DbOptions) -> Self {
-    RustDbOptions::new()
-      .path(db_options.path.as_ref())
-      .cache_capacity(db_options.cache_capacity)
-      .mode(match db_options.mode {
-        Mode::LowSpace => RustMode::LowSpace,
-        Mode::HighThroughput => RustMode::HighThroughput,
-      })
-      .use_compression(db_options.use_compression)
-      .compression_factor(db_options.compression_factor)
-      .temporary(db_options.temporary)
-      .create_new(db_options.create_new)
-      .print_profile_on_drop(db_options.print_profile_on_drop)
+impl From<PythonSledOptions> for SledOptions {
+  fn from(db_options: PythonSledOptions) -> Self {
+    let mut opts = SledOptions::new();
+    opts.set_path(db_options.path.as_ref().clone());
+    opts.set_cache_capacity(db_options.cache_capacity);
+    opts.set_mode(db_options.mode.into());
+    opts
+      .set_use_compression(db_options.use_compression);
+    opts
+      .set_compression_factor(db_options.compression_factor);
+    opts.set_temporary(db_options.temporary);
+    opts.set_create_new(db_options.create_new);
+    opts.set_print_profile_on_drop(db_options.print_profile_on_drop);
+    opts
   }
 }
 
-impl Default for DbOptions {
+impl Default for PythonSledOptions {
   fn default() -> Self {
     Self::new()
   }
 }
 
 #[pymethods]
-impl DbOptions {
+impl PythonSledOptions {
   /// Returns the default configuration.
   #[new]
   pub fn new() -> Self {
-    Self::from(RustDbOptions::default())
+    Self::from(SledOptions::default())
   }
 
   /// Sets the path of the database (builder).
@@ -193,13 +204,13 @@ impl DbOptions {
 
   /// Specifies whether the system should run in "low_space" or "high_throughput" mode
   #[setter]
-  pub fn set_mode(&mut self, mode: Mode) {
+  pub fn set_mode(&mut self, mode: PythonSledMode) {
     self.mode = mode;
   }
 
   /// Gets the mode of the database (builder).
   #[getter]
-  pub fn mode(&self) -> Mode {
+  pub fn mode(&self) -> PythonSledMode {
     self.mode
   }
 
@@ -253,12 +264,16 @@ impl DbOptions {
 
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self))
+    if cfg!(feature = "serde") {
+      serde_json::to_string(self).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self))
+    }
   }
 
   #[inline]
-  pub fn __repr__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self))
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self)
   }
 
   pub fn __eq__(&self, other: &Self) -> bool {
@@ -274,29 +289,4 @@ impl DbOptions {
     self.hash(&mut hasher);
     hasher.finish()
   }
-}
-
-#[cfg(feature = "tokio")]
-wal!(Tokio);
-
-#[cfg(feature = "async-std")]
-wal!(AsyncStd);
-
-#[pymodule]
-fn sled(_py: Python, m: &PyModule) -> PyResult<()> {
-  m.add_class::<Mode>()?;
-  m.add_class::<DbOptions>()?;
-  #[cfg(feature = "tokio")]
-  m.add_class::<TokioWal>()?;
-  #[cfg(feature = "async-std")]
-  m.add_class::<AsyncStdWal>()?;
-
-  Ok(())
-}
-
-// This function creates and returns the sled submodule.
-pub fn submodule(py: Python) -> PyResult<&PyModule> {
-  let module = PyModule::new(py, "sled")?;
-  sled(py, module)?;
-  Ok(module)
 }

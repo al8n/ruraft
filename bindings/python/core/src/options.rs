@@ -1,9 +1,14 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pyo3::exceptions::PyTypeError;
-use ruraft_bindings_common::transport::*;
+
 
 use super::*;
+
+mod transport;
+pub use transport::*;
+mod storage;
+pub use storage::*;
 
 /// Provides any necessary configuration for the Raft node.
 #[derive(Debug, Copy, Clone)]
@@ -523,126 +528,12 @@ pub enum SupportedSnapshotStorageOptions {
   Memory,
 }
 
-/// Configurations for a `SnapshotStorage`
-#[derive(Clone)]
-#[pyclass(frozen)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct SnapshotStorageOptions(SupportedSnapshotStorageOptions);
-
-#[pymethods]
-impl SnapshotStorageOptions {
-  /// Constructor a file-based snapshot storage
-  ///
-  /// ### Example
-  ///
-  /// ```python
-  /// from prafty.options import SnapshotStorageOptions
-  ///
-  /// opts = SnapshotStorageOptions.file(options.FileSnapshotStorageOptions("/path/to/directory", 5))
-  /// ```
-  #[staticmethod]
-  pub fn file(opts: FileSnapshotStorageOptions) -> Self {
-    Self(SupportedSnapshotStorageOptions::File(opts))
-  }
-
-  /// Constructor a memory-based snapshot storage
-  ///
-  /// ### Example
-  ///
-  /// ```python
-  /// from prafty.options import SnapshotStorageOptions
-  ///
-  /// opts = SnapshotStorageOptions.memory()
-  /// ```
-  #[staticmethod]
-  pub fn memory() -> Self {
-    Self(SupportedSnapshotStorageOptions::Memory)
-  }
-
-  fn __str__(&self) -> PyResult<String> {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
-    } else {
-      Ok(format!("{:?}", self.0))
-    }
-  }
-
-  fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-}
-
-/// Configurations for `FileSnapshotStorageOptions`
-#[derive(Clone)]
-#[pyclass(frozen)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct FileSnapshotStorageOptions(ruraft_snapshot::sync::FileSnapshotStorageOptions);
-
-impl core::fmt::Debug for FileSnapshotStorageOptions {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    write!(f, "{:?}", self.0)
-  }
-}
-
-impl From<FileSnapshotStorageOptions> for ruraft_snapshot::sync::FileSnapshotStorageOptions {
-  fn from(value: FileSnapshotStorageOptions) -> Self {
-    value.0
-  }
-}
-
-#[pymethods]
-impl FileSnapshotStorageOptions {
-  /// Constructor a file system based snapshot storage
-  ///
-  /// ### Example
-  ///
-  /// ```python
-  /// from prafty import options
-  ///
-  /// opts = options.FileSnapshotStorageOptions("/path/to/directory", 5)
-  /// ```
-  #[new]
-  pub fn new(base: std::path::PathBuf, retain: usize) -> Self {
-    Self(ruraft_snapshot::sync::FileSnapshotStorageOptions::new(
-      base, retain,
-    ))
-  }
-
-  /// Returns the the base directory for snapshots
-  #[getter]
-  pub fn base(&self) -> &std::path::PathBuf {
-    self.0.base()
-  }
-
-  /// Get the number of snapshots should be retained
-  #[getter]
-  pub fn retain(&self) -> usize {
-    self.0.retain()
-  }
-
-  fn __str__(&self) -> PyResult<String> {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
-    } else {
-      Ok(format!("{:?}", self.0))
-    }
-  }
-
-  fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-}
-
 pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
   let submodule = PyModule::new(py, "options")?;
   submodule.add_class::<Options>()?;
   submodule.add_class::<ReloadableOptions>()?;
   submodule.add_class::<SnapshotVersion>()?;
   submodule.add_class::<ProtocolVersion>()?;
-  submodule.add_class::<SnapshotStorageOptions>()?;
-  submodule.add_class::<FileSnapshotStorageOptions>()?;
-
+  register_storage_options(submodule)?;
   Ok(submodule)
 }

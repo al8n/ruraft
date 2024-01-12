@@ -13,7 +13,7 @@ mod jammdb;
 #[cfg(feature = "jammdb")]
 pub use jammdb::*;
 
-#[derive(Clone, Debug, derive_more::From)]
+#[derive(Clone, Debug, derive_more::From, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(untagged, rename_all = "snake_case"))]
 pub enum LightBackendOptions {

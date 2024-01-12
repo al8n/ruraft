@@ -173,8 +173,18 @@ impl SledOptions {
     self.create_new = create_new;
   }
 
+  /// Gets whether to attempt to exclusively open the database, failing if it already exists
+  pub fn create_new(&self) -> bool {
+    self.create_new
+  }
+
   /// Sets whether to print a performance profile when the Config is dropped
   pub fn set_print_profile_on_drop(&mut self, print_profile_on_drop: bool) {
     self.print_profile_on_drop = print_profile_on_drop;
+  }
+
+  /// Gets whether to print a performance profile when the Config is dropped
+  pub fn print_profile_on_drop(&self) -> bool {
+    self.print_profile_on_drop
   }
 }

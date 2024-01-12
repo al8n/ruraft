@@ -38,6 +38,9 @@ sled = ["ruraft-lightwal/sled"]
 jammdb = ["ruraft-lightwal/jammdb", "page_size"]
 redb = ["ruraft-lightwal/redb"]
 
+tls = ["ruraft-tcp/tls", "ruraft-bindings-common/tls"]
+native-tls = ["ruraft-tcp/native-tls", "ruraft-bindings-common/native-tls"]
+
 [dependencies]
 arcmut = "0.1"
 agnostic = { workspace = true }

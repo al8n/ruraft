@@ -2,8 +2,6 @@ use pyo3::{exceptions::PyIOError, PyErr};
 
 use crate::{types::SnapshotMeta, IntoSupportedRuntime, RaftData};
 
-pub mod light;
-
 pub type RaftStorage<R> = ruraft_bindings_common::storage::SupportedStorage<RaftData, R>;
 
 #[derive(derive_more::From)]

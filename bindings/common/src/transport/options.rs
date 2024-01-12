@@ -32,7 +32,7 @@ impl SupportedTransportOptions {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TcpTransportOptions {
   pub(super) resolv_conf: Option<PathBuf>,
@@ -73,46 +73,66 @@ impl TcpTransportOptions {
     }
   }
 
+  /// Sets the path to the resolv.conf file, this is used for DNS address resolve.
+  /// If you can make sure all addresses you used in the
+  /// Raft cluster is a socket address, then you can ignore this option.
   pub fn set_resolv_conf(&mut self, resolv_conf: Option<PathBuf>) {
     self.resolv_conf = resolv_conf;
   }
 
+  /// Returns the path to the resolv.conf file.
   pub fn resolv_conf(&self) -> Option<&PathBuf> {
     self.resolv_conf.as_ref()
   }
 
+  /// Sets the maximum number of connections to keep in the connection pool.
   pub fn set_max_pool(&mut self, max_pool: usize) {
     self.transport_options.set_max_pool(max_pool);
   }
 
+  /// Returns the maximum number of connections to keep in the connection pool.
   pub fn max_pool(&self) -> usize {
     self.transport_options.max_pool()
   }
 
+  /// Sets the maximum number of in-flight append entries requests.
   pub fn set_max_inflight_requests(&mut self, max_idle: usize) {
     self.transport_options.set_max_inflight_requests(max_idle);
   }
 
+  /// Returns the maximum number of in-flight append entries requests.
   pub fn max_inflight_requests(&self) -> usize {
     self.transport_options.max_inflight_requests()
   }
 
+  /// Set the timeout used to apply I/O deadlines.
   pub fn set_timeout(&mut self, timeout: std::time::Duration) {
     self.transport_options.set_timeout(timeout);
   }
 
+  /// Returns the timeout used to apply I/O deadlines.
   pub fn timeout(&self) -> std::time::Duration {
     self.transport_options.timeout()
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[cfg(feature = "native-tls")]
 pub enum Identity {
-  Pcks12 { cert: Vec<u8>, password: String },
-  Pcks8 { cert: Vec<u8>, key: Vec<u8> },
+  Pkcs12 { cert: Vec<u8>, password: String },
+  Pkcs8 { cert: Vec<u8>, key: Vec<u8> },
+}
+
+impl Identity {
+  pub fn pkcs12(cert: Vec<u8>, password: String) -> Self {
+    Identity::Pkcs12 { cert, password }
+  }
+
+  pub fn pkcs8(cert: Vec<u8>, key: Vec<u8>) -> Self {
+    Identity::Pkcs8 { cert, key }
+  }
 }
 
 #[cfg(feature = "native-tls")]
@@ -121,17 +141,17 @@ impl TryFrom<Identity> for ruraft_tcp::native_tls::native_tls::Identity {
 
   fn try_from(value: Identity) -> Result<Self, Self::Error> {
     match value {
-      Identity::Pcks12 { cert, password } => {
+      Identity::Pkcs12 { cert, password } => {
         ruraft_tcp::native_tls::native_tls::Identity::from_pkcs12(&cert, &password)
       }
-      Identity::Pcks8 { cert, key } => {
+      Identity::Pkcs8 { cert, key } => {
         ruraft_tcp::native_tls::native_tls::Identity::from_pkcs8(&cert, &key)
       }
     }
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg(feature = "native-tls")]
 pub struct NativeTlsTransportOptions {
@@ -144,6 +164,11 @@ pub struct NativeTlsTransportOptions {
 
 #[cfg(feature = "native-tls")]
 impl NativeTlsTransportOptions {
+  /// Creates a new `NativeTlsTransportOptions` with the default configuration.
+  /// 
+  /// Arguments:
+  ///   domain: The domain name of the server.
+  ///   identity: The identity used for TLS.
   pub fn new(domain: String, identity: Identity) -> Self {
     Self {
       domain,
@@ -152,50 +177,64 @@ impl NativeTlsTransportOptions {
     }
   }
 
+  /// Sets the domain name of the server.
   pub fn set_domain(&mut self, domain: String) {
     self.domain = domain;
   }
 
+  /// Returns the domain name of the server.
   pub fn domain(&self) -> &String {
     &self.domain
   }
 
+  /// Sets the identity used for TLS.
   pub fn set_identity(&mut self, identity: Identity) {
     self.identity = identity;
   }
 
+  /// Returns the identity used for TLS.
   pub fn identity(&self) -> &Identity {
     &self.identity
   }
 
+  /// Sets the path to the resolv.conf file, this is used for DNS address resolve.
+  /// If you can make sure all addresses you used in the
+  /// Raft cluster is a socket address, then you can ignore this option.
   pub fn set_resolv_conf(&mut self, resolv_conf: Option<PathBuf>) {
     self.opts.set_resolv_conf(resolv_conf);
   }
 
+  /// Returns the path to the resolv.conf file.
   pub fn resolv_conf(&self) -> Option<&PathBuf> {
     self.opts.resolv_conf()
   }
 
+  /// Sets the maximum number of connections to keep in the connection pool.
   pub fn set_max_pool(&mut self, max_pool: usize) {
     self.opts.set_max_pool(max_pool);
   }
 
+  /// Returns the maximum number of connections to keep in the connection pool.
   pub fn max_pool(&self) -> usize {
     self.opts.max_pool()
   }
 
+  /// Sets the maximum number of in-flight append entries requests.
   pub fn set_max_inflight_requests(&mut self, max_idle: usize) {
     self.opts.set_max_inflight_requests(max_idle);
   }
 
+  /// Returns the maximum number of in-flight append entries requests.
   pub fn max_inflight_requests(&self) -> usize {
     self.opts.max_inflight_requests()
   }
 
+  /// Set the timeout used to apply I/O deadlines.
   pub fn set_timeout(&mut self, timeout: std::time::Duration) {
     self.opts.set_timeout(timeout);
   }
 
+  /// Returns the timeout used to apply I/O deadlines.
   pub fn timeout(&self) -> std::time::Duration {
     self.opts.timeout()
   }
@@ -206,8 +245,8 @@ impl NativeTlsTransportOptions {
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[cfg(feature = "tls")]
 pub enum PriviteKey {
-  Pcks1(Vec<u8>),
-  Pcks8(Vec<u8>),
+  Pkcs1(Vec<u8>),
+  Pkcs8(Vec<u8>),
   Sec1(Vec<u8>),
 }
 
@@ -290,8 +329,8 @@ impl TlsServerConfig {
       ServerConfig,
     };
     let pk = match self.cert_and_private_key.private_key {
-      PriviteKey::Pcks8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8)),
-      PriviteKey::Pcks1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12)),
+      PriviteKey::Pkcs8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8)),
+      PriviteKey::Pkcs1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12)),
       PriviteKey::Sec1(sec1) => PrivateKeyDer::from(PrivateSec1KeyDer::from(sec1)),
     };
     let cert_chain = self
@@ -421,8 +460,8 @@ impl TlsClientConfig {
       ),
       (Some(auth_cert), verifier) => {
         let pk = match auth_cert.private_key {
-          PriviteKey::Pcks8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8)),
-          PriviteKey::Pcks1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12)),
+          PriviteKey::Pkcs8(pkcs8) => PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8)),
+          PriviteKey::Pkcs1(pkcs12) => PrivateKeyDer::from(PrivatePkcs1KeyDer::from(pkcs12)),
           PriviteKey::Sec1(sec1) => PrivateKeyDer::from(PrivateSec1KeyDer::from(sec1)),
         };
         let cert_chain = auth_cert

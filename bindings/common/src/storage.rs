@@ -26,7 +26,7 @@ mod light;
 #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
 pub use light::*;
 
-#[derive(Clone, Debug, derive_more::From)]
+#[derive(Clone, Debug, derive_more::From, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum BackendOptions {
@@ -34,12 +34,18 @@ pub enum BackendOptions {
   Light(LightBackendOptions),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 pub struct SupportedStorageOptions {
   snapshot: SnapshotStorageOptions,
   #[cfg_attr(feature = "serde", serde(flatten))]
   backend: BackendOptions,
+}
+
+impl SupportedStorageOptions {
+  pub fn new(snapshot: SnapshotStorageOptions, backend: BackendOptions) -> Self {
+    Self { snapshot, backend }
+  }
 }
 
 #[derive(derive_more::From, derive_more::Display)]

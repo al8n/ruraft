@@ -4,28 +4,30 @@ use std::{
   sync::Arc,
 };
 
-use pyo3::prelude::*;
-use ruraft_lightwal::redb::{Db as RustDb, DbOptions as RustDbOptions};
+use pyo3::{prelude::*, exceptions::PyTypeError};
+use ruraft_bindings_common::storage::*;
 
 /// Options used to create Db.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[pyclass]
-pub struct DbOptions {
+#[pyclass(name = "RedbOptions")]
+pub struct PythonRedbOptions {
   /// Sets the cache size.
   cache_size: usize,
   /// Sets the path to the database.
   path: Arc<PathBuf>,
 }
 
-impl From<DbOptions> for RustDbOptions {
-  fn from(db_options: DbOptions) -> Self {
-    RustDbOptions::new(db_options.path.as_ref()).with_cache_size(db_options.cache_size)
+impl From<PythonRedbOptions> for RedbOptions {
+  fn from(db_options: PythonRedbOptions) -> Self {
+    let mut opts = RedbOptions::new(db_options.path.as_ref().clone());
+    opts.set_cache_size(db_options.cache_size);
+    opts
   }
 }
 
 #[pymethods]
-impl DbOptions {
+impl PythonRedbOptions {
   /// Returns the default configuration.
   #[new]
   pub fn new(path: PathBuf) -> Self {
@@ -61,12 +63,16 @@ impl DbOptions {
 
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self))
+    if cfg!(feature = "serde") {
+      serde_json::to_string(self).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self))
+    }
   }
 
   #[inline]
-  pub fn __repr__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self))
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self)
   }
 
   pub fn __eq__(&self, other: &Self) -> bool {
@@ -82,33 +88,4 @@ impl DbOptions {
     self.hash(&mut hasher);
     hasher.finish()
   }
-}
-
-#[cfg(feature = "tokio")]
-use agnostic::tokio::TokioRuntime as Tokio;
-
-#[cfg(feature = "async-std")]
-use agnostic::async_std::AsyncStdRuntime as AsyncStd;
-
-#[cfg(feature = "tokio")]
-wal!(Tokio);
-
-#[cfg(feature = "async-std")]
-wal!(AsyncStd);
-
-#[pymodule]
-fn redb(_py: Python, m: &PyModule) -> PyResult<()> {
-  m.add_class::<DbOptions>()?;
-  #[cfg(feature = "tokio")]
-  m.add_class::<TokioWal>()?;
-  #[cfg(feature = "async-std")]
-  m.add_class::<AsyncStdWal>()?;
-  Ok(())
-}
-
-// This function creates and returns the sled submodule.
-pub fn submodule(py: Python) -> PyResult<&PyModule> {
-  let module = PyModule::new(py, "redb")?;
-  redb(py, module)?;
-  Ok(module)
 }

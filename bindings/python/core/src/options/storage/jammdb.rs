@@ -1,17 +1,16 @@
 use std::{
   hash::{DefaultHasher, Hash, Hasher},
   path::PathBuf,
-  sync::Arc,
 };
 
-use pyo3::prelude::*;
-use ruraft_lightwal::jammdb::{Db as RustDb, DbOptions as RustDbOptions};
+use pyo3::{prelude::*, exceptions::PyTypeError};
+use ruraft_bindings_common::storage::*;
 
 /// Options used to create Db.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[pyclass]
-pub struct DbOptions {
+#[pyclass(name = "JammdbOptions")]
+pub struct PythonJammdbOptions {
   /// Sets the path to the database.
   path: PathBuf,
   direct_writes: bool,
@@ -21,20 +20,20 @@ pub struct DbOptions {
   num_pages: usize,
 }
 
-impl From<DbOptions> for RustDbOptions {
-  fn from(db_options: DbOptions) -> Self {
-    let mut opts = RustDbOptions::new(db_options.path);
-    opts = opts.pagesize(db_options.pagesize);
-
-    opts = opts.direct_writes(db_options.direct_writes);
-    opts = opts.num_pages(db_options.num_pages);
-    opts = opts.strict_mode(db_options.strict_mode);
-    opts.mmap_populate(db_options.mmap_populate)
+impl From<PythonJammdbOptions> for JammdbOptions {
+  fn from(db_options: PythonJammdbOptions) -> Self {
+    let mut opts = JammdbOptions::new(db_options.path);
+    opts.set_pagesize(db_options.pagesize);
+    opts.set_direct_writes(db_options.direct_writes);
+    opts.set_num_pages(db_options.num_pages);
+    opts.set_strict_mode(db_options.strict_mode);
+    opts.set_mmap_populate(db_options.mmap_populate);
+    opts
   }
 }
 
 #[pymethods]
-impl DbOptions {
+impl PythonJammdbOptions {
   /// Returns the default configuration.
   #[new]
   pub fn new(path: PathBuf) -> Self {
@@ -141,12 +140,16 @@ impl DbOptions {
 
   #[inline]
   pub fn __str__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self))
+    if cfg!(feature = "serde") {
+      serde_json::to_string(self).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self))
+    }
   }
 
   #[inline]
-  pub fn __repr__(&self) -> PyResult<String> {
-    Ok(format!("{:?}", self))
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self)
   }
 
   pub fn __eq__(&self, other: &Self) -> bool {
@@ -162,33 +165,4 @@ impl DbOptions {
     self.hash(&mut hasher);
     hasher.finish()
   }
-}
-
-#[cfg(feature = "tokio")]
-use agnostic::tokio::TokioRuntime as Tokio;
-
-#[cfg(feature = "async-std")]
-use agnostic::async_std::AsyncStdRuntime as AsyncStd;
-
-#[cfg(feature = "tokio")]
-wal!(Tokio);
-
-#[cfg(feature = "async-std")]
-wal!(AsyncStd);
-
-#[pymodule]
-fn jammdb(_py: Python, m: &PyModule) -> PyResult<()> {
-  m.add_class::<DbOptions>()?;
-  #[cfg(feature = "tokio")]
-  m.add_class::<TokioWal>()?;
-  #[cfg(feature = "async-std")]
-  m.add_class::<AsyncStdWal>()?;
-  Ok(())
-}
-
-// This function creates and returns the sled submodule.
-pub fn submodule(py: Python) -> PyResult<&PyModule> {
-  let module = PyModule::new(py, "jammdb")?;
-  jammdb(py, module)?;
-  Ok(module)
 }
