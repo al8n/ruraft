@@ -73,6 +73,16 @@ impl SupportedRuntime {
   }
 }
 
+fn register_type<T: Pyi>(pyi: &mut String, module: &PyModule) -> PyResult<()> {
+  module.add_class::<T>()?;
+  pyi.push_str(&T::pyi());
+  Ok(())
+}
+
+trait Pyi: PyClass {
+  fn pyi() -> std::borrow::Cow<'static, str>;
+}
+
 trait IntoSupportedRuntime: Runtime {
   type Snapshot: pyo3::PyClass
     + pyo3::IntoPy<pyo3::Py<pyo3::PyAny>>

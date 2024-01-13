@@ -1,5 +1,5 @@
 from typing import List
-from types import NodeId, NodeAddress
+from .types import NodeId, NodeAddress
 
 class ServerSuffrage:
   def voter(self) -> ServerSuffrage: ...

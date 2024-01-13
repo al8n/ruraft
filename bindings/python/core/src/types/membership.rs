@@ -1,3 +1,5 @@
+use crate::{Pyi, register_type};
+
 use super::*;
 
 /// The suffrage of a server.
@@ -5,13 +7,14 @@ use super::*;
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[repr(u8)]
 pub enum ServerSuffrage {
   /// The server can vote.
   #[default]
-  Voter,
+  Voter = 1,
   /// The server cannot vote.
   #[serde(rename = "nonvoter")]
-  Nonvoter,
+  Nonvoter = 0,
 }
 
 impl From<RServerSuffrage> for ServerSuffrage {
@@ -30,6 +33,35 @@ impl From<ServerSuffrage> for RServerSuffrage {
       ServerSuffrage::Voter => Self::Voter,
       ServerSuffrage::Nonvoter => Self::Nonvoter,
     }
+  }
+}
+
+impl Pyi for ServerSuffrage {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class ServerSuffrage:
+  def voter(self) -> ServerSuffrage: ...
+  
+  def nonvoter(self) -> ServerSuffrage: ...
+  
+  def is_voter(self) -> bool: ...
+  
+  def is_nonvoter(self) -> bool: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __eq__(self, other: ServerSuffrage) -> bool: ...
+
+  def __ne__(self, other: ServerSuffrage) -> bool: ...
+
+  def __hash__(self) -> int: ...
+
+  def __int__(self) -> int: ...
+
+"#.into()
   }
 }
 
@@ -93,6 +125,10 @@ impl ServerSuffrage {
     self.hash(&mut hasher);
     hasher.finish()
   }
+
+  fn __int__(&self) -> u8 {
+    *self as u8
+  }
 }
 
 /// A server in the cluster.
@@ -105,6 +141,45 @@ pub struct Server(RServer<NodeId, NodeAddress>);
 impl From<Server> for RServer<RNodeId, RNodeAddress> {
   fn from(s: Server) -> Self {
     Self::new(s.0.id().0.clone(), s.0.addr().0.clone(), *s.0.suffrage())
+  }
+}
+
+impl Pyi for Server {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class Server:
+  def __init__(self, id: NodeId, address: NodeAddress, suffrage: ServerSuffrage) -> None: ...
+
+  @property
+  def id(self) -> NodeId: ...
+  
+  @id.setter
+  def id(self, value: NodeId) -> None : ...
+  
+  @property
+  def address(self) -> NodeAddress: ...
+  
+  @address.setter
+  def address(self, value: NodeAddress) -> None : ...
+
+  @property
+  def suffrage(self) -> ServerSuffrage: ...
+
+  @suffrage.setter
+  def suffrage(self, value: ServerSuffrage) -> None : ...
+  
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __eq__(self, other: Server) -> bool: ...
+
+  def __ne__(self, other: Server) -> bool: ...
+
+  def __hash__(self) -> int: ...
+
+"#.into()
   }
 }
 
@@ -184,6 +259,37 @@ impl Server {
 #[pyclass]
 #[derive(Clone)]
 pub struct MembershipBuilder(RMembershipBuilder<RNodeId, RNodeAddress>);
+
+impl Pyi for MembershipBuilder {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class MembershipBuilder:
+  def __init__(self) -> None: ...
+
+  def insert(self, server: Server) -> None : ...
+  
+  def insert_many(self, servers: List[Server]) -> None : ...
+
+  def remove(self, id: NodeId) -> None : ...
+
+  def contains_id(self, node: NodeId) -> bool: ...
+  
+  def contains_addr(self, address: NodeAddress) -> bool: ...
+  
+  def contains_voter(self) -> bool: ...
+  
+  def is_voter(self, id: NodeId) -> bool: ...
+  
+  def is_nonvoter(self, id: NodeId) -> bool: ...
+
+  def is_empty(self) -> bool: ...
+  
+  def build(self) -> Membership: ...
+
+"#.into()
+  }
+}
 
 #[pymethods]
 impl MembershipBuilder {
@@ -282,6 +388,41 @@ impl From<Membership> for RMembership<RNodeId, RNodeAddress> {
 impl From<RMembership<RNodeId, RNodeAddress>> for Membership {
   fn from(m: RMembership<RNodeId, RNodeAddress>) -> Self {
     Self(m)
+  }
+}
+
+impl Pyi for Membership {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class Membership:
+  def is_empty(self) -> bool: ...
+  
+  def contains_id(self, node: NodeId) -> bool: ...
+  
+  def contains_addr(self, address: NodeAddress) -> bool: ...
+  
+  def contains_voter(self) -> bool: ...
+  
+  def is_voter(self, id: NodeId) -> bool: ...
+  
+  def is_nonvoter(self, id: NodeId) -> bool: ...
+  
+  def num_voters(self) -> int: ...
+  
+  def num_nonvoters(self) -> int: ...
+  
+  def quorum_size(self) -> int: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __eq__(self, other: Membership) -> bool: ...
+
+  def __ne__(self, other: Membership) -> bool: ...
+
+"#.into()
   }
 }
 
@@ -392,6 +533,25 @@ impl From<ruraft_core::LatestMembership<RNodeId, RNodeAddress>> for LatestMember
   }
 }
 
+impl Pyi for LatestMembership {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class LatestMembership:
+  def index(self) -> int: ...
+  
+  def membership(self): Membership: ...
+
+  def __richcmp__(self, other: LatestMembership, op):...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+"#.into()
+  }
+}
+
 #[pymethods]
 impl LatestMembership {
   /// Returns the index of the latest membership in use by Raft.
@@ -411,8 +571,8 @@ impl LatestMembership {
     match op {
       CompareOp::Lt => self.index < other.index,
       CompareOp::Le => self.index <= other.index,
-      CompareOp::Eq => self.index == other.index,
-      CompareOp::Ne => self.index != other.index,
+      CompareOp::Eq => self.index == other.index && self.membership == other.membership,
+      CompareOp::Ne => self.index != other.index || self.membership != other.membership,
       CompareOp::Gt => self.index > other.index,
       CompareOp::Ge => self.index >= other.index,
     }
@@ -431,12 +591,18 @@ impl LatestMembership {
   }
 }
 
-pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
+pub fn register<'a>(py: Python<'a>) -> PyResult<(String, &'a PyModule)> {
   let subm = PyModule::new(py, "membership")?;
-  subm.add_class::<ServerSuffrage>()?;
-  subm.add_class::<Server>()?;
-  subm.add_class::<MembershipBuilder>()?;
-  subm.add_class::<Membership>()?;
-  subm.add_class::<LatestMembership>()?;
-  Ok(subm)
+  let mut pyi = format!(r#"
+
+from typing import List
+from .types import NodeId, NodeAddress
+
+  "#);
+  register_type::<ServerSuffrage>(&mut pyi, subm)?;
+  register_type::<Server>(&mut pyi, subm)?;
+  register_type::<MembershipBuilder>(&mut pyi, subm)?;
+  register_type::<Membership>(&mut pyi, subm)?;
+  register_type::<LatestMembership>(&mut pyi, subm)?;
+  Ok((pyi, subm))
 }

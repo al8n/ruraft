@@ -28,6 +28,91 @@ impl From<ruraft_core::options::Options> for Options {
   }
 }
 
+impl Pyi for Options {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class Options:
+  @property
+  def heartbeat_timeout(self) -> timedelta:...
+  
+  @heartbeat_timeout.setter
+  def heartbeat_timeout(self, value: timedelta) -> None:...
+
+  @property
+  def election_timeout(self) -> timedelta:...
+  
+  @election_timeout.setter
+  def election_timeout(self, value: timedelta) -> None:...
+
+  @property
+  def commit_timeout(self) -> timedelta:...
+  
+  @commit_timeout.setter
+  def commit_timeout(self, value: timedelta) -> None:...
+  
+  @property
+  def max_append_entries(self) -> int:...
+  
+  @max_append_entries.setter
+  def max_append_entries(self, value: int) -> None:...
+  
+  @property
+  def batch_apply(self) -> bool:...
+  
+  @batch_apply.setter
+  def batch_apply(self, value: bool) -> None:...
+  
+  @property
+  def shutdown_on_remove(self) -> bool:...
+  
+  @shutdown_on_remove.setter
+  def shutdown_on_remove(self, value: bool) -> None:...
+  
+  @property
+  def trailing_logs(self) -> int:...
+  
+  @trailing_logs.setter
+  def trailing_logs(self, value: int) -> None:...
+  
+  @property
+  def snapshot_interval(self) -> timedelta:...
+  
+  @snapshot_interval.setter
+  def snapshot_interval(self, value: timedelta) -> None:...
+  
+  @property
+  def snapshot_threshold(self) -> int:...
+  
+  @snapshot_threshold.setter
+  def snapshot_threshold(self, value: int) -> None:...
+  
+  @property
+  def leader_lease_timeout(self) -> timedelta:...
+  
+  @leader_lease_timeout.setter
+  def leader_lease_timeout(self, value: timedelta) -> None:...
+  
+  @property
+  def no_snapshot_restore_on_start(self) -> bool:...
+  
+  @no_snapshot_restore_on_start.setter
+  def no_snapshot_restore_on_start(self, value: bool) -> None:...
+
+  def __eq__(self, __value: Options) -> bool: ...
+  
+  def __ne__(self, __value: Options) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
+  }
+}
+
 #[pymethods]
 impl Options {
   #[new]
@@ -240,6 +325,32 @@ impl Options {
   pub fn set_no_snapshot_restore_on_start(&mut self, val: bool) {
     self.0.set_no_snapshot_restore_on_start(val);
   }
+
+  pub fn __eq__(&self, other: &Self) -> bool {
+    self.0.eq(&other.0)
+  }
+
+  pub fn __ne__(&self, other: &Self) -> bool {
+    self.0.ne(&other.0)
+  }
+
+  pub fn __hash__(&self) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    self.0.hash(&mut hasher);
+    hasher.finish()
+  }
+
+  pub fn __str__(&self) -> PyResult<String> {
+    if cfg!(feature = "serde") {
+      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
+    } else {
+      Ok(format!("{:?}", self.0))
+    }
+  }
+
+  pub fn __repr__(&self) -> String {
+    format!("{:?}", self.0)
+  }
 }
 
 /// The subset of `Options` that may be reconfigured during
@@ -262,6 +373,55 @@ impl From<ReloadableOptions> for ruraft_core::options::ReloadableOptions {
 impl From<ruraft_core::options::ReloadableOptions> for ReloadableOptions {
   fn from(o: ruraft_core::options::ReloadableOptions) -> Self {
     Self(o)
+  }
+}
+
+impl Pyi for ReloadableOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class ReloadableOptions:
+  @property
+  def heartbeat_timeout(self) -> timedelta:...
+
+  @heartbeat_timeout.setter
+  def heartbeat_timeout(self, value: timedelta) -> None:...
+
+  @property
+  def election_timeout(self) -> timedelta:...
+
+  @election_timeout.setter
+  def election_timeout(self, value: timedelta) -> None:...
+
+  @property
+  def trailing_logs(self) -> int:...
+
+  @trailing_logs.setter
+  def trailing_logs(self, value: int) -> None:...
+
+  @property
+  def snapshot_interval(self) -> timedelta:...
+
+  @snapshot_interval.setter
+  def snapshot_interval(self, value: timedelta) -> None:...
+
+  @property
+  def snapshot_threshold(self) -> int:...
+
+  @snapshot_threshold.setter
+  def snapshot_threshold(self, value: int) -> None:...
+
+  def __eq__(self, __value: ReloadableOptions) -> bool: ...
+  
+  def __ne__(self, __value: ReloadableOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
   }
 }
 
@@ -389,7 +549,7 @@ impl ReloadableOptions {
 #[repr(u8)]
 #[pyclass(frozen)]
 pub enum SnapshotVersion {
-  V1,
+  V1 = 1,
 }
 
 impl From<ruraft_core::options::SnapshotVersion> for SnapshotVersion {
@@ -406,6 +566,29 @@ impl From<SnapshotVersion> for ruraft_core::options::SnapshotVersion {
     match v {
       SnapshotVersion::V1 => Self::V1,
     }
+  }
+}
+
+impl Pyi for SnapshotVersion {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class SnapshotVersion:
+  def v1() -> SnapshotVersion:...
+
+  def __eq__(self, __value: SnapshotVersion) -> bool: ...
+
+  def __ne__(self, __value: SnapshotVersion) -> bool: ...
+
+  def __hash__(self) -> int: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __int__(self) -> int: ...
+
+"#.into()
   }
 }
 
@@ -436,6 +619,10 @@ impl SnapshotVersion {
     }
   }
 
+  fn __int__(&self) -> u8 {
+    *self as u8
+  }
+
   fn __eq__(&self, other: &Self) -> bool {
     self.eq(other)
   }
@@ -457,7 +644,7 @@ impl SnapshotVersion {
 #[repr(u8)]
 #[pyclass(frozen)]
 pub enum ProtocolVersion {
-  V1,
+  V1 = 1,
 }
 
 impl From<ruraft_core::options::ProtocolVersion> for ProtocolVersion {
@@ -474,6 +661,29 @@ impl From<ProtocolVersion> for ruraft_core::options::ProtocolVersion {
     match v {
       ProtocolVersion::V1 => Self::V1,
     }
+  }
+}
+
+impl Pyi for ProtocolVersion {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class ProtocolVersion:
+  def v1() -> ProtocolVersion:...
+
+  def __eq__(self, __value: ProtocolVersion) -> bool: ...
+
+  def __ne__(self, __value: ProtocolVersion) -> bool: ...
+
+  def __hash__(self) -> int: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __int__(self) -> int: ...
+
+"#.into()
   }
 }
 
@@ -517,6 +727,10 @@ impl ProtocolVersion {
     self.hash(&mut hasher);
     hasher.finish()
   }
+
+  fn __int__(&self) -> u8 {
+    *self as u8
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -527,13 +741,21 @@ pub enum SupportedSnapshotStorageOptions {
   Memory,
 }
 
-pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
+pub fn register<'a>(py: Python<'a>) -> PyResult<(String, &'a PyModule)> {
+  let mut pyi = format!(r#"
+
+from datetime import timedelta
+from os import PathLike
+from .types import Header
+from typing import Optional
+
+  "#);
   let submodule = PyModule::new(py, "options")?;
-  submodule.add_class::<Options>()?;
-  submodule.add_class::<ReloadableOptions>()?;
-  submodule.add_class::<SnapshotVersion>()?;
-  submodule.add_class::<ProtocolVersion>()?;
-  register_storage_options(submodule)?;
-  register_transport_options(submodule)?;
-  Ok(submodule)
+  register_type::<Options>(&mut pyi, submodule)?;
+  register_type::<ReloadableOptions>(&mut pyi, submodule)?;
+  register_type::<SnapshotVersion>(&mut pyi, submodule)?;
+  register_type::<ProtocolVersion>(&mut pyi, submodule)?;
+  pyi.push_str(&register_storage_options(submodule)?);
+  pyi.push_str(&register_transport_options(submodule)?);
+  Ok((pyi, submodule))
 }

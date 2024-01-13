@@ -7,6 +7,8 @@ use ruraft_bindings_common::storage::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crate::Pyi;
+
 /// The high-level database mode, according to the trade-offs of the RUM conjecture.
 #[pyclass(name = "SledMode")]
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Hash)]
@@ -39,6 +41,31 @@ impl From<PythonSledMode> for SledMode {
   }
 }
 
+impl Pyi for PythonSledMode {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class SledMode:
+  @staticmethod
+  def low_space() -> SledMode:...
+  
+  @staticmethod
+  def high_throughput() -> SledMode:...
+
+  def __eq__(self, __value: SledMode) -> bool: ...
+  
+  def __ne__(self, __value: SledMode) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
+  }
+}
+
 #[pymethods]
 impl PythonSledMode {
   /// Construct the default mode [`Mode::LowSpace`].
@@ -67,18 +94,12 @@ impl PythonSledMode {
     Self::HighThroughput
   }
 
-  /// Returns the str of the mode.
   #[inline]
-  pub const fn as_str(&self) -> &'static str {
+  pub fn __str__(&self) -> &'static str {
     match self {
       Self::LowSpace => "low_space",
       Self::HighThroughput => "high_throughput",
     }
-  }
-
-  #[inline]
-  pub fn __str__(&self) -> PyResult<&'static str> {
-    Ok(self.as_str())
   }
 
   #[inline]
@@ -164,6 +185,75 @@ impl From<PythonSledOptions> for SledOptions {
 impl Default for PythonSledOptions {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+impl Pyi for PythonSledOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class SledOptions:
+  def __init__(self) -> None: ...
+
+  @property
+  def path(self) -> str:...
+  
+  @path.setter
+  def path(self, value: str) -> None:...
+  
+  @property
+  def cache_capacity(self) -> int:...
+  
+  @cache_capacity.setter
+  def cache_capacity(self, value: int) -> None:...
+  
+  @property
+  def mode(self) -> SledMode:...
+  
+  @mode.setter
+  def mode(self, value: SledMode) -> None:...
+  
+  @property
+  def use_compression(self) -> bool:...
+  
+  @use_compression.setter
+  def use_compression(self, value: bool) -> None:...
+  
+  @property
+  def compression_factor(self) -> int:...
+  
+  @compression_factor.setter
+  def compression_factor(self, value: int) -> None:...
+  
+  @property
+  def temporary(self) -> bool:...
+  
+  @temporary.setter
+  def temporary(self, value: bool) -> None:...
+  
+  @property
+  def create_new(self) -> bool:...
+  
+  @create_new.setter
+  def create_new(self, value: bool) -> None:...
+  
+  @property
+  def print_profile_on_drop(self) -> bool:...
+  
+  @print_profile_on_drop.setter
+  def print_profile_on_drop(self, value: bool) -> None:...
+
+  def __eq__(self, __value: SledOptions) -> bool: ...
+  
+  def __ne__(self, __value: SledOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
   }
 }
 

@@ -4,7 +4,7 @@ use std::{
   path::PathBuf,
 };
 
-use crate::types::Header;
+use crate::{types::Header, Pyi};
 use pyo3::{exceptions::PyTypeError, *};
 
 /// Options for the TCP transport.
@@ -17,6 +17,63 @@ pub struct PythonTcpTransportOptions(ruraft_bindings_common::transport::TcpTrans
 impl From<PythonTcpTransportOptions> for ruraft_bindings_common::transport::TcpTransportOptions {
   fn from(opts: PythonTcpTransportOptions) -> Self {
     opts.0
+  }
+}
+
+impl Pyi for PythonTcpTransportOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class TcpTransportOptions:
+  def __init__(self, header: Header, bind_addr: str) -> None: ...
+
+  @property
+  def header(self) -> Header:...
+  
+  @header.setter
+  def header(self, value: Header) -> None:...
+  
+  @property
+  def bind_addr(self) -> str:...
+  
+  @bind_addr.setter
+  def bind_addr(self, value: str) -> None:...
+  
+  @property
+  def resolv_conf(self) -> PathLike:...
+  
+  @resolv_conf.setter
+  def resolv_conf(self, value: PathLike) -> None:...
+
+  @property
+  def max_pool(self) -> int:...
+  
+  @max_pool.setter
+  def max_pool(self, value: int) -> None:...
+  
+  @property
+  def max_inflight_requests(self) -> int:...
+  
+  @max_inflight_requests.setter
+  def max_inflight_requests(self, value: int) -> None:...
+  
+  @property
+  def timeout(self) -> timedelta:...
+  
+  @timeout.setter
+  def timeout(self, value: timedelta) -> None:...
+
+  def __eq__(self, __value: TcpTransportOptions) -> bool: ...
+  
+  def __ne__(self, __value: TcpTransportOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
   }
 }
 

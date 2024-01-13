@@ -6,6 +6,8 @@ use std::{
 use pyo3::{exceptions::PyTypeError, prelude::*};
 use ruraft_bindings_common::storage::*;
 
+use crate::Pyi;
+
 /// Options used to create Db.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
@@ -29,6 +31,61 @@ impl From<PythonJammdbOptions> for JammdbOptions {
     opts.set_strict_mode(db_options.strict_mode);
     opts.set_mmap_populate(db_options.mmap_populate);
     opts
+  }
+}
+
+impl Pyi for PythonJammdbOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class JammdbOptions:
+  @property
+  def path(self) -> PathLike:...
+  
+  @path.setter
+  def path(self, value: str) -> None:...
+  
+  @property
+  def direct_writes(self) -> bool:...
+  
+  @direct_writes.setter
+  def direct_writes(self, value: bool) -> None:...
+  
+  @property
+  def strict_mode(self) -> bool:...
+  
+  @strict_mode.setter
+  def strict_mode(self, value: bool) -> None:...
+  
+  @property
+  def mmap_populate(self) -> bool:...
+  
+  @mmap_populate.setter
+  def mmap_populate(self, value: bool) -> None:...
+  
+  @property
+  def pagesize(self) -> int:...
+  
+  @pagesize.setter
+  def pagesize(self, value: int) -> None:...
+  
+  @property
+  def num_pages(self) -> int:...
+  
+  @num_pages.setter
+  def num_pages(self, value: int) -> None:...
+
+  def __eq__(self, __value: JammdbOptions) -> bool: ...
+  
+  def __ne__(self, __value: JammdbOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
   }
 }
 

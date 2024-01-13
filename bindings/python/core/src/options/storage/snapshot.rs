@@ -3,6 +3,8 @@ use std::hash::{Hash, Hasher};
 use pyo3::{exceptions::PyTypeError, types::PyModule, *};
 use ruraft_bindings_common::storage::SnapshotStorageOptions as SupportedSnapshotStorageOptions;
 
+use crate::{Pyi, register_type};
+
 /// Configurations for a `SnapshotStorage`
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[pyclass(frozen)]
@@ -13,6 +15,29 @@ pub struct SnapshotStorageOptions(SupportedSnapshotStorageOptions);
 impl From<SnapshotStorageOptions> for SupportedSnapshotStorageOptions {
   fn from(value: SnapshotStorageOptions) -> Self {
     value.0
+  }
+}
+
+impl Pyi for SnapshotStorageOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class SnapshotStorageOptions:
+  def file(opts: FileSnapshotStorageOptions) -> SnapshotStorageOptions:...
+  
+  def memory() -> SnapshotStorageOptions:...
+
+  def __eq__(self, __value: SnapshotStorageOptions) -> bool: ...
+  
+  def __ne__(self, __value: SnapshotStorageOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
   }
 }
 
@@ -92,6 +117,33 @@ impl From<FileSnapshotStorageOptions> for ruraft_snapshot::sync::FileSnapshotSto
   }
 }
 
+impl Pyi for FileSnapshotStorageOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class FileSnapshotStorageOptions:
+  def __init__(self, base: PathLike, retain: int) -> None: ...
+
+  @property
+  def base(self) -> str:...
+
+  @property
+  def retain(self) -> int:...
+
+  def __eq__(self, __value: FileSnapshotStorageOptions) -> bool: ...
+  
+  def __ne__(self, __value: FileSnapshotStorageOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
+  }
+}
+
 #[pymethods]
 impl FileSnapshotStorageOptions {
   /// Constructor a file system based snapshot storage
@@ -135,8 +187,11 @@ impl FileSnapshotStorageOptions {
   }
 }
 
-pub fn register_snapshot_storage_options(module: &PyModule) -> PyResult<()> {
-  module.add_class::<SnapshotStorageOptions>()?;
-  module.add_class::<FileSnapshotStorageOptions>()?;
-  Ok(())
+pub fn register_snapshot_storage_options(module: &PyModule) -> PyResult<String> {
+  let mut pyi = String::new();
+
+  register_type::<SnapshotStorageOptions>(&mut pyi, module)?;
+  register_type::<FileSnapshotStorageOptions>(&mut pyi, module)?;
+
+  Ok(pyi)
 }

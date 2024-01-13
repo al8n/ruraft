@@ -7,6 +7,8 @@ use std::{
 use pyo3::{exceptions::PyTypeError, prelude::*};
 use ruraft_bindings_common::storage::*;
 
+use crate::Pyi;
+
 /// Options used to create Db.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
@@ -23,6 +25,37 @@ impl From<PythonRedbOptions> for RedbOptions {
     let mut opts = RedbOptions::new(db_options.path.as_ref().clone());
     opts.set_cache_size(db_options.cache_size);
     opts
+  }
+}
+
+impl Pyi for PythonRedbOptions {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+r#"
+
+class RedbOptions:
+  @property
+  def cache_size(self) -> int:...
+  
+  @cache_size.setter
+  def cache_size(self, value: int) -> None:...
+  
+  @property
+  def path(self) -> PathLike:...
+  
+  @path.setter
+  def path(self, value: str) -> None:...
+
+  def __eq__(self, __value: RedbOptions) -> bool: ...
+  
+  def __ne__(self, __value: RedbOptions) -> bool: ...
+  
+  def __hash__(self) -> int: ...
+  
+  def __str__(self) -> str: ...
+  
+  def __repr__(self) -> str: ...
+
+"#.into()
   }
 }
 

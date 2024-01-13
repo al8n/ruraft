@@ -301,13 +301,13 @@ pub enum PrivateKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg(feature = "tls")]
-pub struct CertAndPrivateKey {
+pub struct CertChainAndPrivateKey {
   cert_chain: Vec<Array>,
   private_key: PrivateKey,
 }
 
 #[cfg(feature = "tls")]
-impl CertAndPrivateKey {
+impl CertChainAndPrivateKey {
   pub fn new(cert_chain: Vec<Array>, pk: PrivateKey) -> Self {
     Self {
       cert_chain,
@@ -340,7 +340,7 @@ pub struct TlsServerConfig {
   client_cert_verifier:
     Option<Arc<dyn ruraft_tcp::tls::rustls::server::danger::ClientCertVerifier>>,
   #[cfg_attr(feature = "serde", serde(flatten))]
-  cert_and_private_key: CertAndPrivateKey,
+  cert_and_private_key: CertChainAndPrivateKey,
   ocsp: Option<Array>,
 }
 
@@ -349,7 +349,7 @@ impl TlsServerConfig {
   pub fn new(cert_chain: Vec<Array>, pk: PrivateKey) -> Self {
     Self {
       client_cert_verifier: None,
-      cert_and_private_key: CertAndPrivateKey {
+      cert_and_private_key: CertChainAndPrivateKey {
         cert_chain,
         private_key: pk,
       },
@@ -375,13 +375,13 @@ impl TlsServerConfig {
     cert_chain: Vec<Array>,
     private_key: PrivateKey,
   ) {
-    self.cert_and_private_key = CertAndPrivateKey {
+    self.cert_and_private_key = CertChainAndPrivateKey {
       cert_chain,
       private_key,
     };
   }
 
-  pub fn cert_and_private_key(&self) -> &CertAndPrivateKey {
+  pub fn cert_and_private_key(&self) -> &CertChainAndPrivateKey {
     &self.cert_and_private_key
   }
 
@@ -444,7 +444,7 @@ pub struct TlsClientConfig {
   server_cert_verifier:
     Option<Arc<dyn ruraft_tcp::tls::rustls::client::danger::ServerCertVerifier>>,
   #[cfg_attr(feature = "serde", serde(flatten))]
-  cert_and_private_key: Option<CertAndPrivateKey>,
+  cert_and_private_key: Option<CertChainAndPrivateKey>,
   root_certs: Option<Vec<Array>>,
 }
 
@@ -479,13 +479,13 @@ impl TlsClientConfig {
   }
 
   pub fn set_cert_chain_and_private_key(&mut self, cert_chain: Vec<Array>, pk: PrivateKey) {
-    self.cert_and_private_key = Some(CertAndPrivateKey {
+    self.cert_and_private_key = Some(CertChainAndPrivateKey {
       cert_chain,
       private_key: pk,
     });
   }
 
-  pub fn cert_chain_and_private_key(&self) -> Option<&CertAndPrivateKey> {
+  pub fn cert_chain_and_private_key(&self) -> Option<&CertChainAndPrivateKey> {
     self.cert_and_private_key.as_ref()
   }
 
@@ -639,7 +639,7 @@ impl TlsTransportOptions {
       .set_cert_chain_and_private_key(cert_chain, pk);
   }
 
-  pub fn tls_server_cert_chain_and_private_key(&self) -> &CertAndPrivateKey {
+  pub fn tls_server_cert_chain_and_private_key(&self) -> &CertChainAndPrivateKey {
     self.server_config.cert_and_private_key()
   }
 
@@ -674,7 +674,7 @@ impl TlsTransportOptions {
       .set_cert_chain_and_private_key(cert_chain, pk);
   }
 
-  pub fn tls_client_cert_chain_and_private_key(&self) -> Option<&CertAndPrivateKey> {
+  pub fn tls_client_cert_chain_and_private_key(&self) -> Option<&CertChainAndPrivateKey> {
     self.client_config.cert_chain_and_private_key()
   }
 

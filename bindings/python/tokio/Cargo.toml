@@ -14,3 +14,7 @@ chrono = "0.4"
 pyo3 = "0.20"
 ruraft-python = { path = "../core", features = ["tokio"] }
 smallvec.workspace = true
+
+cargo-manifest = "0.13"
+heck = "0.4"
+
