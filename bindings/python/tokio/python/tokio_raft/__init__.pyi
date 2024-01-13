@@ -1,3 +1,5 @@
+
+
 from typing import AsyncIterable, Optional
 from datetime import timedelta
 from .types import *
@@ -5,6 +7,71 @@ from .fsm import *
 from .membership import *
 from .options import *
 
+                    
+
+class ApplyFuture:
+  async def wait(self) -> FinateStateMachineResponse: ...
+
+
+
+class BarrierFuture:
+  async def wait(self) -> FinateStateMachineResponse: ...
+
+
+
+class MembershipChangeFuture:
+  async def wait(self) -> FinateStateMachineResponse: ...
+
+
+
+class VerifyFuture:
+  async def wait(self) -> None: ...
+
+
+
+class LeadershipTransferFuture:
+  async def wait(self) -> None: ...
+
+
+
+class SnapshotFuture:
+  async def wait(self) -> SnapshotSource: ...
+
+
+    
+class SnapshotSource:
+  async def open(self) -> Snapshot: ...
+
+          
+
+class AsyncReader(AsyncRead):
+  def memory(self, src: bytes) -> AsyncReader: ...
+
+  def file(self, path: str) -> AsyncReader: ...
+
+  def __aenter__(self) -> AsyncReader: ...
+
+  def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
+
+      
+
+class SnapshotSink(AsyncWrite):
+  def id(self) -> SnapshotId: ...
+
+  async def cancel(self) -> None: ...
+
+  def __aenter__(self) -> SnapshotSink: ...
+
+  def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
+
+      
+
+class Snapshot(AsyncRead):
+  def __aenter__(self) -> Snapshot: ...
+
+  def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
+
+      
 
 class Raft:
   async def new(fsm: fsm.FinateStateMachine, options: Options) -> Raft: ...
@@ -23,7 +90,7 @@ class Raft:
   
   def current_term(self) -> int: ...
   
-  def latest_membership(self) -> LastMembership: ...
+  def latest_membership(self) -> LatestMembership: ...
   
   def last_contact(self) -> Optional[timedelta]: ...
   
@@ -82,3 +149,4 @@ class Raft:
   async def stats(self) -> RaftStats:...
 
   async def shutdown(self) -> bool :...
+

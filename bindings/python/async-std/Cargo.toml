@@ -10,7 +10,10 @@ name = "async_std_raft"
 crate-type = ["cdylib"]
 
 [dependencies]
-chrono = "0.4"
 pyo3 = "0.20"
 ruraft-python = { path = "../core", features = ["async-std"] }
-smallvec.workspace = true
+
+[build-dependencies]
+cargo-manifest = "0.13"
+heck = "0.4"
+ruraft-python = { path = "../core", features = ["async-std"] }

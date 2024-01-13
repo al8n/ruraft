@@ -3,7 +3,7 @@ use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 use agnostic::Runtime;
 use futures::AsyncRead;
 use nodecraft::{NodeAddress, NodeId};
-use pyo3::{exceptions::PyIOError, prelude::*, types::PyString};
+use pyo3::{exceptions::PyIOError, prelude::*};
 use ruraft_bindings_common::storage::SupportedSnapshot;
 use ruraft_core::{
   storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
@@ -13,7 +13,7 @@ use ruraft_core::{
 };
 use smallvec::SmallVec;
 
-use crate::{types::ApplyBatchResponse, FromPython, IntoPython, IntoSupportedRuntime, RaftData};
+use crate::{FromPython, IntoPython, IntoSupportedRuntime, RaftData};
 
 #[derive(Clone)]
 #[pyclass]
@@ -111,7 +111,7 @@ where
   type Runtime = R;
 
   async fn persist(&self, sink: impl SnapshotSink + 'static) -> Result<(), Self::Error> {
-    let id: crate::types::SnapshotId = sink.id().into();
+    let id: crate::storage::SnapshotId = sink.id().into();
     let snap = R::SnapshotSink::from(ruraft_bindings_common::storage::SupportedSnapshotSink::new(
       sink,
     ));
@@ -218,24 +218,6 @@ impl<R> From<PyErr> for FinateStateMachineError<R> {
   }
 }
 
-impl<R> FinateStateMachineError<R> {
-  fn snapshot(err: FinateStateMachineSnapshotError) -> PyResult<Self> {
-    Ok(Self {
-      kind: FinateStateMachineErrorKind::Snapshot(err),
-      msg: smallvec::SmallVec::new(),
-      _marker: PhantomData,
-    })
-  }
-
-  fn messages(&self) -> smallvec::SmallVec<[Cow<'static, str>; 4]> {
-    self.msg.clone()
-  }
-
-  fn with_message(&mut self, msg: &PyString) -> PyResult<()> {
-    msg.extract::<String>().map(|s| self.msg.push(s.into()))
-  }
-}
-
 pub struct FinateStateMachine<R> {
   fsm: Arc<Py<PyAny>>,
   _marker: PhantomData<R>,
@@ -319,7 +301,16 @@ where
       )
     })?
     .await
-    .and_then(|res| Python::with_gil(|py| res.extract::<ApplyBatchResponse>(py)))
+    .and_then(|res| {
+      Python::with_gil(|py| {
+        let list = res.extract::<Vec<Py<PyAny>>>(py)?;
+        let mut resps = ruraft_core::ApplyBatchResponse::new();
+        for val in list {
+          resps.push(FinateStateMachineResponse::new(val));
+        }
+        Ok(resps)
+      })
+    })
     .map(Into::into)
     .map_err(Into::into)
   }
@@ -457,12 +448,12 @@ macro_rules! wrap_fsm_snapshot {
 }
 
 pub fn pyi() -> &'static str {
-
-r#"
+  r#"
 
 from abc import ABC, abstractmethod
 from typing import List
-from .types import *
+from .snapshot import *
+from .types import CommittedLog
 
 class FinateStateMachineResponse(ABC):
   @abstractmethod
@@ -492,11 +483,12 @@ class FinateStateMachine(ABC):
 }
 
 pub fn py() -> &'static str {
-r#"
+  r#"
 
 from abc import ABC, abstractmethod
 from typing import List
-from .types import *
+from .snapshot import *
+from .types import CommittedLog
 
 class FinateStateMachineResponse(ABC):
   """

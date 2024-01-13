@@ -20,7 +20,7 @@ macro_rules! leadership_watcher {
         #[pymethods]
         impl [< $rt:camel LeadershipWatcher >] {
           pub fn next<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a PyAny> {
-            let mut this = self.0.clone();
+            let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               futures::pin_mut!(this);
               Ok(this.next().await)
@@ -51,7 +51,7 @@ macro_rules! leadership_watcher {
 
 #[macro_export]
 macro_rules! wrap_fut {
-  ($rt:literal::$ty:literal) => {
+  ($rt:literal::$ty:literal -> $ret:literal) => {
     paste::paste! {
       #[cfg(feature = $rt)]
       #[::pyo3::pyclass(name = $ty)]
@@ -61,6 +61,18 @@ macro_rules! wrap_fut {
       impl From<ruraft_core::[< $ty >] <$crate::fsm::FinateStateMachine<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftStorage<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftTransport<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime > ]>>> for [< $rt:camel $ty >] {
         fn from(val: ruraft_core::[< $ty >] <$crate::fsm::FinateStateMachine<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftStorage<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]>, $crate::RaftTransport<::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime > ]>>) -> Self {
           Self([< $ty >](Some(val)))
+        }
+      }
+
+      #[cfg(feature = $rt)]
+      impl $crate::Pyi for  [< $rt:camel $ty >] {
+        fn pyi() -> std::borrow::Cow<'static, str> {
+          format!(r#"
+
+class {}:
+  async def wait(self) -> {}: ...
+
+"#, $ty, $ret).into()
         }
       }
 
@@ -79,7 +91,7 @@ macro_rules! wrap_fut {
 
 #[macro_export]
 macro_rules! state_machine_futs {
-  ($($ty:literal), +$(,)?) => {
+  ($($ty:literal -> $ret:literal), +$(,)?) => {
     $(
       paste::paste! {
         pub struct [< $ty >]<R>(Option<ruraft_core::[< $ty >] <$crate::fsm::FinateStateMachine<R>, $crate::RaftStorage<R>, $crate::RaftTransport<R>>>)
@@ -111,8 +123,8 @@ macro_rules! state_machine_futs {
         }
       }
 
-      wrap_fut!("tokio" :: $ty);
-      wrap_fut!("async-std" :: $ty);
+      wrap_fut!("tokio" :: $ty -> $ret);
+      wrap_fut!("async-std" :: $ty -> $ret);
     )*
   };
 }
@@ -162,15 +174,15 @@ where
   }
 }
 
-wrap_fut!("tokio" :: "SnapshotFuture");
-wrap_fut!("async-std" :: "SnapshotFuture");
+wrap_fut!("tokio" :: "SnapshotFuture" -> "SnapshotSource");
+wrap_fut!("async-std" :: "SnapshotFuture" -> "SnapshotSource");
 
 state_machine_futs!(
-  "ApplyFuture",
-  "BarrierFuture",
-  "MembershipChangeFuture",
-  "VerifyFuture",
-  "LeadershipTransferFuture",
+  "ApplyFuture" -> "FinateStateMachineResponse",
+  "BarrierFuture" -> "FinateStateMachineResponse",
+  "MembershipChangeFuture" -> "FinateStateMachineResponse",
+  "VerifyFuture" -> "None",
+  "LeadershipTransferFuture" -> "None",
 );
 
 leadership_watcher!("tokio", "async-std");

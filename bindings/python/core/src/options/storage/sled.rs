@@ -43,7 +43,7 @@ impl From<PythonSledMode> for SledMode {
 
 impl Pyi for PythonSledMode {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class SledMode:
   @staticmethod
@@ -62,7 +62,8 @@ class SledMode:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -190,7 +191,7 @@ impl Default for PythonSledOptions {
 
 impl Pyi for PythonSledOptions {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class SledOptions:
   def __init__(self) -> None: ...
@@ -253,7 +254,8 @@ class SledOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 

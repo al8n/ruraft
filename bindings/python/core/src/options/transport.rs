@@ -1,4 +1,4 @@
-use pyo3::{types::PyModule, *, exceptions::PyTypeError};
+use pyo3::{exceptions::PyTypeError, types::PyModule, *};
 
 mod tcp;
 pub use tcp::*;
@@ -13,7 +13,7 @@ mod native_tls;
 #[cfg(feature = "native-tls")]
 pub use native_tls::*;
 
-use crate::{Pyi, register_type};
+use crate::Pyi;
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
@@ -32,24 +32,27 @@ impl Pyi for PythonTransportOptions {
     let mut content = String::new();
 
     #[cfg(feature = "native-tls")]
-    content.push_str(r#"
+    content.push_str(
+      r#"
   
   @staticmethod
   def native_tls(opts: NativeTlsTransportOptions) -> TransportOptions:...
   
-    "#);
+    "#,
+    );
 
     #[cfg(feature = "tls")]
-    content.push_str(r#"
+    content.push_str(
+      r#"
   
   @staticmethod
   def tls(opts: TlsTransportOptions) -> TransportOptions:...
 
-    "#);
+    "#,
+    );
     #[cfg(feature = "native-tls")]
-
     format!(
-r#"
+      r#"
   
 class TransportOptions:
   @staticmethod
@@ -62,10 +65,10 @@ class TransportOptions:
   def __repr__(self) -> str:...
 
 "#
-    ).into()
+    )
+    .into()
   }
 }
-
 
 #[pymethods]
 impl PythonTransportOptions {
@@ -99,13 +102,24 @@ impl PythonTransportOptions {
   }
 }
 
-pub fn register_transport_options(module: &PyModule) -> PyResult<String> {
-  let mut pyi = String::new();
-  register_type::<PythonTransportOptions>(&mut pyi, module)?;
-  register_type::<PythonTcpTransportOptions>(&mut pyi, module)?;
+pub fn register_transport_options(module: &PyModule) -> PyResult<()> {
+  module.add_class::<PythonTransportOptions>()?;
+  module.add_class::<PythonTcpTransportOptions>()?;
   #[cfg(feature = "native-tls")]
-  pyi.push_str(&register_native_tls_transport_options(module)?);
+  register_native_tls_transport_options(module)?;
+  
   #[cfg(feature = "tls")]
-  pyi.push_str(&register_tls_transport_options(module)?);
-  Ok(pyi)
+  register_tls_transport_options(module)?;
+  Ok(())
+}
+
+pub fn transport_pyi() -> String {
+  let mut pyi = String::new();
+  pyi.push_str(&PythonTransportOptions::pyi());
+  pyi.push_str(&PythonTcpTransportOptions::pyi());
+  #[cfg(feature = "native-tls")]
+  pyi.push_str(&native_tls::native_tls_transport_pyi());
+  #[cfg(feature = "tls")]
+  pyi.push_str(&tls::tls_transport_pyi());
+  pyi
 }

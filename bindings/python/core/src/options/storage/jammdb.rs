@@ -36,7 +36,7 @@ impl From<PythonJammdbOptions> for JammdbOptions {
 
 impl Pyi for PythonJammdbOptions {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class JammdbOptions:
   @property
@@ -85,7 +85,8 @@ class JammdbOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 

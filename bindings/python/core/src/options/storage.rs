@@ -19,7 +19,7 @@ pub use jammdb::*;
 mod snapshot;
 pub use snapshot::*;
 
-use crate::{Pyi, register_type};
+use crate::Pyi;
 
 #[pyclass]
 #[derive(Clone, Debug, derive_more::From, PartialEq, Eq, Hash)]
@@ -38,31 +38,37 @@ impl Pyi for LightWALOptions {
     let mut content = String::new();
 
     #[cfg(feature = "sled")]
-    content.push_str(r#"
+    content.push_str(
+      r#"
 
   @staticmethod
   def sled(opts: SledOptions) -> LightWALOptions:...
 
-    "#);
+    "#,
+    );
 
     #[cfg(feature = "redb")]
-    content.push_str(r#"
+    content.push_str(
+      r#"
 
   @staticmethod
   def redb(opts: RedbOptions) -> LightWALOptions:...
 
-    "#);
+    "#,
+    );
 
     #[cfg(feature = "jammdb")]
-    content.push_str(r#"
+    content.push_str(
+      r#"
   
   @staticmethod
   def jammdb(opts: JammdbOptions) -> LightWALOptions:...
 
-    "#);
+    "#,
+    );
 
     format!(
-r#"
+      r#"
 
 class LighWALOptions:
   {content}
@@ -78,7 +84,8 @@ class LighWALOptions:
   def __repr__(self) -> str: ...
 
 "#
-    ).into()
+    )
+    .into()
   }
 }
 
@@ -146,15 +153,17 @@ impl Pyi for StorageOptions {
     let mut content = String::new();
 
     #[cfg(any(feature = "redb", feature = "sled", feature = "jammdb"))]
-    content.push_str(r#"
+    content.push_str(
+      r#"
 
   @staticmethod
   def light(snapshot: SnapshotStorageOptions, wal: LighWALOptions) -> StorageOptions:...
 
-    "#);
+    "#,
+    );
 
     format!(
-r#"
+      r#"
 
 class StorageOptions:
   {content}
@@ -172,8 +181,9 @@ class StorageOptions:
   
   def __repr__(self) -> str: ...
 
-"#    
-    ).into()
+"#
+    )
+    .into()
   }
 }
 
@@ -191,10 +201,12 @@ impl StorageOptions {
   /// This is useful for testing and do not use it in production.
   #[staticmethod]
   pub fn memory() -> Self {
-    Self(ruraft_bindings_common::storage::SupportedStorageOptions::new(
-      ruraft_bindings_common::storage::SnapshotStorageOptions::Memory,
-      ruraft_bindings_common::storage::BackendOptions::Memory,
-    ))
+    Self(
+      ruraft_bindings_common::storage::SupportedStorageOptions::new(
+        ruraft_bindings_common::storage::SnapshotStorageOptions::Memory,
+        ruraft_bindings_common::storage::BackendOptions::Memory,
+      ),
+    )
   }
 
   fn __str__(&self) -> PyResult<String> {
@@ -224,23 +236,45 @@ impl StorageOptions {
   }
 }
 
-pub fn register_storage_options(module: &PyModule) -> PyResult<String> {
-  let mut pyi = String::new();
-  register_type::<LightWALOptions>(&mut pyi, module)?;
-  register_type::<StorageOptions>(&mut pyi, module)?;
+pub fn register_storage_options(module: &PyModule) -> PyResult<()> {
+  module.add_class::<LightWALOptions>()?;
+  module.add_class::<StorageOptions>()?;
 
   #[cfg(feature = "sled")]
   {
-    register_type::<PythonSledMode>(&mut pyi, module)?;
-    register_type::<PythonSledOptions>(&mut pyi, module)?;
+    module.add_class::<PythonSledMode>()?;
+    module.add_class::<PythonSledOptions>()?;
   }
 
   #[cfg(feature = "redb")]
-  register_type::<PythonRedbOptions>(&mut pyi, module)?;
+  module.add_class::<PythonRedbOptions>()?;
 
   #[cfg(feature = "jammdb")]
-  register_type::<PythonJammdbOptions>(&mut pyi, module)?;
+  module.add_class::<PythonJammdbOptions>()?;
 
-  pyi.push_str(&register_snapshot_storage_options(module)?);
-  Ok(pyi)
+  register_snapshot_storage_options(module)?;
+  Ok(())
+}
+
+pub fn storage_pyi() -> String {
+  let mut pyi = String::new();
+
+  #[cfg(feature = "sled")]
+  {
+    pyi.push_str(&PythonSledMode::pyi());
+    pyi.push_str(&PythonSledOptions::pyi());
+  }
+
+  #[cfg(feature = "redb")]
+  pyi.push_str(&PythonRedbOptions::pyi());
+
+  #[cfg(feature = "jammdb")]
+  pyi.push_str(&PythonJammdbOptions::pyi());
+
+  pyi.push_str(&snapshot_storage_pyi());
+
+  pyi.push_str(&LightWALOptions::pyi());
+  pyi.push_str(&StorageOptions::pyi());
+
+  pyi
 }

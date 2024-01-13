@@ -1,4 +1,4 @@
-use crate::{Pyi, register_type};
+use crate::Pyi;
 
 use super::*;
 
@@ -38,7 +38,7 @@ impl From<ServerSuffrage> for RServerSuffrage {
 
 impl Pyi for ServerSuffrage {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class ServerSuffrage:
   def voter(self) -> ServerSuffrage: ...
@@ -61,7 +61,8 @@ class ServerSuffrage:
 
   def __int__(self) -> int: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -146,7 +147,7 @@ impl From<Server> for RServer<RNodeId, RNodeAddress> {
 
 impl Pyi for Server {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class Server:
   def __init__(self, id: NodeId, address: NodeAddress, suffrage: ServerSuffrage) -> None: ...
@@ -179,7 +180,8 @@ class Server:
 
   def __hash__(self) -> int: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -262,7 +264,7 @@ pub struct MembershipBuilder(RMembershipBuilder<RNodeId, RNodeAddress>);
 
 impl Pyi for MembershipBuilder {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class MembershipBuilder:
   def __init__(self) -> None: ...
@@ -287,7 +289,8 @@ class MembershipBuilder:
   
   def build(self) -> Membership: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -393,7 +396,7 @@ impl From<RMembership<RNodeId, RNodeAddress>> for Membership {
 
 impl Pyi for Membership {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class Membership:
   def is_empty(self) -> bool: ...
@@ -422,7 +425,8 @@ class Membership:
 
   def __ne__(self, other: Membership) -> bool: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -535,7 +539,7 @@ impl From<ruraft_core::LatestMembership<RNodeId, RNodeAddress>> for LatestMember
 
 impl Pyi for LatestMembership {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class LatestMembership:
   def index(self) -> int: ...
@@ -548,7 +552,8 @@ class LatestMembership:
 
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -591,18 +596,31 @@ impl LatestMembership {
   }
 }
 
-pub fn register<'a>(py: Python<'a>) -> PyResult<(String, &'a PyModule)> {
+pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
   let subm = PyModule::new(py, "membership")?;
-  let mut pyi = format!(r#"
+
+
+  subm.add_class::<ServerSuffrage>()?;
+  subm.add_class::<Server>()?;
+  subm.add_class::<MembershipBuilder>()?;
+  subm.add_class::<Membership>()?;
+  subm.add_class::<LatestMembership>()?;
+  Ok(subm)
+}
+
+
+pub fn pyi() -> String {
+  let mut pyi = r#"
 
 from typing import List
 from .types import NodeId, NodeAddress
 
-  "#);
-  register_type::<ServerSuffrage>(&mut pyi, subm)?;
-  register_type::<Server>(&mut pyi, subm)?;
-  register_type::<MembershipBuilder>(&mut pyi, subm)?;
-  register_type::<Membership>(&mut pyi, subm)?;
-  register_type::<LatestMembership>(&mut pyi, subm)?;
-  Ok((pyi, subm))
+  "#.to_string();
+
+  pyi.push_str(&ServerSuffrage::pyi());
+  pyi.push_str(&Server::pyi());
+  pyi.push_str(&MembershipBuilder::pyi());
+  pyi.push_str(&Membership::pyi());
+  pyi.push_str(&LatestMembership::pyi());
+  pyi
 }

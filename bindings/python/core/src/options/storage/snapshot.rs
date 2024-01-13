@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use pyo3::{exceptions::PyTypeError, types::PyModule, *};
 use ruraft_bindings_common::storage::SnapshotStorageOptions as SupportedSnapshotStorageOptions;
 
-use crate::{Pyi, register_type};
+use crate::Pyi;
 
 /// Configurations for a `SnapshotStorage`
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -20,7 +20,7 @@ impl From<SnapshotStorageOptions> for SupportedSnapshotStorageOptions {
 
 impl Pyi for SnapshotStorageOptions {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class SnapshotStorageOptions:
   def file(opts: FileSnapshotStorageOptions) -> SnapshotStorageOptions:...
@@ -37,7 +37,8 @@ class SnapshotStorageOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -119,7 +120,7 @@ impl From<FileSnapshotStorageOptions> for ruraft_snapshot::sync::FileSnapshotSto
 
 impl Pyi for FileSnapshotStorageOptions {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class FileSnapshotStorageOptions:
   def __init__(self, base: PathLike, retain: int) -> None: ...
@@ -140,7 +141,8 @@ class FileSnapshotStorageOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -187,11 +189,16 @@ impl FileSnapshotStorageOptions {
   }
 }
 
-pub fn register_snapshot_storage_options(module: &PyModule) -> PyResult<String> {
+pub fn register_snapshot_storage_options(module: &PyModule) -> PyResult<()> {
+  module.add_class::<SnapshotStorageOptions>()?;
+  module.add_class::<FileSnapshotStorageOptions>()?;
+
+  Ok(())
+}
+
+pub fn snapshot_storage_pyi() -> String {
   let mut pyi = String::new();
-
-  register_type::<SnapshotStorageOptions>(&mut pyi, module)?;
-  register_type::<FileSnapshotStorageOptions>(&mut pyi, module)?;
-
-  Ok(pyi)
+  pyi.push_str(&SnapshotStorageOptions::pyi());
+  pyi.push_str(&FileSnapshotStorageOptions::pyi());
+  pyi
 }

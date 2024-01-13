@@ -12,7 +12,7 @@ use pyo3::{
 };
 use ruraft_bindings_common::transport::Array;
 
-use crate::{options::PythonTcpTransportOptions, register_type, types::Header, Pyi};
+use crate::{options::PythonTcpTransportOptions, types::Header, Pyi};
 
 /// Private key used for TLS.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, derive_more::From)]
@@ -51,7 +51,8 @@ class PrivateKey:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -151,7 +152,8 @@ class CertChain:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -309,7 +311,8 @@ class CertChainAndPrivateKey:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -482,7 +485,8 @@ class TlsServerConfig:
   
   def __repr__(self) -> str:...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -522,7 +526,8 @@ class TlsClientConfig:
   
   def __repr__(self) -> str:...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -797,13 +802,25 @@ impl PythonTlsTransportOptions {
   }
 }
 
-pub fn register_tls_transport_options(module: &PyModule) -> PyResult<String> {
+pub fn register_tls_transport_options(module: &PyModule) -> PyResult<()> {
+  module.add_class::<PythonPrivateKey>()?;
+  module.add_class::<PythonCertChain>()?;
+  module.add_class::<PythonCertChainAndPrivateKey>()?;
+  module.add_class::<PythonTlsServerConfig>()?;
+  module.add_class::<PythonTlsClientConfig>()?;
+  module.add_class::<PythonTlsTransportOptions>()?;
+  Ok(())
+}
+
+pub fn tls_transport_pyi() -> String {
   let mut pyi = String::new();
-  register_type::<PythonPrivateKey>(&mut pyi, module)?;
-  register_type::<PythonCertChain>(&mut pyi, module)?;
-  register_type::<PythonCertChainAndPrivateKey>(&mut pyi, module)?;
-  register_type::<PythonTlsServerConfig>(&mut pyi, module)?;
-  register_type::<PythonTlsClientConfig>(&mut pyi, module)?;
-  register_type::<PythonTlsTransportOptions>(&mut pyi, module)?;
-  Ok(pyi)
+
+  pyi.push_str(&PythonPrivateKey::pyi());
+  pyi.push_str(&PythonCertChain::pyi());
+  pyi.push_str(&PythonCertChainAndPrivateKey::pyi());
+  pyi.push_str(&PythonTlsServerConfig::pyi());
+  pyi.push_str(&PythonTlsClientConfig::pyi());
+  pyi.push_str(&PythonTlsTransportOptions::pyi());
+
+  pyi
 }

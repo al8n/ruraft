@@ -30,7 +30,7 @@ impl From<ruraft_core::options::Options> for Options {
 
 impl Pyi for Options {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class Options:
   @property
@@ -109,7 +109,8 @@ class Options:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -378,7 +379,7 @@ impl From<ruraft_core::options::ReloadableOptions> for ReloadableOptions {
 
 impl Pyi for ReloadableOptions {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class ReloadableOptions:
   @property
@@ -421,7 +422,8 @@ class ReloadableOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -571,7 +573,7 @@ impl From<SnapshotVersion> for ruraft_core::options::SnapshotVersion {
 
 impl Pyi for SnapshotVersion {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class SnapshotVersion:
   def v1() -> SnapshotVersion:...
@@ -588,7 +590,8 @@ class SnapshotVersion:
 
   def __int__(self) -> int: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -666,7 +669,7 @@ impl From<ProtocolVersion> for ruraft_core::options::ProtocolVersion {
 
 impl Pyi for ProtocolVersion {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class ProtocolVersion:
   def v1() -> ProtocolVersion:...
@@ -683,7 +686,8 @@ class ProtocolVersion:
 
   def __int__(self) -> int: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -741,21 +745,35 @@ pub enum SupportedSnapshotStorageOptions {
   Memory,
 }
 
-pub fn register<'a>(py: Python<'a>) -> PyResult<(String, &'a PyModule)> {
-  let mut pyi = format!(r#"
+pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
+
+
+  let submodule = PyModule::new(py, "options")?;
+  submodule.add_class::<Options>()?;
+  submodule.add_class::<ReloadableOptions>()?;
+  submodule.add_class::<SnapshotVersion>()?;
+  submodule.add_class::<ProtocolVersion>()?;
+  register_storage_options(submodule)?;
+  register_transport_options(submodule)?;
+  Ok(submodule)
+}
+
+pub fn pyi() -> String {
+  let mut pyi = r#"
 
 from datetime import timedelta
 from os import PathLike
 from .types import Header
 from typing import Optional
 
-  "#);
-  let submodule = PyModule::new(py, "options")?;
-  register_type::<Options>(&mut pyi, submodule)?;
-  register_type::<ReloadableOptions>(&mut pyi, submodule)?;
-  register_type::<SnapshotVersion>(&mut pyi, submodule)?;
-  register_type::<ProtocolVersion>(&mut pyi, submodule)?;
-  pyi.push_str(&register_storage_options(submodule)?);
-  pyi.push_str(&register_transport_options(submodule)?);
-  Ok((pyi, submodule))
+  "#.to_string();
+
+  pyi.push_str(&Options::pyi());
+  pyi.push_str(&ReloadableOptions::pyi());
+  pyi.push_str(&SnapshotVersion::pyi());
+  pyi.push_str(&ProtocolVersion::pyi());
+
+
+
+  pyi
 }

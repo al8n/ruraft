@@ -30,7 +30,7 @@ impl From<PythonRedbOptions> for RedbOptions {
 
 impl Pyi for PythonRedbOptions {
   fn pyi() -> std::borrow::Cow<'static, str> {
-r#"
+    r#"
 
 class RedbOptions:
   @property
@@ -55,7 +55,8 @@ class RedbOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 

@@ -5,12 +5,7 @@ use std::{
 
 use ::either::Either;
 use nodecraft::{NodeAddress as RNodeAddress, NodeId as RNodeId, Transformable};
-use pyo3::{
-  exceptions::{PyIndexError, PyTypeError},
-  pyclass::CompareOp,
-  types::PyModule,
-  *,
-};
+use pyo3::{exceptions::PyTypeError, pyclass::CompareOp, types::PyModule, *};
 use ruraft_core::{
   membership::{
     Membership as RMembership, MembershipBuilder as RMembershipBuilder, Server as RServer,
@@ -21,16 +16,10 @@ use ruraft_core::{
   Node as RNode,
 };
 
-use crate::{fsm::FinateStateMachineResponse, options::*, RaftData};
-
-pub mod futs;
-pub use futs::*;
+use crate::{options::*, Pyi, RaftData};
 
 pub mod membership;
 pub use membership::*;
-
-pub mod io;
-pub use io::*;
 
 /// A unique string identifying a server for all time. The maximum length of an id is 512 bytes.
 #[pyclass(frozen)]
@@ -45,6 +34,30 @@ impl From<NodeId> for RNodeId {
   }
 }
 
+impl Pyi for NodeId {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class NodeId:
+  def __init__(self, src: str) -> None: ...
+
+  def to_bytes(self) -> bytes: ...
+  
+  def from_bytes(src: bytes) -> NodeId: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __hash__(self) -> int: ...
+
+  def __richcmp__(self, other: NodeId, op) -> bool: ...
+
+"#
+    .into()
+  }
+}
+
 #[pymethods]
 impl NodeId {
   /// Construct a new [`NodeId`] from a string.
@@ -53,11 +66,6 @@ impl NodeId {
     Ok(NodeId(RNodeId::new(id).map_err(|e| {
       PyErr::new::<PyTypeError, _>(format!("{}", e))
     })?))
-  }
-
-  /// Deep copy of the [`NodeId`].
-  pub fn clone(&self) -> Self {
-    Self(self.0.clone())
   }
 
   /// Encode the [`NodeId`] into bytes.
@@ -123,6 +131,34 @@ impl From<RNodeAddress> for NodeAddress {
   }
 }
 
+impl Pyi for NodeAddress {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class NodeAddress:
+
+  def __init__(self, src: str) -> None: ...
+
+  def to_bytes(self) -> bytes: ...
+
+  def from_bytes(src: bytes) -> NodeAddress: ...
+
+  @property
+  def port(self) -> int: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __hash__(self) -> int: ...
+
+  def __richcmp__(self, other: NodeAddress, op) -> bool: ...
+
+"#
+    .into()
+  }
+}
+
 #[pymethods]
 impl NodeAddress {
   /// Construct a new [`NodeId`] from a string.
@@ -185,6 +221,7 @@ impl NodeAddress {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[pyclass(frozen)]
+#[repr(u8)]
 pub enum Role {
   /// The initial state of a Raft node.
   Follower,
@@ -215,6 +252,42 @@ impl From<ruraft_core::Role> for Role {
       ruraft_core::Role::Leader => Self::Leader,
       ruraft_core::Role::Shutdown => Self::Shutdown,
     }
+  }
+}
+
+impl Pyi for Role {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class Role:
+  def __init__(self) -> None: ...
+
+  def follower() -> Role: ...
+  
+  def candidate() -> Role: ...
+  
+  def leader() -> Role: ...
+  
+  def is_leader(self) -> bool: ...
+  
+  def is_follower(self) -> bool: ...
+  
+  def is_candidate(self) -> bool: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __eq__(self, other: Role) -> bool: ...
+
+  def __ne__(self, other: Role) -> bool: ...
+
+  def __hash__(self) -> int: ...
+
+  def __int__(self) -> int: ...
+
+"#
+    .into()
   }
 }
 
@@ -286,6 +359,10 @@ impl Role {
     self.hash(&mut hasher);
     hasher.finish()
   }
+
+  fn __int__(&self) -> u8 {
+    *self as u8
+  }
 }
 /// An identifier of Raft node in the cluster.
 #[pyclass]
@@ -303,6 +380,38 @@ impl From<Node> for RNode<RNodeId, RNodeAddress> {
 impl From<RNode<RNodeId, RNodeAddress>> for Node {
   fn from(n: RNode<RNodeId, RNodeAddress>) -> Self {
     Self(n)
+  }
+}
+
+impl Pyi for Node {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class Node:
+  def __init__(self, id: NodeId, address: Node) -> None: ...
+
+  @property
+  def id(self) -> NodeId: ...
+  
+  @id.setter
+  def id(self, value: NodeId) -> None : ...
+  
+  @property
+  def address(self) -> NodeAddress: ...
+  
+  @address.setter
+  def address(self, value: NodeAddress) -> None : ... 
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __hash__(self) -> int: ...
+
+  def __richcmp__(self, other: Node, op) -> bool: ...
+
+"#
+    .into()
   }
 }
 
@@ -380,6 +489,46 @@ impl From<Header> for RHeader<RNodeId, RNodeAddress> {
 impl From<RHeader<RNodeId, RNodeAddress>> for Header {
   fn from(n: RHeader<RNodeId, RNodeAddress>) -> Self {
     Self(n)
+  }
+}
+
+impl Pyi for Header {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class Header:
+  def __init__(self, protocol_version: ProtocolVersion, id: NodeId, addr: NodeAddress) -> None: ...
+
+  @property
+  def id(self) -> NodeId: ...
+  
+  @id.setter
+  def id(self, value: NodeId) -> None : ...
+  
+  @property
+  def address(self) -> NodeAddress: ...
+  
+  @address.setter
+  def address(self, value: NodeAddress) -> None : ...
+  
+  @property
+  def protocol_version(self) -> ProtocolVersion: ...
+  
+  @protocol_version.setter
+  def protocol_version(self, value: ProtocolVersion) -> None : ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __hash__(self) -> int: ...
+
+  def __eq__(self, other: Header) -> bool: ...
+
+  def __ne__(self, other: Header) -> bool: ...
+
+"#
+    .into()
   }
 }
 
@@ -469,6 +618,30 @@ impl From<RCommittedLog<RNodeId, RNodeAddress, RaftData>> for CommittedLog {
   }
 }
 
+impl Pyi for CommittedLog {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class CommittedLog:
+  @property
+  def index(self) -> int: ...
+
+  @property
+  def term(self) -> int: ...
+
+  def data(self) -> Union[bytes, Membership]: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ... 
+
+  def __richcmp__(self, other: CommittedLog, op) -> bool: ...
+
+"#
+    .into()
+  }
+}
+
 #[pymethods]
 impl CommittedLog {
   #[getter]
@@ -510,43 +683,6 @@ impl CommittedLog {
       CompareOp::Ne => self.0 != other.0,
       CompareOp::Gt => self.0 > other.0,
       CompareOp::Ge => self.0 >= other.0,
-    }
-  }
-}
-
-#[derive(Clone)]
-#[pyclass]
-pub struct ApplyBatchResponse(ruraft_core::ApplyBatchResponse<FinateStateMachineResponse>);
-
-impl From<ApplyBatchResponse> for ruraft_core::ApplyBatchResponse<FinateStateMachineResponse> {
-  fn from(value: ApplyBatchResponse) -> Self {
-    value.0
-  }
-}
-
-#[pymethods]
-impl ApplyBatchResponse {
-  #[new]
-  pub fn new(resps: ::smallvec::SmallVec<[FinateStateMachineResponse; 2]>) -> Self {
-    Self(resps.into())
-  }
-
-  pub fn __len__(&self) -> usize {
-    self.0.len()
-  }
-
-  pub fn __getitem__(&self, index: isize) -> PyResult<FinateStateMachineResponse> {
-    let len = self.0.len() as isize;
-    if index < 0 {
-      if -index > len {
-        return Err(PyIndexError::new_err("index out of range"));
-      }
-      Ok(self.0[(len + index) as usize].clone())
-    } else {
-      if index >= len {
-        return Err(PyIndexError::new_err("index out of range"));
-      }
-      Ok(self.0[index as usize].clone())
     }
   }
 }
@@ -625,6 +761,62 @@ impl From<ruraft_core::RaftStats<RNodeId, RNodeAddress>> for RaftStats {
   }
 }
 
+impl Pyi for RaftStats {
+  fn pyi() -> std::borrow::Cow<'static, str> {
+    r#"
+
+class RaftStats:
+  @property
+  def role(self) -> Role: ...
+  
+  @property
+  def term(self) -> int: ...
+  
+  @property
+  def last_log_index(self) -> int: ...
+  
+  @property
+  def last_log_term(self) -> int: ...
+  
+  @property
+  def commit_index(self) -> int: ...
+  
+  @property
+  def applied_index(self) -> int: ...
+  
+  @property
+  def fsm_pending(self) -> int: ...
+  
+  @property
+  def last_snapshot_index(self) -> int: ...
+  
+  @property
+  def last_snapshot_term(self) -> int: ...
+  
+  @property
+  def protocol_version(self) -> ProtocolVersion: ...
+  
+  @property
+  def snapshot_version(self) -> SnapshotVersion: ...
+  
+  @property
+  def last_contact(self) -> Optional[timedelta]: ...
+
+  def membership(self) -> Membership: ...
+
+  def __str__(self) -> str: ...
+
+  def __repr__(self) -> str: ...
+
+  def __eq__(self, other: RaftStats) -> bool: ...
+
+  def __ne__(self, other: RaftStats) -> bool: ...
+
+"#
+    .into()
+  }
+}
+
 #[pymethods]
 impl RaftStats {
   #[getter]
@@ -658,190 +850,38 @@ impl RaftStats {
   }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-#[pyclass(frozen)]
-pub struct SnapshotId(ruraft_core::storage::SnapshotId);
 
-impl From<ruraft_core::storage::SnapshotId> for SnapshotId {
-  fn from(value: ruraft_core::storage::SnapshotId) -> Self {
-    Self(value)
-  }
-}
 
-impl From<SnapshotId> for ruraft_core::storage::SnapshotId {
-  fn from(value: SnapshotId) -> Self {
-    value.0
-  }
-}
-
-#[pymethods]
-impl SnapshotId {
-  #[getter]
-  pub fn index(&self) -> u64 {
-    self.0.index()
-  }
-
-  #[getter]
-  pub fn term(&self) -> u64 {
-    self.0.term()
-  }
-
-  #[getter]
-  pub fn timestamp(&self) -> u64 {
-    self.0.timestamp()
-  }
-
-  pub fn __str__(&self) -> String {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).unwrap()
-    } else {
-      format!("{:?}", self.0)
-    }
-  }
-
-  pub fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-
-  fn __hash__(&self) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    self.0.hash(&mut hasher);
-    hasher.finish()
-  }
-
-  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
-    match op {
-      CompareOp::Lt => self.0 < other.0,
-      CompareOp::Le => self.0 <= other.0,
-      CompareOp::Eq => self.0 == other.0,
-      CompareOp::Ne => self.0 != other.0,
-      CompareOp::Gt => self.0 > other.0,
-      CompareOp::Ge => self.0 >= other.0,
-    }
-  }
-}
-
-/// The meta data for the snapshot file
-#[derive(Clone)]
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-#[pyclass(frozen)]
-pub struct SnapshotMeta(ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>);
-
-impl From<ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>> for SnapshotMeta {
-  fn from(s: ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress>) -> Self {
-    Self(s)
-  }
-}
-
-impl From<SnapshotMeta> for ruraft_core::storage::SnapshotMeta<RNodeId, RNodeAddress> {
-  fn from(s: SnapshotMeta) -> Self {
-    s.0
-  }
-}
-
-#[pymethods]
-impl SnapshotMeta {
-  /// The term when the snapshot was taken.
-  #[getter]
-  pub fn term(&self) -> u64 {
-    self.0.term()
-  }
-
-  /// The index when the snapshot was taken.
-  #[getter]
-  pub fn index(&self) -> u64 {
-    self.0.index()
-  }
-
-  /// The timestamp when the snapshot was taken.
-  #[getter]
-  pub fn timestamp(&self) -> u64 {
-    self.0.timestamp()
-  }
-
-  /// The size of the snapshot, in bytes.
-  #[getter]
-  pub fn size(&self) -> u64 {
-    self.0.size()
-  }
-
-  /// The index of the membership when the snapshot was taken.
-  #[getter]
-  pub fn membership_index(&self) -> u64 {
-    self.0.membership_index()
-  }
-
-  /// The membership at the time when the snapshot was taken.
-  pub fn membership(&self) -> crate::types::Membership {
-    self.0.membership().clone().into()
-  }
-
-  #[inline]
-  pub fn __str__(&self) -> PyResult<String> {
-    if cfg!(feature = "serde") {
-      serde_json::to_string(&self.0).map_err(|e| PyTypeError::new_err(e.to_string()))
-    } else {
-      Ok(format!("{:?}", self.0))
-    }
-  }
-
-  #[inline]
-  pub fn __repr__(&self) -> String {
-    format!("{:?}", self.0)
-  }
-
-  fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
-    match op {
-      CompareOp::Lt => self.0 < other.0,
-      CompareOp::Le => self.0 <= other.0,
-      CompareOp::Eq => self.0 == other.0,
-      CompareOp::Ne => self.0 != other.0,
-      CompareOp::Gt => self.0 > other.0,
-      CompareOp::Ge => self.0 >= other.0,
-    }
-  }
-}
-
-macro_rules! register {
-  ($($rt: literal), +$(,)?) => {
-    $(
-      paste::paste! {
-        #[cfg(feature = $rt)]
-        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> {
-          m.add_class::<[< $rt:camel ApplyFuture >]>()?;
-          m.add_class::<[< $rt:camel BarrierFuture >]>()?;
-          m.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
-          m.add_class::<[< $rt:camel VerifyFuture >]>()?;
-          m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
-          m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
-          m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
-          m.add_class::<crate::storage:: [< $rt:camel SnapshotSource >]>()?;
-          m.add_class::<[< $rt:camel AsyncReader >]>()?;
-          m.add_class::<[< $rt:camel SnapshotSink >]>()?;
-          m.add_class::<[< $rt:camel Snapshot >]>()?;
-          Ok(())
-        }
-      }
-    )*
-  };
-}
-
-register!("tokio", "async-std");
-
-pub fn register<'a>(py: Python<'a>) -> PyResult<&'a PyModule> {
+pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
   let subm = PyModule::new(py, "types")?;
   subm.add_class::<NodeId>()?;
   subm.add_class::<NodeAddress>()?;
   subm.add_class::<Node>()?;
   subm.add_class::<Header>()?;
   subm.add_class::<CommittedLog>()?;
-  subm.add_class::<ApplyBatchResponse>()?;
   subm.add_class::<RaftStats>()?;
   subm.add_class::<Role>()?;
-  subm.add_class::<SnapshotId>()?;
-  subm.add_class::<SnapshotMeta>()?;
   Ok(subm)
+}
+
+pub fn pyi() -> String {
+  let mut pyi = r#"
+
+from typing import Union, Optional
+from datetime import timedelta
+from .membership import Membership
+from .options import ProtocolVersion, SnapshotVersion
+
+  "#
+  .to_string();
+
+  pyi.push_str(&NodeId::pyi());
+  pyi.push_str(&NodeAddress::pyi());
+  pyi.push_str(&Node::pyi());
+  pyi.push_str(&Header::pyi());
+  pyi.push_str(&CommittedLog::pyi());
+  pyi.push_str(&RaftStats::pyi());
+  pyi.push_str(&Role::pyi());
+
+  pyi
 }

@@ -73,7 +73,8 @@ class TcpTransportOptions:
   
   def __repr__(self) -> str: ...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -91,6 +92,7 @@ impl PythonTcpTransportOptions {
   }
 
   /// Sets the address to bind to.
+  #[setter]
   pub fn set_bind_addr(&mut self, bind_addr: &str) -> PyResult<()> {
     let addr = bind_addr
       .parse::<SocketAddr>()
@@ -100,16 +102,19 @@ impl PythonTcpTransportOptions {
   }
 
   /// Returns the address to bind to.
+  #[getter]
   pub fn bind_addr(&self) -> String {
     self.0.bind_addr().to_string()
   }
 
   /// Sets the header used to identify the node.
+  #[setter]
   pub fn set_header(&mut self, header: Header) {
     self.0.set_header(header.into());
   }
 
   /// Returns the header used to identify the node.
+  #[getter]
   pub fn header(&self) -> Header {
     self.0.header().clone().into()
   }
@@ -117,36 +122,43 @@ impl PythonTcpTransportOptions {
   /// Sets the path to the resolv.conf file, this is used for DNS address resolve.
   /// If you can make sure all addresses you used in the
   /// Raft cluster is a socket address, then you can ignore this option.
+  #[setter]
   pub fn set_resolv_conf(&mut self, resolv_conf: Option<PathBuf>) {
-    self.set_resolv_conf(resolv_conf);
+    self.0.set_resolv_conf(resolv_conf);
   }
 
   /// Returns the path to the resolv.conf file.
+  #[getter]
   pub fn resolv_conf(&self) -> Option<&PathBuf> {
     self.0.resolv_conf()
   }
 
   /// Sets the maximum number of connections to keep in the connection pool.
+  #[setter]
   pub fn set_max_pool(&mut self, max_pool: usize) {
     self.0.set_max_pool(max_pool);
   }
 
   /// Returns the maximum number of connections to keep in the connection pool.
+  #[getter]
   pub fn max_pool(&self) -> usize {
     self.0.max_pool()
   }
 
   /// Sets the maximum number of in-flight append entries requests.
+  #[setter]
   pub fn set_max_inflight_requests(&mut self, max_idle: usize) {
     self.0.set_max_inflight_requests(max_idle);
   }
 
   /// Returns the maximum number of in-flight append entries requests.
+  #[getter]
   pub fn max_inflight_requests(&self) -> usize {
     self.0.max_inflight_requests()
   }
 
   /// Set the timeout used to apply I/O deadlines.
+  #[setter]
   pub fn set_timeout(&mut self, timeout: ::chrono::Duration) -> PyResult<()> {
     timeout
       .to_std()
@@ -155,6 +167,7 @@ impl PythonTcpTransportOptions {
   }
 
   /// Returns the timeout used to apply I/O deadlines.
+  #[getter]
   pub fn timeout(&self) -> PyResult<::chrono::Duration> {
     ::chrono::Duration::from_std(self.0.timeout()).map_err(|e| PyTypeError::new_err(e.to_string()))
   }

@@ -1,7 +1,64 @@
 use super::*;
-use crate::{fsm::*, options::*, types::*};
+use crate::{fsm::*, options::*, types::*, storage::*};
 use pyo3::exceptions::PyTypeError;
 use ruraft_bindings_common::{storage::SupportedStorage, transport::SupportedTransport};
+
+mod futs;
+use futs::*;
+
+macro_rules! register_futs {
+  ($($rt: literal), +$(,)?) => {
+    $(
+      paste::paste! {
+        #[cfg(feature = $rt)]
+        pub fn [< register_ $rt:snake >](m: &PyModule) -> pyo3::PyResult<()> {
+          m.add_class::<[< $rt:camel ApplyFuture >]>()?;
+          m.add_class::<[< $rt:camel BarrierFuture >]>()?;
+          m.add_class::<[< $rt:camel MembershipChangeFuture >]>()?;
+          m.add_class::<[< $rt:camel VerifyFuture >]>()?;
+          m.add_class::<[< $rt:camel LeadershipTransferFuture >]>()?;
+          m.add_class::<[< $rt:camel SnapshotFuture >]>()?;
+          m.add_class::<[< $rt:camel LeadershipWatcher >]>()?;
+          m.add_class::<[< $rt:camel Raft >]>()?;
+
+          Ok(())
+        }
+
+        #[cfg(feature = $rt)]
+        pub fn [< pyi_ $rt:snake >]() -> String {
+          use crate::Pyi;
+
+          let mut pyi = r#"
+
+from typing import AsyncIterable, Optional
+from datetime import timedelta
+from .types import *
+from .fsm import *
+from .membership import *
+from .options import *
+
+                    "#.to_string();
+
+          pyi.push_str(&[< $rt:camel ApplyFuture >]::pyi());
+          pyi.push_str(&[< $rt:camel BarrierFuture >]::pyi());
+          pyi.push_str(&[< $rt:camel MembershipChangeFuture >]::pyi());
+          pyi.push_str(&[< $rt:camel VerifyFuture >]::pyi());
+          pyi.push_str(&[< $rt:camel LeadershipTransferFuture >]::pyi());
+          pyi.push_str(&[< $rt:camel SnapshotFuture >]::pyi());
+          pyi.push_str(&crate::storage:: [< $rt:camel SnapshotSource >]::pyi());
+          pyi.push_str(&[< $rt:camel AsyncReader >]::pyi());
+          pyi.push_str(&[< $rt:camel SnapshotSink >]::pyi());
+          pyi.push_str(&[< $rt:camel Snapshot >]::pyi());
+          pyi.push_str(&[< $rt:camel Raft >]::pyi());
+
+          pyi
+        }
+      }
+    )*
+  };
+}
+
+register_futs!("tokio", "async-std");
 
 macro_rules! raft {
   ($($rt: literal), +$(,)?) => {
@@ -40,7 +97,7 @@ class Raft:
   
   def current_term(self) -> int: ...
   
-  def latest_membership(self) -> LastMembership: ...
+  def latest_membership(self) -> LatestMembership: ...
   
   def last_contact(self) -> Optional[timedelta]: ...
   
@@ -121,12 +178,12 @@ class Raft:
           ///   transport_opts: The options used to configure the transport.
           ///   opts: The options used to configure the Raft node.
           #[staticmethod]
-          pub fn new<'a>(
+          pub fn new(
             fsm: Py<PyAny>,
             storage_opts: StorageOptions,
             transport_opts: PythonTransportOptions,
             opts: Options,
-            py: pyo3::Python<'a>
+            py: pyo3::Python<'_>
           ) -> pyo3::PyResult<Self> {
             let fsm = FinateStateMachine::new(fsm);
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] ::into_supported().future_into_py(py, async move {
@@ -166,19 +223,18 @@ class Raft:
           /// the sole voter, and then join up other new clean-state peer servers using
           /// the usual APIs in order to bring the cluster back into a known state.
           #[staticmethod]
-          pub fn recover<'a>(
+          pub fn recover(
             fsm: Py<PyAny>,
             storage: StorageOptions,
             membership: Membership,
             opts: Options,
-            py: pyo3::Python<'a>
-          ) -> PyResult<()> {
+            py: pyo3::Python<'_>
+          ) -> PyResult<&pyo3::PyAny> {
             let fsm = FinateStateMachine::new(fsm);
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] ::into_supported().future_into_py(py, async move {
               let storage = SupportedStorage::new(storage.into()).await.map_err(|e| RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
               Raft::< ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] > :: recover(fsm, storage, membership.into(), opts.into()).await.map_err(|e| PyTypeError::new_err(e.to_string()))
             })
-            .map(|_| ())
           }
 
           /// Provides the local unique identifier, helping in distinguishing this node from its peers.
@@ -689,7 +745,7 @@ class Raft:
           /// recovery into a fresh cluster, and should not be used in normal operations.
           ///
           /// See also `restore_timeout`.
-          pub fn restore<'a>(&'a self, meta: SnapshotMeta, src: crate::types::[< $rt:camel AsyncReader >], py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          pub fn restore<'a>(&'a self, meta: SnapshotMeta, src: [< $rt:camel AsyncReader >], py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               this
@@ -720,7 +776,7 @@ class Raft:
           pub fn restore_timeout<'a>(
             &'a self,
             meta: SnapshotMeta,
-            src: crate::types::[< $rt:camel AsyncReader >],
+            src: [< $rt:camel AsyncReader >],
             timeout: ::chrono::Duration,
             py: pyo3::Python<'a>,
           ) -> pyo3::PyResult<&'a pyo3::PyAny> {
@@ -749,7 +805,7 @@ class Raft:
           /// gracefully.
           ///
           /// See also `leadership_transfer_to_node`.
-          pub fn leadership_transfer<'a>(&'a self, id: NodeId, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
+          pub fn leadership_transfer<'a>(&'a self, py: pyo3::Python<'a>) -> pyo3::PyResult<&'a pyo3::PyAny> {
             let this = self.0.clone();
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >]::into_supported().future_into_py(py, async move {
               Ok([< $rt:camel LeadershipTransferFuture >]::from(

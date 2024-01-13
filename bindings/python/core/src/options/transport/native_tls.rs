@@ -8,7 +8,7 @@ use pyo3::{exceptions::PyTypeError, types::PyModule, *};
 use ruraft_bindings_common::transport::Array;
 
 use super::PythonTcpTransportOptions;
-use crate::{register_type, types::Header, Pyi};
+use crate::{types::Header, Pyi};
 
 /// Identity used for TLS.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, derive_more::From)]
@@ -44,7 +44,8 @@ class Identity:
   
   def __repr__(self) -> str:...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -172,7 +173,8 @@ class NativeTlsTransportOptions:
   
   def __repr__(self) -> str:...
 
-"#.into()
+"#
+    .into()
   }
 }
 
@@ -327,9 +329,17 @@ impl PythonNativeTlsTransportOptions {
   }
 }
 
-pub fn register_native_tls_transport_options(module: &PyModule) -> PyResult<String> {
+pub fn register_native_tls_transport_options(module: &PyModule) -> PyResult<()> {
+  module.add_class::<PythonIdentity>()?;
+  module.add_class::<PythonNativeTlsTransportOptions>()?;
+  Ok(())
+}
+
+pub fn native_tls_transport_pyi() -> String {
   let mut pyi = String::new();
-  register_type::<PythonIdentity>(&mut pyi, module)?;
-  register_type::<PythonNativeTlsTransportOptions>(&mut pyi, module)?;
-  Ok(pyi)
+
+  pyi.push_str(&PythonIdentity::pyi());
+  pyi.push_str(&PythonNativeTlsTransportOptions::pyi());
+
+  pyi
 }

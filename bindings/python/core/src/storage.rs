@@ -1,8 +1,11 @@
-use pyo3::{exceptions::PyIOError, PyErr};
+use pyo3::{exceptions::PyIOError, PyErr, types::PyModule};
 
-use crate::{types::SnapshotMeta, IntoSupportedRuntime, RaftData};
+use crate::{IntoSupportedRuntime, RaftData, Pyi};
 
 pub type RaftStorage<R> = ruraft_bindings_common::storage::SupportedStorage<RaftData, R>;
+
+mod snapshot;
+pub use snapshot::*;
 
 #[derive(derive_more::From)]
 pub struct SnapshotSource<R: IntoSupportedRuntime>(
@@ -47,6 +50,17 @@ macro_rules! snapshot_source {
         }
       }
 
+      impl $crate::Pyi for [< $rt:camel SnapshotSource >] {
+        fn pyi() -> std::borrow::Cow<'static, str> {
+          r#"
+    
+class SnapshotSource:
+  async def open(self) -> Snapshot: ...
+
+          "#.into()
+        }
+      }
+
       #[pyo3::pymethods]
       impl [< $rt:camel SnapshotSource >] {
         /// Open the snapshot source.
@@ -66,3 +80,90 @@ snapshot_source!("tokio");
 
 #[cfg(feature = "async-std")]
 snapshot_source!("async-std");
+
+#[cfg(feature = "tokio")]
+pub fn register_tokio(py: pyo3::Python<'_>) -> pyo3::PyResult<&PyModule> {
+  let subm = PyModule::new(py, "snapshot")?;
+  subm.add_class::<SnapshotId>()?;
+  subm.add_class::<SnapshotMeta>()?;
+  subm.add_class::<TokioAsyncReader>()?;
+  subm.add_class::<TokioSnapshot>()?;
+  subm.add_class::<TokioSnapshotSource>()?;
+  subm.add_class::<TokioSnapshotSink>()?;
+  
+  Ok(subm)
+}
+
+#[cfg(feature = "async-std")]
+pub fn register_async_std(py: pyo3::Python<'_>) -> pyo3::PyResult<&PyModule> {
+  let subm = PyModule::new(py, "snapshot")?;
+  subm.add_class::<SnapshotId>()?;
+  subm.add_class::<SnapshotMeta>()?;
+  subm.add_class::<AsyncStdAsyncReader>()?;
+  subm.add_class::<AsyncStdSnapshot>()?;
+  subm.add_class::<AsyncStdSnapshotSource>()?;
+  subm.add_class::<AsyncStdSnapshotSink>()?;
+  Ok(subm)
+}
+
+const HEADER: &str = r#"
+
+from typing import Protocol
+from .membership import Membership
+
+class AsyncRead(Protocol):
+  async def read(self, chunk_size: int = 1024) -> memoryview:...
+
+  async def read_exact(self, bytes: int) -> memoryview:...
+
+  async def read_to_end(self, chunk_size: int = 1024) -> memoryview:...
+  
+  async def read_to_string(self, chunk_size: int = 1024) -> str:...
+
+  def __aenter__(self) -> AsyncRead: ...
+
+  def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
+
+class AsyncWrite(Protocol):
+  async def write(self, data: bytes) -> None:...
+
+  async def write_all(self, data: bytes) -> None:...
+
+  async def flush(self) -> None:...
+
+  async def close(self) -> None:...
+
+  def __aenter__(self) -> AsyncWrite: ...
+
+  def __aexit__(self, exc_type, exc_value, traceback) -> None: ...
+
+
+"#;
+
+#[cfg(feature = "tokio")]
+pub fn pyi_tokio() -> String {
+  let mut pyi = HEADER.to_string();
+  
+  pyi.push_str(&SnapshotId::pyi());
+  pyi.push_str(&SnapshotMeta::pyi());
+  pyi.push_str(&TokioAsyncReader::pyi());
+  pyi.push_str(&TokioSnapshot::pyi());
+  pyi.push_str(&TokioSnapshotSource::pyi());
+  pyi.push_str(&TokioSnapshotSink::pyi());
+
+  pyi
+}
+
+#[cfg(feature = "async-std")]
+pub fn pyi_async_std() -> String {
+  let mut pyi = HEADER.to_string();
+  
+  pyi.push_str(&SnapshotId::pyi());
+  pyi.push_str(&SnapshotMeta::pyi());
+  pyi.push_str(&AsyncStdAsyncReader::pyi());
+  pyi.push_str(&AsyncStdSnapshot::pyi());
+  pyi.push_str(&AsyncStdSnapshotSource::pyi());
+  pyi.push_str(&AsyncStdSnapshotSink::pyi());
+
+  pyi
+}
