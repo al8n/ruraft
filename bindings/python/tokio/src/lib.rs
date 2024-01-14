@@ -3,5 +3,5 @@ use ruraft_python::*;
 
 #[pymodule]
 pub fn _internal(py: Python, m: &PyModule) -> PyResult<()> {
-  register(py, m)
+  register::<TokioRuntime>(py, m)
 }

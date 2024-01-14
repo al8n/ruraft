@@ -850,8 +850,6 @@ impl RaftStats {
   }
 }
 
-
-
 pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
   let subm = PyModule::new(py, "types")?;
   subm.add_class::<NodeId>()?;

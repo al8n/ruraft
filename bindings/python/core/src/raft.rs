@@ -187,8 +187,8 @@ class Raft:
           ) -> pyo3::PyResult<Self> {
             let fsm = FinateStateMachine::new(fsm);
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] ::into_supported().future_into_py(py, async move {
-              let storage = SupportedStorage::new(storage_opts.into()).await.map_err(|e| RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
-              let transport = SupportedTransport::new(transport_opts.into()).await.map_err(|e| RaftError::transport(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
+              let storage = SupportedStorage::new(storage_opts.into()).await.map_err(|e| $crate::RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
+              let transport = SupportedTransport::new(transport_opts.into()).await.map_err(|e| $crate::RaftError::transport(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
               Raft::< ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] > :: new(fsm, storage, transport, opts.into()).await.map(Self).map_err(|e| PyTypeError::new_err(e.to_string()))
             })
             .and_then(|raft| raft.extract())
@@ -232,7 +232,7 @@ class Raft:
           ) -> PyResult<&pyo3::PyAny> {
             let fsm = FinateStateMachine::new(fsm);
             ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] ::into_supported().future_into_py(py, async move {
-              let storage = SupportedStorage::new(storage.into()).await.map_err(|e| RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
+              let storage = SupportedStorage::new(storage.into()).await.map_err(|e| $crate::RaftError::storage(e)).map_err(|e| PyTypeError::new_err(e.to_string()))?;
               Raft::< ::agnostic:: [< $rt:snake >] :: [< $rt:camel Runtime >] > :: recover(fsm, storage, membership.into(), opts.into()).await.map_err(|e| PyTypeError::new_err(e.to_string()))
             })
           }
@@ -336,13 +336,13 @@ class Raft:
           /// will fail.
           ///
           /// - If the node discovers it is no longer the leader while applying the command,
-          /// it will return `Err(Error::Raft(RaftError::LeadershipLost))`. There is no way to guarantee whether the
+          /// it will return `Err(Error::Raft($crate::RaftError::LeadershipLost))`. There is no way to guarantee whether the
           /// write succeeded or failed in this case. For example, if the leader is
           /// partitioned it can't know if a quorum of followers wrote the log to disk. If
           /// at least one did, it may survive into the next leader's term.
           ///
           /// - If a user snapshot is restored while the command is in-flight, an
-          /// `Err(Error::Raft(RaftError::AbortedByRestore))` is returned. In this case the write effectively failed
+          /// `Err(Error::Raft($crate::RaftError::AbortedByRestore))` is returned. In this case the write effectively failed
           /// since its effects will not be present in the `FinateStateMachine` after the restore.
           ///
           /// See also `apply_timeout`.
@@ -361,13 +361,13 @@ class Raft:
           /// will fail.
           ///
           /// - If the node discovers it is no longer the leader while applying the command,
-          /// it will return `Err(Error::Raft(RaftError::LeadershipLost))`. There is no way to guarantee whether the
+          /// it will return `Err(Error::Raft($crate::RaftError::LeadershipLost))`. There is no way to guarantee whether the
           /// write succeeded or failed in this case. For example, if the leader is
           /// partitioned it can't know if a quorum of followers wrote the log to disk. If
           /// at least one did, it may survive into the next leader's term.
           ///
           /// - If a user snapshot is restored while the command is in-flight, an
-          /// `Err(Error::Raft(RaftError::AbortedByRestore))` is returned. In this case the write effectively failed
+          /// `Err(Error::Raft($crate::RaftError::AbortedByRestore))` is returned. In this case the write effectively failed
           /// since its effects will not be present in the `FinateStateMachine` after the restore.
           ///
           /// See also `apply`.

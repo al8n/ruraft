@@ -1,4 +1,4 @@
-use crate::Pyi;
+use crate::{Pyi, exceptions::MembershipError};
 
 use super::*;
 
@@ -370,7 +370,7 @@ impl MembershipBuilder {
       .0
       .clone()
       .build()
-      .map_err(|e| PyTypeError::new_err(e.to_string()))
+      .map_err(|e| MembershipError::new_err(e.to_string()))
       .map(Membership)
   }
 }
@@ -599,9 +599,9 @@ impl LatestMembership {
 pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
   let subm = PyModule::new(py, "membership")?;
 
-
   subm.add_class::<ServerSuffrage>()?;
   subm.add_class::<Server>()?;
+  subm.add_class::<MembershipError>()?;
   subm.add_class::<MembershipBuilder>()?;
   subm.add_class::<Membership>()?;
   subm.add_class::<LatestMembership>()?;

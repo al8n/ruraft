@@ -20,5 +20,5 @@ fn main() {
 
   let python_path = manifest_path.join("python").join(&lib_name);
 
-  ruraft_python::generate(&lib_name, python_path).unwrap();
+  ruraft_python::generate::<_, ruraft_python::AsyncStdRuntime>(&lib_name, python_path).unwrap();
 }

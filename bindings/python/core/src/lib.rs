@@ -1,12 +1,22 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
 
+#[cfg(all(feature = "tokio", feature = "async-std"))]
+compile_error!("Cannot enable both tokio and async-std runtime at the same time");
+
 use std::pin::Pin;
 
 use agnostic::Runtime;
+#[cfg(feature = "tokio")]
+pub use agnostic::tokio::TokioRuntime;
+
+#[cfg(feature = "async-std")]
+pub use agnostic::async_std::AsyncStdRuntime;
+
 use futures::{Future, FutureExt};
 use pyo3::{types::PyModule, *};
 
+mod exceptions;
 pub mod fsm;
 pub mod options;
 pub mod raft;
@@ -90,6 +100,71 @@ pub trait IntoSupportedRuntime: Runtime {
     + From<ruraft_bindings_common::storage::SupportedSnapshotSink>;
 
   fn into_supported() -> SupportedRuntime;
+
+  fn register_options_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    let optionsm = options::register(py)?;
+    m.add_submodule(optionsm)?;
+    Ok(())
+  }
+
+  fn generate_options_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let python_path = path.as_ref();
+    let pyi = options::pyi();
+    rewrite_on_modified(
+      python_path.join("options.py"),
+      format!("from {}.options import *", lib).as_str(),
+    )?;
+    rewrite_on_modified(python_path.join("options.pyi"), pyi.as_str())
+  }
+
+  fn register_membership_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    let membershipm = types::membership::register(py)?;
+    m.add_submodule(membershipm)?;
+    Ok(())
+  }
+
+  fn generate_membership_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let python_path = path.as_ref();
+    let pyi = types::membership::pyi();
+    rewrite_on_modified(
+      python_path.join("membership.py"),
+      format!("from {}.membership import *", lib).as_str(),
+    )?;
+    rewrite_on_modified(python_path.join("membership.pyi"), pyi.as_str())
+  }
+
+  fn register_types_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    let typem = types::register(py)?;
+    m.add_submodule(typem)?;
+    Ok(())
+  }
+
+  fn generate_types_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let python_path = path.as_ref();
+    let pyi = types::pyi();
+    rewrite_on_modified(
+      python_path.join("types.py"),
+      format!("from {}.types import *", lib).as_str(),
+    )?;
+    rewrite_on_modified(python_path.join("types.pyi"), pyi.as_str())
+  }
+
+  fn register_storage_module(py: Python<'_>, m: &PyModule) -> PyResult<()>;
+
+  fn generate_storage_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()>;
+
+  fn register_init_module(py: Python<'_>, m: &PyModule) -> PyResult<()>;
+
+  fn generate_init_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()>;
+
+  fn generate_fsm_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let python_path = path.as_ref();
+    let pyi = fsm::pyi();
+    rewrite_on_modified(python_path.join("fsm.pyi"), pyi)?;
+    let py = fsm::py();
+    rewrite_on_modified(python_path.join("fsm.py"), py)?;
+    Ok(())
+  }
 }
 
 #[cfg(feature = "tokio")]
@@ -101,6 +176,45 @@ impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
   fn into_supported() -> SupportedRuntime {
     SupportedRuntime::Tokio
   }
+
+  fn register_init_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    raft::register_tokio(m)
+  }
+
+  fn register_storage_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    let snapshot = storage::register_tokio(py)?;
+    m.add_submodule(snapshot)?;
+    Ok(())
+  }
+
+  fn generate_init_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let pyi = raft::pyi_tokio(); 
+    let python_path = path.as_ref();
+    rewrite_on_modified(
+      python_path.join("__init__.py"),
+      r#"
+from ._internal import *
+from .membership import *
+from .options import *
+from .types import *
+
+__doc__ = _internal.__doc__
+__all__ = _internal.__all__
+ 
+    "#,
+    )?;
+    rewrite_on_modified(python_path.join("__init__.pyi"), pyi.as_str())
+  }
+
+  fn generate_storage_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let pyi = storage::pyi_tokio();
+    let python_path = path.as_ref();
+    rewrite_on_modified(
+      python_path.join("snapshot.py"),
+      format!("from {}.snapshot import *", lib).as_str(),
+    )?;
+    rewrite_on_modified(python_path.join("snapshot.pyi"), pyi.as_str())
+  }
 }
 
 #[cfg(feature = "async-std")]
@@ -111,6 +225,45 @@ impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
   #[inline(always)]
   fn into_supported() -> SupportedRuntime {
     SupportedRuntime::AsyncStd
+  }
+
+  fn register_init_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    raft::register_async_std(m)
+  }
+
+  fn register_storage_module(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    let snapshot = storage::register_async_std(py)?;
+    m.add_submodule(snapshot)?;
+    Ok(())
+  }
+
+  fn generate_init_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let pyi = raft::pyi_async_std(); 
+    let python_path = path.as_ref();
+    rewrite_on_modified(
+      python_path.join("__init__.py"),
+      r#"
+from ._internal import *
+from .membership import *
+from .options import *
+from .types import *
+
+__doc__ = _internal.__doc__
+__all__ = _internal.__all__
+ 
+    "#,
+    )?;
+    rewrite_on_modified(python_path.join("__init__.pyi"), pyi.as_str())
+  }
+
+  fn generate_storage_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let pyi = storage::pyi_async_std();
+    let python_path = path.as_ref();
+    rewrite_on_modified(
+      python_path.join("snapshot.py"),
+      format!("from {}.snapshot import *", lib).as_str(),
+    )?;
+    rewrite_on_modified(python_path.join("snapshot.pyi"), pyi.as_str())
   }
 }
 
@@ -148,118 +301,28 @@ fn rewrite_on_modified(
   Ok(())
 }
 
-pub fn register<'a>(
+pub fn register<'a, R: IntoSupportedRuntime>(
   py: Python<'a>,
   m: &'a pyo3::types::PyModule,
 ) -> pyo3::PyResult<()> {
-
-  {
-    let typem = types::register(py)?;
-    m.add_submodule(typem)?;
-  }
-
-  {
-    let membershipm = types::membership::register(py)?;
-    m.add_submodule(membershipm)?;
-  }
-
-  {
-    let optionsm = options::register(py)?;
-    m.add_submodule(optionsm)?;
-  }
-
-  {
-    #[cfg(feature = "tokio")]
-    let snapshot = storage::register_tokio(py)?;
-    #[cfg(feature = "async-std")]
-    let snapshot = storage::register_async_std(py)?;
-    m.add_submodule(snapshot)?;
-  }
-
-  {
-    #[cfg(feature = "tokio")]
-    raft::register_tokio(m)?;
-
-    #[cfg(feature = "async-std")]
-    raft::register_async_std(m)?;
-  }
-
+  R::register_types_module(py, m)?;
+  R::register_membership_module(py, m)?;
+  R::register_options_module(py, m)?;
+  R::register_storage_module(py, m)?;
+  R::register_init_module(py, m)?;
   Ok(())
 }
 
-pub fn generate<P: AsRef<std::path::Path>>(
+pub fn generate<P: AsRef<std::path::Path>, R: IntoSupportedRuntime>(
   lib: &str,
   python_path: P,
 ) -> PyResult<()> {
   let python_path = python_path.as_ref();
-
-  {
-    let pyi = types::pyi();
-    rewrite_on_modified(
-      python_path.join("types.py"),
-      format!("from {}.types import *", lib).as_str(),
-    )?;
-    rewrite_on_modified(python_path.join("types.pyi"), pyi.as_str())?;
-  }
-
-  {
-    let pyi = types::membership::pyi();
-    rewrite_on_modified(
-      python_path.join("membership.py"),
-      format!("from {}.membership import *", lib).as_str(),
-    )?;
-    rewrite_on_modified(python_path.join("membership.pyi"), pyi.as_str())?;
-  }
-
-  {
-    let pyi = options::pyi();
-    rewrite_on_modified(
-      python_path.join("options.py"),
-      format!("from {}.options import *", lib).as_str(),
-    )?;
-    rewrite_on_modified(python_path.join("options.pyi"), pyi.as_str())?;
-  }
-
-  {
-    #[cfg(feature = "tokio")]
-    let pyi = storage::pyi_tokio();
-    #[cfg(feature = "async-std")]
-    let pyi = storage::pyi_async_std();
-    rewrite_on_modified(
-      python_path.join("snapshot.py"),
-      format!("from {}.snapshot import *", lib).as_str(),
-    )?;
-    rewrite_on_modified(python_path.join("snapshot.pyi"), pyi.as_str())?;
-  }
-
-  {
-    let pyi = fsm::pyi();
-    rewrite_on_modified(python_path.join("fsm.pyi"), pyi)?;
-    let py = fsm::py();
-    rewrite_on_modified(python_path.join("fsm.py"), py)?;
-  }
-
-  {
-    #[cfg(feature = "tokio")]
-    let pyi = raft::pyi_tokio();
-    #[cfg(feature = "async-std")]
-    let pyi = raft::pyi_async_std();
-
-    rewrite_on_modified(
-      python_path.join("__init__.py"),
-      r#"
-from ._internal import *
-from .membership import *
-from .options import *
-from .types import *
-
-__doc__ = _internal.__doc__
-__all__ = _internal.__all__
- 
-    "#,
-    )?;
-    rewrite_on_modified(python_path.join("__init__.pyi"), pyi.as_str())?;
-  }
-
+  R::generate_types_module_files(lib, python_path)?;
+  R::generate_membership_module_files(lib, python_path)?;
+  R::generate_options_module_files(lib, python_path)?;
+  R::generate_storage_module_files(lib, python_path)?;
+  R::generate_init_module_files(lib, python_path)?;
+  R::generate_fsm_module_files(lib, python_path)?;
   Ok(())
 }
