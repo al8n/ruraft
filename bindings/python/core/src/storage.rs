@@ -1,6 +1,6 @@
-use pyo3::{exceptions::PyIOError, PyErr, types::PyModule};
+use pyo3::{exceptions::PyIOError, types::PyModule, PyErr};
 
-use crate::{IntoSupportedRuntime, RaftData, Pyi};
+use crate::{IntoSupportedRuntime, Pyi, RaftData};
 
 pub type RaftStorage<R> = ruraft_bindings_common::storage::SupportedStorage<RaftData, R>;
 
@@ -90,7 +90,7 @@ pub fn register_tokio(py: pyo3::Python<'_>) -> pyo3::PyResult<&PyModule> {
   subm.add_class::<TokioSnapshot>()?;
   subm.add_class::<TokioSnapshotSource>()?;
   subm.add_class::<TokioSnapshotSink>()?;
-  
+
   Ok(subm)
 }
 
@@ -143,7 +143,7 @@ class AsyncWrite(Protocol):
 #[cfg(feature = "tokio")]
 pub fn pyi_tokio() -> String {
   let mut pyi = HEADER.to_string();
-  
+
   pyi.push_str(&SnapshotId::pyi());
   pyi.push_str(&SnapshotMeta::pyi());
   pyi.push_str(&TokioAsyncReader::pyi());
@@ -157,7 +157,7 @@ pub fn pyi_tokio() -> String {
 #[cfg(feature = "async-std")]
 pub fn pyi_async_std() -> String {
   let mut pyi = HEADER.to_string();
-  
+
   pyi.push_str(&SnapshotId::pyi());
   pyi.push_str(&SnapshotMeta::pyi());
   pyi.push_str(&AsyncStdAsyncReader::pyi());

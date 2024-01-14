@@ -107,7 +107,7 @@ pub fn register_transport_options(module: &PyModule) -> PyResult<()> {
   module.add_class::<PythonTcpTransportOptions>()?;
   #[cfg(feature = "native-tls")]
   register_native_tls_transport_options(module)?;
-  
+
   #[cfg(feature = "tls")]
   register_tls_transport_options(module)?;
   Ok(())

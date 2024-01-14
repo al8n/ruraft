@@ -1,13 +1,14 @@
 use std::{
+  hash::{DefaultHasher, Hash, Hasher},
   io,
   pin::Pin,
-  task::{Context, Poll}, hash::{DefaultHasher, Hasher, Hash},
+  task::{Context, Poll},
 };
 
-use crate::{RaftData, Pyi};
+use crate::{Pyi, RaftData};
 use futures::{io::Cursor, AsyncRead};
-use nodecraft::{NodeId, NodeAddress};
-use pyo3::{*, pyclass::CompareOp, exceptions::PyTypeError};
+use nodecraft::{NodeAddress, NodeId};
+use pyo3::{exceptions::PyTypeError, pyclass::CompareOp, *};
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
@@ -248,9 +249,9 @@ mod tokio {
 
   use super::*;
   use ::tokio::fs::File;
+  use futures::Future;
   use pyo3_asyncio::tokio::future_into_py;
   use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
-  use futures::Future;
 
   pyo3io_macros::async_reader!(future_into_py("AsyncReader": AsyncReaderInner<Compat<File>> {
     #[staticmethod]

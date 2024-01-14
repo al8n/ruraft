@@ -1,5 +1,5 @@
 use super::*;
-use crate::{fsm::*, options::*, types::*, storage::*};
+use crate::{fsm::*, options::*, storage::*, types::*};
 use pyo3::exceptions::PyTypeError;
 use ruraft_bindings_common::{storage::SupportedStorage, transport::SupportedTransport};
 
