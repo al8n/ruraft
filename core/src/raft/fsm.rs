@@ -13,11 +13,11 @@ use wg::AsyncWaitGroup;
 
 use crate::{
   error::Error,
-  fsm::{
-    FinateStateMachine, FinateStateMachineLog, FinateStateMachineLogKind,
-    FinateStateMachineSnapshot,
+  fsm::{FinateStateMachine, FinateStateMachineSnapshot},
+  storage::{
+    CommittedLog, CommittedLogBatch, CommittedLogKind, LogKind, SnapshotId, SnapshotStorage,
+    Storage,
   },
-  storage::{LogKind, SnapshotId, SnapshotSource, SnapshotStorage, Storage},
   transport::Transport,
 };
 
@@ -26,7 +26,7 @@ use crate::metrics::SaturationMetric;
 
 use super::{
   runner::{BatchCommit, CommitTuple},
-  snapshot::{CountingReader, SnapshotRestoreMonitor},
+  snapshot::{CountingSnapshotSourceReader, SnapshotRestoreMonitor},
 };
 
 pub(crate) struct FSMSnapshot<S: FinateStateMachineSnapshot> {
@@ -152,9 +152,8 @@ where
               }) => {
                 // Open the snapshot
                 let store = storage.snapshot_store();
-                match store.open(&id).await {
-                  Ok(source) => {
-                    let meta = source.meta();
+                match store.open(id).await {
+                  Ok((meta, source)) => {
                     let size = meta.size();
                     let index = meta.index();
                     let term = meta.term();
@@ -257,13 +256,13 @@ where
 
   pub(super) async fn fsm_restore_and_measure(
     fsm: &F,
-    source: <S::Snapshot as SnapshotStorage>::Source,
+    source: impl futures::AsyncRead + Unpin + Send + Sync + 'static,
     snapshot_size: u64,
   ) -> Result<(), F::Error> {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
 
-    let cr = CountingReader::from(source);
+    let cr = CountingSnapshotSourceReader::from(source);
     let ctr = cr.ctr();
     let monitor = SnapshotRestoreMonitor::<R>::new(ctr, snapshot_size, false);
     match fsm.restore(cr).await {
@@ -291,33 +290,36 @@ where
     let mut should_send = 0;
 
     let mut futs = SmallVec::<[_; 8]>::with_capacity(logs.len());
-    let logs = logs.into_iter().filter_map(|commit| {
-      last_batch_index = commit.log.index;
-      last_batch_term = commit.log.term;
-      Some(match commit.log.kind {
-        LogKind::Data(data) => {
-          should_send += 1;
-          futs.push(commit.tx);
-          FinateStateMachineLog {
-            index: commit.log.index,
-            term: commit.log.term,
-            kind: FinateStateMachineLogKind::Log(data),
+    let logs = logs
+      .into_iter()
+      .filter_map(|commit| {
+        last_batch_index = commit.log.index;
+        last_batch_term = commit.log.term;
+        Some(match commit.log.kind {
+          LogKind::Data(data) => {
+            should_send += 1;
+            futs.push(commit.tx);
+            CommittedLog {
+              index: commit.log.index,
+              term: commit.log.term,
+              kind: CommittedLogKind::Log(data),
+            }
           }
-        }
-        LogKind::Membership(m) => {
-          should_send += 1;
-          futs.push(commit.tx);
-          FinateStateMachineLog {
-            index: commit.log.index,
-            term: commit.log.term,
-            kind: FinateStateMachineLogKind::Membership(m),
+          LogKind::Membership(m) => {
+            should_send += 1;
+            futs.push(commit.tx);
+            CommittedLog {
+              index: commit.log.index,
+              term: commit.log.term,
+              kind: CommittedLogKind::Membership(m),
+            }
           }
-        }
-        _ => return None,
+          _ => return None,
+        })
       })
-    });
+      .collect::<CommittedLogBatch<_, _, _>>();
 
-    let len = logs.size_hint().0;
+    let len = logs.len();
     if len > 0 {
       #[cfg(feature = "metrics")]
       let start = Instant::now();
@@ -383,10 +385,10 @@ where
         #[cfg(feature = "metrics")]
         let start = Instant::now();
         let resp = fsm
-          .apply(FinateStateMachineLog {
+          .apply(CommittedLog {
             index: commit.log.index,
             term: commit.log.term,
-            kind: FinateStateMachineLogKind::Log(data),
+            kind: CommittedLogKind::Log(data),
           })
           .await;
 
@@ -406,10 +408,10 @@ where
         #[cfg(feature = "metrics")]
         let start = Instant::now();
         let resp = fsm
-          .apply(FinateStateMachineLog {
+          .apply(CommittedLog {
             index: commit.log.index,
             term: commit.log.term,
-            kind: FinateStateMachineLogKind::Membership(membership),
+            kind: CommittedLogKind::Membership(membership),
           })
           .await;
         #[cfg(feature = "metrics")]

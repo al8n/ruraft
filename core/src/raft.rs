@@ -2,7 +2,6 @@ use std::{
   borrow::Cow,
   collections::HashMap,
   fmt::Display,
-  future::Future,
   sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -31,11 +30,11 @@ use crate::{
   },
   sidecar::{NoopSidecar, Sidecar},
   storage::{
-    Log, LogKind, LogStorage, SnapshotMeta, SnapshotStorage, StableStorage, Storage, StorageError,
+    CommittedLog, CommittedLogKind, Log, LogKind, LogStorage, SnapshotMeta, SnapshotSource,
+    SnapshotStorage, StableStorage, Storage, StorageError,
   },
   transport::{AddressResolver, Transport},
-  FinateStateMachineError, FinateStateMachineLog, FinateStateMachineLogKind,
-  FinateStateMachineSnapshot,
+  FinateStateMachineError, FinateStateMachineSnapshot,
 };
 
 #[cfg(feature = "metrics")]
@@ -53,17 +52,17 @@ use observer::*;
 mod runner;
 
 mod snapshot;
-use snapshot::{CountingReader, SnapshotRestoreMonitor};
+use snapshot::{CountingSnapshotSourceReader, SnapshotRestoreMonitor};
 
 mod state;
 pub use state::*;
 
 /// A Raft node in the cluster.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Node<I, A> {
-  id: I,
-  addr: A,
+  pub(crate) id: I,
+  pub(crate) addr: A,
 }
 
 impl<I: Clone, A: Clone> Clone for Node<I, A> {
@@ -97,10 +96,22 @@ impl<I, A> Node<I, A> {
     &self.id
   }
 
+  /// Sets the id of the Node.
+  #[inline]
+  pub fn set_id(&mut self, id: I) {
+    self.id = id;
+  }
+
   /// Returns the address of the leader.
   #[inline]
   pub const fn addr(&self) -> &A {
     &self.addr
+  }
+
+  /// Sets the address of the Node.
+  #[inline]
+  pub fn set_addr(&mut self, addr: A) {
+    self.addr = addr;
   }
 
   /// Creates a new node.
@@ -295,24 +306,14 @@ where
   /// for any other operation e.g. reading config using options().
   reload_options_lock: Mutex<()>,
 
-  user_snapshot_tx: async_channel::Sender<
-    oneshot::Sender<
-      Result<
-        Box<
-          dyn Future<
-              Output = Result<
-                <S::Snapshot as SnapshotStorage>::Source,
-                <S::Snapshot as SnapshotStorage>::Error,
-              >,
-            > + Send,
-        >,
-        Error<F, S, T>,
-      >,
-    >,
-  >,
+  user_snapshot_tx:
+    async_channel::Sender<oneshot::Sender<Result<SnapshotSource<S>, Error<F, S, T>>>>,
 
   user_restore_tx: async_channel::Sender<(
-    <S::Snapshot as SnapshotStorage>::Source,
+    (
+      SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+      Box<dyn futures::AsyncRead + Unpin + Send + Sync + 'static>,
+    ),
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
 
@@ -418,7 +419,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -456,7 +456,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -466,7 +465,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
@@ -550,7 +548,7 @@ where
     let num_snapshots = snaps.len();
 
     for snap in snaps {
-      let Ok(source) = ss.open(&snap.id()).await else {
+      let Ok((_meta, source)) = ss.open(snap.id()).await else {
         // Skip this one and try the next. We will detect if we
         // couldn't open any snapshots.
         continue;
@@ -562,7 +560,7 @@ where
       // server instance. If the same process will eventually become a Raft peer
       // then it will call NewRaft and restore again from disk then which will
       // report metrics.
-      let cr = CountingReader::from(source);
+      let cr = CountingSnapshotSourceReader::from(source);
       let ctr = cr.ctr();
       let monitor = SnapshotRestoreMonitor::<R>::new(ctr, snap.size, false);
       let rst = fsm.restore(cr).await;
@@ -609,10 +607,10 @@ where
 
       if let LogKind::Data(data) = entry.kind {
         fsm
-          .apply(FinateStateMachineLog::new(
+          .apply(CommittedLog::new(
             entry.term,
             entry.index,
-            FinateStateMachineLogKind::Log(data),
+            CommittedLogKind::Log(data),
           ))
           .await
           .map_err(|e| {
@@ -684,7 +682,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -1030,8 +1027,8 @@ where
     let id = meta.id();
     tracing::info!(target = "ruraft.snapshot", id = %id, last_index = %meta.index(), last_term = %meta.term(), size_in_bytes = %meta.size(), "starting restore from snapshot");
 
-    match s.open(&id).await {
-      Ok(source) => {
+    match s.open(id).await {
+      Ok((meta, source)) => {
         if let Err(e) =
           FSMRunner::<F, S, T, R>::fsm_restore_and_measure(fsm, source, meta.size()).await
         {

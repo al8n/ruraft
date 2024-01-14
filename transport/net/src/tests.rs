@@ -1,12 +1,14 @@
-use core::panic;
+#![allow(clippy::too_many_arguments)]
+
 use std::{convert::Infallible, marker::PhantomData};
 
 use futures::StreamExt;
 use ruraft_core::{
+  log_batch,
   storage::{Log, LogKind},
   transport::{
     tests::{__make_append_req, __make_append_resp},
-    *,
+    Transport, *,
   },
 };
 use wg::AsyncWaitGroup;
@@ -34,7 +36,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::heartbeat_fastpath::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::heartbeat_fastpath::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test close streams for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -42,7 +48,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -50,7 +60,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries pipeline for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -58,7 +72,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries_pipeline::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries_pipeline::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries pipeline and close streams for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -66,7 +84,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries_pipeline_close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries_pipeline_close_streams::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -74,7 +96,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries_pipeline_max_rpc_inflight_default::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries_pipeline_max_rpc_inflight_default::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -82,7 +108,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries_pipeline_max_rpc_inflight_0::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries_pipeline_max_rpc_inflight_0::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -90,7 +120,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries_pipeline_max_rpc_inflight_some::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries_pipeline_max_rpc_inflight_some::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test append entries pipeline max rpc inflight for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -98,7 +132,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::append_entries_pipeline_max_rpc_inflight_one::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::append_entries_pipeline_max_rpc_inflight_one::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test install snapshot for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -106,7 +144,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::install_snapshot::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::install_snapshot::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test vote for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -114,7 +156,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::vote::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test timeout now for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -122,7 +168,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::timeout_now::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::timeout_now::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
 
       #[doc = concat!("Test pooled connection for [`", stringify!($ty), "`](", stringify!($crate::$mod::$ty), ").")]
@@ -130,7 +180,11 @@ macro_rules! tests_mod {
       where
         <R::Sleep as Future>::Output: Send + 'static,
       {
-        tests::pooled_conn::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2(), $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
+        let header1 = header1();
+        let bind_addr1 = *header1.addr();
+        let header2 = header2();
+        let bind_addr2 = *header2.addr();
+        tests::pooled_conn::<_, _, Vec<u8>, _, LpeWire<_, _, _>>(header1, bind_addr1, $stream_layer::<R>().await, SocketAddrResolver::<R>::new(), header2, bind_addr2, $stream_layer::<R>().await, SocketAddrResolver::<R>::new()).await;
       }
     }
   };
@@ -167,9 +221,11 @@ pub async fn close_streams<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
@@ -177,9 +233,11 @@ pub async fn close_streams<
 {
   // Transport 1 is consumer
   let trans1 = NetTransport::<I, A, D, S, W>::new(
+    header1,
+    bind_addr1,
     resolver1,
     stream_layer1,
-    NetTransportOptions::new(header1)
+    NetTransportOptions::new()
       .with_max_pool(2)
       .with_timeout(Duration::from_secs(1)),
   )
@@ -187,9 +245,11 @@ pub async fn close_streams<
   .expect("failed to create transport");
   let trans2 = Arc::new(
     NetTransport::<I, A, D, S, W>::new(
+      header2,
+      bind_addr2,
       resolver2,
       stream_layer2,
-      NetTransportOptions::new(header2)
+      NetTransportOptions::new()
         .with_max_pool(3)
         .with_timeout(Duration::from_secs(3)),
     )
@@ -204,7 +264,7 @@ pub async fn close_streams<
     term: 10,
     prev_log_entry: 100,
     prev_log_term: 4,
-    entries: vec![Log::__crate_new(101, 4, LogKind::Noop)],
+    entries: log_batch![Log::__crate_new(101, 4, LogKind::Noop)],
     leader_commit: 90,
     header: trans1.header().clone(),
   };
@@ -308,13 +368,15 @@ where
 {
   let addr = "127.0.0.1:8080".parse().unwrap();
   let trans = NetTransport::<_, _, Vec<u8>, _, ruraft_wire::LpeWire<_, _, _>>::new(
-    TestAddressResolver::<_, R>::new(),
-    s,
-    NetTransportOptions::new(Header::new(
+    Header::new(
       ProtocolVersion::V1,
       smol_str::SmolStr::from("test-net-transport-new"),
       addr,
-    )),
+    ),
+    addr,
+    TestAddressResolver::<_, R>::new(),
+    s,
+    NetTransportOptions::new(),
   )
   .await
   .unwrap();
@@ -331,9 +393,11 @@ pub async fn heartbeat_fastpath<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
@@ -341,18 +405,22 @@ pub async fn heartbeat_fastpath<
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
     resolver1,
     stream_layer1,
-    NetTransportOptions::new(header1)
+    NetTransportOptions::new()
       .with_max_pool(2)
       .with_timeout(Duration::from_secs(1)),
   )
   .await
   .unwrap();
   let trans2 = NetTransport::new(
+    header2,
+    bind_addr2,
     resolver2,
     stream_layer2,
-    NetTransportOptions::new(header2)
+    NetTransportOptions::new()
       .with_max_pool(2)
       .with_timeout(Duration::from_secs(1)),
   )
@@ -371,21 +439,34 @@ pub async fn append_entries<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
-  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-    .await
-    .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::new(
+    header2,
+    bind_addr2,
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
 
   ruraft_core::tests::transport::append_entries(trans1, trans2).await;
 }
@@ -399,22 +480,35 @@ pub async fn append_entries_pipeline<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   D: core::fmt::Debug + PartialEq,
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
-  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-    .await
-    .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::new(
+    header2,
+    bind_addr2,
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
 
   ruraft_core::tests::transport::append_entries_pipeline(trans1, trans2).await;
 }
@@ -428,23 +522,35 @@ pub async fn append_entries_pipeline_close_streams<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
   // Transport 1 is consumer
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
-  let trans2 =
-    NetTransport::<_, _, D, _, W>::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-      .await
-      .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::<_, _, D, _, W>::new(
+    header2,
+    bind_addr2,
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
 
   let trans1_consumer = trans1.consumer();
   let trans1_header = trans1.header().clone();
@@ -544,9 +650,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_default<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
@@ -554,9 +662,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_default<
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
+    bind_addr1,
     stream_layer1,
     resolver1,
     header2,
+    bind_addr2,
     stream_layer2,
     resolver2,
     DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -573,9 +683,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_0<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
@@ -583,9 +695,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_0<
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
+    bind_addr1,
     stream_layer1,
     resolver1,
     header2,
+    bind_addr2,
     stream_layer2,
     resolver2,
     0,
@@ -602,9 +716,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_one<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
@@ -612,9 +728,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_one<
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
+    bind_addr1,
     stream_layer1,
     resolver1,
     header2,
+    bind_addr2,
     stream_layer2,
     resolver2,
     1,
@@ -631,9 +749,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_some<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
@@ -641,9 +761,11 @@ pub async fn append_entries_pipeline_max_rpc_inflight_some<
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
+    bind_addr1,
     stream_layer1,
     resolver1,
     header2,
+    bind_addr2,
     stream_layer2,
     resolver2,
     10,
@@ -659,23 +781,25 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
   max: usize,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let config1 = NetTransportOptions::new(header1)
+  let config1 = NetTransportOptions::new()
     .with_max_pool(2)
     .with_max_inflight_requests(max)
     .with_timeout(Duration::from_secs(1));
 
   // Transport 1 is consumer
   let trans1 = Arc::new(
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, config1)
+    NetTransport::<_, _, D, _, W>::new(header1, bind_addr1, resolver1, stream_layer1, config1)
       .await
       .expect("failed to create transport"),
   );
@@ -686,14 +810,14 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   let resp1 = resp.clone();
 
   // Transport 2 makes outbound request
-  let config2 = NetTransportOptions::new(header2)
+  let config2 = NetTransportOptions::new()
     .with_max_pool(2)
     .with_max_inflight_requests(max)
     .with_timeout(Duration::from_secs(1));
 
   // Transport 1 is consumer
   let trans2 = Arc::new(
-    NetTransport::<_, _, D, _, W>::new(resolver2, stream_layer2, config2)
+    NetTransport::<_, _, D, _, W>::new(header2, bind_addr2, resolver2, stream_layer2, config2)
       .await
       .expect("failed to create transport"),
   );
@@ -772,7 +896,9 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   }
 
   // Verify that once we receive/respond another one can be sent.
-  let rpc = trans1.consumer().recv().await.unwrap();
+  let consumer = trans1.consumer();
+  futures::pin_mut!(consumer);
+  let rpc = consumer.next().await.unwrap();
   rpc
     .respond(Response::append_entries(resp1.clone()))
     .unwrap();
@@ -800,21 +926,34 @@ pub async fn vote<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
-  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-    .await
-    .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::<_, _, D, _, W>::new(
+    header2,
+    bind_addr2,
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
 
   ruraft_core::tests::transport::vote(trans1, trans2).await;
 }
@@ -828,21 +967,34 @@ pub async fn timeout_now<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
-  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-    .await
-    .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::<_, _, D, _, W>::new(
+    header2,
+    bind_addr2,
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
 
   ruraft_core::tests::transport::timeout_now(trans1, trans2).await;
 }
@@ -856,21 +1008,34 @@ pub async fn install_snapshot<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
-  let trans2 = NetTransport::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-    .await
-    .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
+  let trans2 = NetTransport::<_, _, D, _, W>::new(
+    header2,
+    bind_addr2,
+    resolver2,
+    stream_layer2,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
 
   ruraft_core::tests::transport::install_snapshot(trans1, trans2).await;
 }
@@ -884,22 +1049,35 @@ pub async fn pooled_conn<
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
   header1: Header<I, A::Address>,
+  bind_addr1: SocketAddr,
   stream_layer1: S,
   resolver1: A,
   header2: Header<I, A::Address>,
+  bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
 ) where
   <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
 {
-  let trans1 =
-    NetTransport::<_, _, D, _, W>::new(resolver1, stream_layer1, NetTransportOptions::new(header1))
-      .await
-      .unwrap();
+  let trans1 = NetTransport::<_, _, D, _, W>::new(
+    header1,
+    bind_addr1,
+    resolver1,
+    stream_layer1,
+    NetTransportOptions::new(),
+  )
+  .await
+  .unwrap();
   let trans2 = Arc::new(
-    NetTransport::<_, _, D, _, W>::new(resolver2, stream_layer2, NetTransportOptions::new(header2))
-      .await
-      .unwrap(),
+    NetTransport::<_, _, D, _, W>::new(
+      header2,
+      bind_addr2,
+      resolver2,
+      stream_layer2,
+      NetTransportOptions::new(),
+    )
+    .await
+    .unwrap(),
   );
 
   let trans1_header = trans1.header().clone();
@@ -910,7 +1088,7 @@ pub async fn pooled_conn<
     term: 10,
     prev_log_entry: 100,
     prev_log_term: 4,
-    entries: vec![Log::__crate_new(4, 101, LogKind::Noop)],
+    entries: log_batch![Log::__crate_new(4, 101, LogKind::Noop)],
     leader_commit: 90,
   };
 
@@ -1103,13 +1281,11 @@ async fn test_network_transport_listenbackoff() {
   let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
   let trans: NetTransport<_, _, Vec<_>, _, ruraft_wire::LpeWire<_, _, Vec<u8>>> =
     NetTransport::new(
+      Header::new(ProtocolVersion::V1, smol_str::SmolStr::from("test"), addr),
+      addr,
       TestAddressResolver::<_, agnostic::tokio::TokioRuntime>::new(),
       TestCountingStreamLayer::new(),
-      NetTransportOptions::new(Header::new(
-        ProtocolVersion::V1,
-        smol_str::SmolStr::from("test"),
-        addr,
-      )),
+      NetTransportOptions::new(),
     )
     .await
     .unwrap();

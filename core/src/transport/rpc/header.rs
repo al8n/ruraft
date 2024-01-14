@@ -7,7 +7,7 @@ use super::*;
 #[viewit::viewit(
   vis_all = "pub(crate)",
   getters(vis_all = "pub"),
-  setters(vis_all = "pub")
+  setters(vis_all = "pub", prefix = "with")
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -31,6 +31,7 @@ pub struct Header<I, A> {
     ),
     setter(attrs(doc = "Set the node of the request or response"),)
   )]
+  #[cfg_attr(feature = "serde", serde(flatten))]
   from: Node<I, A>,
 }
 
@@ -66,6 +67,24 @@ impl<I, A> Header<I, A> {
   #[inline]
   pub const fn addr(&self) -> &A {
     self.from.addr()
+  }
+
+  /// Sets the address of the header.
+  #[inline]
+  pub fn set_addr(&mut self, addr: A) {
+    self.from.set_addr(addr);
+  }
+
+  /// Sets the id of the header.
+  #[inline]
+  pub fn set_id(&mut self, id: I) {
+    self.from.set_id(id);
+  }
+
+  /// Sets the protocol version of the header.
+  #[inline]
+  pub fn set_protocol_version(&mut self, version: ProtocolVersion) {
+    self.protocol_version = version;
   }
 
   /// Returns the id of the header.

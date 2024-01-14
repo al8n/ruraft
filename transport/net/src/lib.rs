@@ -35,8 +35,11 @@ use std::{
     atomic::{AtomicBool, Ordering},
     Arc,
   },
-  time::{Duration, Instant},
+  time::Duration,
 };
+
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 use agnostic::Runtime;
 use async_lock::Mutex;
@@ -56,7 +59,7 @@ pub mod wire {
 
 /// Re-exports [`nodecraft`]'s address resolver.
 pub mod resolver {
-  pub use nodecraft::resolver::{dns::DnsResolver, socket_addr::SocketAddrResolver};
+  pub use nodecraft::resolver::{address, dns, socket_addr};
 }
 
 mod pipeline;
@@ -214,37 +217,14 @@ impl<I: Id, A: AddressResolver, W: Wire> TransportError for Error<I, A, W> {
 }
 
 /// Encapsulates configuration for the network transport layer.
-#[viewit::viewit(setters(prefix = "with"))]
+#[viewit::viewit(getters(style = "move"), setters(prefix = "with"))]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NetTransportOptions<I: Id, A: Address> {
-  /// The local header of the header of the network transport.
-  #[viewit(
-    getter(
-      const,
-      style = "ref",
-      attrs(doc = "Returns the header of the network transport.")
-    ),
-    setter(attrs(doc = "Sets the header of the network transport."))
-  )]
-  header: Header<I, A>,
-
-  /// The address for the network transport layer bind to, if not set,
-  /// will use the address of the header to resolve an address by using
-  /// the [`AddressResolver`].
-  #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-  #[viewit(
-    getter(
-      const,
-      attrs(doc = "Returns the socket address of this network transport layer bind to.")
-    ),
-    setter(attrs(doc = "Sets the socket address of this network transport layer bind to."))
-  )]
-  advertise_addr: Option<SocketAddr>,
-
+pub struct NetTransportOptions {
   /// Controls how many connections we will pool
   #[viewit(
     getter(const, attrs(doc = "Returns how many connections we will pool.")),
-    setter(attrs(doc = "Sets how many connections we will pool."))
+    setter(attrs(doc = "Sets how many connections we will pool. (Builder pattern)"))
   )]
   max_pool: usize,
 
@@ -273,7 +253,7 @@ pub struct NetTransportOptions<I: Id, A: Address> {
   /// products this way.
   #[viewit(
     getter(const, attrs(doc = "Returns the max inflight requests.")),
-    setter(attrs(doc = "Sets the max inflight requests."))
+    setter(attrs(doc = "Sets the max inflight requests. (Builder pattern)"))
   )]
   max_inflight_requests: usize,
 
@@ -282,42 +262,44 @@ pub struct NetTransportOptions<I: Id, A: Address> {
   #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
   #[viewit(
     getter(const, attrs(doc = "Returns the timeout used to apply I/O deadlines.")),
-    setter(attrs(doc = "Sets the timeout used to apply I/O deadlines."))
+    setter(attrs(doc = "Sets the timeout used to apply I/O deadlines. (Builder pattern)"))
   )]
   timeout: Duration,
 }
 
-impl<I, A> Clone for NetTransportOptions<I, A>
-where
-  I: Id,
-  A: Address,
-{
-  fn clone(&self) -> Self {
-    Self {
-      max_pool: self.max_pool,
-      max_inflight_requests: self.max_inflight_requests,
-      timeout: self.timeout,
-      header: self.header.clone(),
-      advertise_addr: self.advertise_addr,
-    }
+impl Default for NetTransportOptions {
+  fn default() -> Self {
+    Self::new()
   }
 }
 
-impl<I, A> NetTransportOptions<I, A>
-where
-  I: Id,
-  A: Address,
-{
+impl NetTransportOptions {
   /// Create a new [`NetTransportOptions`] with default values.
   #[inline]
-  pub const fn new(header: Header<I, A>) -> Self {
+  pub const fn new() -> Self {
     Self {
       max_pool: 3,
       max_inflight_requests: DEFAULT_MAX_INFLIGHT_REQUESTS,
       timeout: Duration::from_secs(10),
-      header,
-      advertise_addr: None,
     }
+  }
+
+  /// Set the max pooled connections.
+  #[inline]
+  pub fn set_max_pool(&mut self, max_pool: usize) {
+    self.max_pool = max_pool;
+  }
+
+  /// Set the max inflight requests.
+  #[inline]
+  pub fn set_max_inflight_requests(&mut self, max_inflight_requests: usize) {
+    self.max_inflight_requests = max_inflight_requests;
+  }
+
+  /// Set the timeout used to apply I/O deadlines.
+  #[inline]
+  pub fn set_timeout(&mut self, timeout: Duration) {
+    self.timeout = timeout;
   }
 }
 
@@ -383,13 +365,8 @@ where
   shutdown: Arc<AtomicBool>,
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <A as AddressResolver>::Address>,
-  advertise_addr: SocketAddr,
-  consumer: RpcConsumer<
-    I,
-    <A as AddressResolver>::Address,
-    D,
-    LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
-  >,
+  bind_addr: SocketAddr,
+  consumer: RpcConsumer<I, <A as AddressResolver>::Address, D>,
   resolver: A,
   conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, smallvec::SmallVec<[S::Stream; 2]>>>,
   protocol_version: ProtocolVersion,
@@ -413,40 +390,32 @@ where
 {
   /// Create a new [`NetTransport`].
   pub async fn new(
+    local_header: Header<I, A::Address>,
+    bind_addr: A::ResolvedAddress,
     resolver: A,
     mut stream_layer: S,
-    opts: NetTransportOptions<I, A::Address>,
+    opts: NetTransportOptions,
   ) -> Result<Self, Error<I, A, W>> {
     let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
-    let advertise_addr = if let Some(addr) = opts.advertise_addr {
-      addr
-    } else {
-      tracing::warn!(target = "ruraft.net.transport", "advertise address is not set, will use the resolver to resolve the advertise address according to the header");
-      resolver
-        .resolve(opts.header.from().addr())
-        .await
-        .map_err(<Error<_, _, _> as TransportError>::resolver)?
-    };
+    let auto_port = bind_addr.port() == 0;
 
-    let auto_port = advertise_addr.port() == 0;
-
-    let ln = stream_layer.bind(advertise_addr).await.map_err(|e| {
-      tracing::error!(target = "ruraft.net.transport", advertise_addr=%advertise_addr, err=%e, "failed to bind listener");
+    let ln = stream_layer.bind(bind_addr).await.map_err(|e| {
+      tracing::error!(target = "ruraft.net.transport", bind_addr=%bind_addr, err=%e, "failed to bind listener");
       Error::IO(e)
     })?;
 
-    let advertise_addr = if auto_port {
+    let bind_addr = if auto_port {
       let addr = ln.local_addr()?;
       tracing::warn!(target = "ruraft.net.transport", local_addr=%addr, "listening on automatically assigned port {}", addr.port());
       addr
     } else {
-      advertise_addr
+      bind_addr
     };
 
     tracing::info!(
       target = "ruraft.net.transport",
       "advertise to {}",
-      advertise_addr
+      bind_addr
     );
 
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -455,7 +424,7 @@ where
     let stream_ctx = StreamContext::new();
     let request_handler = RequestHandler {
       ln,
-      local_header: opts.header.clone(),
+      local_header: local_header.clone(),
       producer,
       shutdown: shutdown.clone(),
       #[cfg(test)]
@@ -474,12 +443,12 @@ where
       shutdown_rx,
       shutdown,
       shutdown_tx,
-      advertise_addr,
+      bind_addr,
       resolver,
       consumer,
       conn_pool: Mutex::new(HashMap::with_capacity(opts.max_pool)),
-      protocol_version: opts.header.protocol_version(),
-      local_header: opts.header,
+      protocol_version: local_header.protocol_version(),
+      local_header,
       max_pool: opts.max_pool,
       max_inflight_requests: if opts.max_inflight_requests == 0 {
         DEFAULT_MAX_INFLIGHT_REQUESTS
@@ -528,16 +497,9 @@ where
 
   type Data = D;
 
-  type SnapshotInstaller = LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>;
-
   fn consumer(
     &self,
-  ) -> RpcConsumer<
-    Self::Id,
-    <Self::Resolver as AddressResolver>::Address,
-    Self::Data,
-    Self::SnapshotInstaller,
-  > {
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
     self.consumer.clone()
   }
 
@@ -553,8 +515,8 @@ where
     self.protocol_version
   }
 
-  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
-    &self.advertise_addr
+  fn bind_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
+    &self.bind_addr
   }
 
   fn resolver(&self) -> &Self::Resolver {
@@ -864,8 +826,7 @@ where
 struct RequestHandler<I, A, D, S: StreamLayer> {
   ln: S::Listener,
   local_header: Header<I, A>,
-  producer:
-    RpcProducer<I, A, D, LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>,
+  producer: RpcProducer<I, A, D>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A>>>,
@@ -955,12 +916,7 @@ where
     ctx: async_channel::Receiver<()>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
     conn: S::Stream,
-    producer: RpcProducer<
-      I,
-      A,
-      D,
-      LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
-    >,
+    producer: RpcProducer<I, A, D>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) where
@@ -1027,12 +983,7 @@ where
     mut reader: BufReader<<S::Stream as Connection>::OwnedReadHalf>,
     writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
-    producer: RpcProducer<
-      I,
-      A,
-      D,
-      LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>,
-    >,
+    producer: RpcProducer<I, A, D>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<Option<BufReader<<S::Stream as Connection>::OwnedReadHalf>>, Error<I, Resolver, W>>
@@ -1071,10 +1022,19 @@ where
       }
       Request::Heartbeat(_) => {
         is_heartbeat = true;
-        (Rpc::new(req, None), None)
+        (
+          Rpc::new::<LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>(req, None),
+          None,
+        )
       }
-      Request::AppendEntries(_) => (Rpc::new(req, None), Some(reader)),
-      _ => (Rpc::new(req, None), None),
+      Request::AppendEntries(_) => (
+        Rpc::new::<LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>(req, None),
+        Some(reader),
+      ),
+      _ => (
+        Rpc::new::<LimitedReader<BufReader<<S::Stream as Connection>::OwnedReadHalf>>>(req, None),
+        None,
+      ),
     };
 
     // Check for heartbeat fast-path
@@ -1093,6 +1053,7 @@ where
           local_header,
           handle,
           shutdown_rx,
+          #[cfg(feature = "metrics")]
           respond_label,
         )
         .await
@@ -1118,9 +1079,16 @@ where
     metrics::histogram!(enqueue_label).record(process_start.elapsed().as_millis() as f64);
 
     // Wait for response
-    Self::wait_and_send_response(writer, local_header, handle, shutdown_rx, respond_label)
-      .await
-      .map(|_| reader)
+    Self::wait_and_send_response(
+      writer,
+      local_header,
+      handle,
+      shutdown_rx,
+      #[cfg(feature = "metrics")]
+      respond_label,
+    )
+    .await
+    .map(|_| reader)
   }
 
   async fn wait_and_send_response<

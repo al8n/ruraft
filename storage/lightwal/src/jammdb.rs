@@ -1,4 +1,10 @@
-use std::{borrow::Cow, io, ops::Bound, path::Path, sync::Arc};
+use std::{
+  borrow::Cow,
+  io,
+  ops::Bound,
+  path::{Path, PathBuf},
+  sync::Arc,
+};
 
 use ::jammdb::{Error as DbError, DB};
 use agnostic::Runtime;
@@ -10,7 +16,7 @@ use ruraft_core::{
 
 use super::*;
 
-pub use ::jammdb::OpenOptions as DbOptions;
+use ::jammdb::OpenOptions;
 
 const STABLE_BUCKET_NAME: &str = "__ruraft_stable__";
 const LOG_BUCKET_NAME: &str = "__ruraft_log__";
@@ -138,6 +144,92 @@ where
   }
 }
 
+/// Options to configure how a DB is opened.
+///
+/// This struct acts as a builder for a DB and allows you to specify the initial pagesize and number of pages you want to allocate for a new database file.
+#[derive(Default)]
+pub struct DbOptions {
+  path: PathBuf,
+  opts: OpenOptions,
+}
+
+impl DbOptions {
+  /// Creates a new [`DbOptions`] with default values.
+  pub fn new<P: AsRef<Path>>(path: P) -> Self {
+    Self {
+      path: path.as_ref().to_path_buf(),
+      opts: OpenOptions::default(),
+    }
+  }
+
+  /// Sets the pagesize for the database
+  ///
+  /// By default, your OS's pagesize is used as the database's pagesize, but if the file is
+  /// moved across systems with different page sizes, it is necessary to set the correct value.
+  /// Trying to open an existing database with the incorrect page size will result in a panic.
+  ///
+  /// # Panics
+  /// Will panic if you try to set the pagesize < 1024 bytes.
+  pub fn pagesize(self, pagesize: u64) -> Self {
+    Self {
+      path: self.path,
+      opts: self.opts.pagesize(pagesize),
+    }
+  }
+
+  /// Sets the number of pages to allocate for a new database file.
+  ///
+  /// The default `num_pages` is set to 32, so if your pagesize is 4096 bytes (4kb), then 131,072 bytes (128kb) will be allocated for the initial file.
+  /// Setting `num_pages` when opening an existing database has no effect.
+  ///
+  /// # Panics
+  /// Since a minimum of four pages are required for the database, this function will panic if you provide a value < 4.
+  pub fn num_pages(self, num_pages: usize) -> Self {
+    Self {
+      path: self.path,
+      opts: self.opts.num_pages(num_pages),
+    }
+  }
+
+  /// Enables or disables "Strict Mode", where each transaction will check the database for errors before finalizing a write.
+  ///
+  /// The default is `false`, but you may enable this if you want an extra degree of safety for your data at the cost of
+  /// slower writes.
+  pub fn strict_mode(self, strict_mode: bool) -> Self {
+    Self {
+      path: self.path,
+      opts: self.opts.strict_mode(strict_mode),
+    }
+  }
+
+  /// Enables or disables the [MAP_POPULATE flag](MAP_POPULATE) for the `mmap` call, which will cause Linux to eagerly load pages into memory.
+  ///
+  /// The default is `false`, but you may enable this if your database file will stay smaller than your available memory.
+  /// It is not recommended to enable this unless you know what you are doing.
+  ///
+  /// This setting only works on Linux, and is a no-op on other platforms.
+  pub fn mmap_populate(self, mmap_populate: bool) -> Self {
+    Self {
+      path: self.path,
+      opts: self.opts.mmap_populate(mmap_populate),
+    }
+  }
+
+  /// Enables or disables the O_DIRECT flag when opening the database file.
+  /// This gives a hint to Linux to bypass any operarating system caches when writing to this file.
+  ///
+  /// The default is `false`, but you may enable this if your database is much larger than your available memory to avoid throttling the page cache.
+  /// It is not recommended to enable this unless you know what you are doing.
+  ///
+  /// This setting only works on Linux, and is a no-op on other platforms.
+  pub fn direct_writes(self, direct_writes: bool) -> Self {
+    Self {
+      path: self.path,
+      opts: self.opts.direct_writes(direct_writes),
+    }
+  }
+}
+
 /// [`StableStorage`] and [`LogStorage`] implementor backed by [`jammdb`](::jammdb).
 pub struct Db<I, A, D, R> {
   db: DB,
@@ -151,8 +243,8 @@ where
   D: Transformable,
 {
   /// Creates a new [`Db`].
-  pub fn new<P: AsRef<Path>>(path: P, opts: DbOptions) -> Result<Self, Error<I, A, D>> {
-    let db = opts.open(path).map_err(ErrorKind::from)?;
+  pub fn new(opts: DbOptions) -> Result<Self, Error<I, A, D>> {
+    let db = opts.opts.open(opts.path).map_err(ErrorKind::from)?;
     let tx = db.tx(true).map_err(ErrorKind::from)?;
 
     tx.get_or_create_bucket(STABLE_BUCKET_NAME)
@@ -494,7 +586,7 @@ pub mod test {
     use tempfile::tempdir;
     let dir = tempdir().unwrap();
     TestDb {
-      db: Db::new(dir.path().join("test"), DbOptions::new()).unwrap(),
+      db: Db::new(DbOptions::new(dir.path().join("test"))).unwrap(),
       _dir: dir,
     }
   }

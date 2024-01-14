@@ -163,7 +163,7 @@ impl<T: Transport> core::fmt::Debug for RaftError<T> {
 }
 
 /// Errors implementation for the Raft.
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 pub enum Error<F, S, T>
 where
   F: FinateStateMachine,
@@ -189,6 +189,17 @@ where
   /// Returned when the storage reports an error.
   #[error("ruraft: {0}")]
   Storage(S::Error),
+}
+
+impl<F, S, T> core::fmt::Debug for Error<F, S, T>
+where
+  F: FinateStateMachine,
+  S: Storage,
+  T: Transport,
+{
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    core::fmt::Display::fmt(self, f)
+  }
 }
 
 impl<F, S, T> Error<F, S, T>

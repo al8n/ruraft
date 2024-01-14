@@ -162,7 +162,7 @@ pub mod tests {
   /// - create snapshot
   pub async fn memory_snapshot_storage_create<R: Runtime>() {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
-    use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
+    use ruraft_core::storage::SnapshotStorage;
 
     let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
@@ -199,7 +199,7 @@ pub mod tests {
     assert_eq!(latest.size, 13, "expected size 13");
 
     // Read the snapshot
-    let mut source = snap.open(&latest.id()).await.unwrap();
+    let (_, mut source) = snap.open(latest.id()).await.unwrap();
     let mut buf = vec![];
     source.read_to_end(&mut buf).await.unwrap();
 
@@ -213,7 +213,7 @@ pub mod tests {
   /// - open snapshot twice
   pub async fn memory_snapshot_storage_open_snapshot_twice<R: Runtime>() {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
-    use ruraft_core::storage::{SnapshotSink, SnapshotStorage};
+    use ruraft_core::storage::{SnapshotSink, SnapshotSinkExt, SnapshotStorage};
 
     let snap = MemorySnapshotStorage::<SmolStr, SocketAddr, R>::new();
 
@@ -228,7 +228,7 @@ pub mod tests {
     sink.cancel().await.unwrap();
 
     // Read the snapshot a first time
-    let mut source = snap.open(&sink.id()).await.unwrap();
+    let (_, mut source) = snap.open(sink.id()).await.unwrap();
 
     // Read out everything
     let mut buf = vec![];
@@ -238,7 +238,7 @@ pub mod tests {
     assert_eq!(buf, b"data\n", "expected contents to match");
 
     // Read the snapshot a second time
-    let mut source = snap.open(&sink.id()).await.unwrap();
+    let (_, mut source) = snap.open(sink.id()).await.unwrap();
     // Read out everything
     let mut buf = vec![];
     source.read_to_end(&mut buf).await.unwrap();

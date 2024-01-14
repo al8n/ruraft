@@ -14,7 +14,7 @@ default = []
 test = ["tracing-subscriber", "tempfile"]
 metrics = ["dep:metrics"]
 
-serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "ruraft-utils/serde", "dep:serde_millis"]
+serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "ruraft-utils/serde", "dep:serde_millis", "smallvec/serde"]
 
 [dependencies]
 arc-swap = "1.6"
@@ -29,6 +29,7 @@ bytes = { workspace = true, features = ["serde"] }
 byteorder = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-skiplist = "0.1"
+derive_more = { workspace = true }
 either = "1.9"
 futures = { workspace = true }
 nodecraft = { workspace = true, features = ["resolver", "agnostic"] }

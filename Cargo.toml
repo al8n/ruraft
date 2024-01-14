@@ -2,6 +2,8 @@
 members = [
   "autopilot",
   "core",
+  "bindings/common",
+  "bindings/python/*",
   "memory",
   "ruraft",
   "storage/snapshot",
@@ -26,17 +28,28 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-agnostic = "0.2" 
+agnostic = "0.2"
 async-channel = "2"
 async-lock = "3"
 bytes = "1.5"
 byteorder = "1.5"
+derive_more = "0.99"
 futures = "0.3"
 humantime-serde = "1.1"
 nodecraft = { version = "0.2", features = ["transformable"] }
 pin-project = "1.1"
 pollster = "0.3"
+ruraft-core = { path = "./core" }
+ruraft-bindings-common = { path = "./bindings/common" }
+ruraft-memory = { path = "./memory" }
+ruraft-net = { path = "./transport/net" }
+ruraft-snapshot = { path = "./storage/snapshot" }
+ruraft-lightwal = { path = "./storage/lightwal" }
+ruraft-tcp = { path = "./transport/tcp" }
+ruraft-utils = { path = "./utils" }
+ruraft-wire = { path = "./wire" }
 smol_str = { version = "0.2" }
+smallvec = { version = "1" }
 scopeguard = "1.1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
@@ -44,4 +57,3 @@ tracing = { version = "0.1" }
 metrics = { version = "0.22" }
 viewit = { version = "0.1.5" }
 wg = { version = "0.4", features = ["async"] }
-

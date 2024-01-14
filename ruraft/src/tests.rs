@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-use core::panic;
 use std::{
   borrow::Cow,
   collections::HashSet,
@@ -20,18 +19,19 @@ use ruraft_core::{
   },
   options::Options,
   sidecar::NoopSidecar,
-  storage::RaftStorage,
+  storage::{
+    CommittedLog, CommittedLogBatch, CommittedLogTransformError, RaftStorage, SnapshotSink,
+  },
   transport::{Transformable, Transport, Wire},
-  FinateStateMachine, FinateStateMachineError, FinateStateMachineLog,
-  FinateStateMachineLogTransformError, FinateStateMachineResponse, FinateStateMachineSnapshot,
-  RaftCore, Role,
+  ApplyBatchResponse, FinateStateMachine, FinateStateMachineError, FinateStateMachineResponse,
+  FinateStateMachineSnapshot, RaftCore, Role,
 };
 use ruraft_memory::{
   storage::{log::MemoryLogStorage, stable::MemoryStableStorage},
   transport::{MemoryAddress, MemoryAddressResolver, MemoryTransport, MemoryTransportOptions},
 };
 
-use ruraft_snapshot::sync::{FileSnapshotSink, FileSnapshotStorage, FileSnapshotStorageOptions};
+use ruraft_snapshot::sync::{FileSnapshotStorage, FileSnapshotStorageOptions};
 use smol_str::SmolStr;
 use tempfile::TempDir;
 
@@ -51,7 +51,7 @@ type Raft<W, R> = RaftCore<
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
 pub enum MockFSMErrorKind {
   IO(io::Error),
-  Transform(FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>),
+  Transform(CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>),
 }
 
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
@@ -81,10 +81,10 @@ impl<R: Runtime> From<io::Error> for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> From<FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
+impl<R: Runtime> From<CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
   for MockFSMError<R>
 {
-  fn from(err: FinateStateMachineLogTransformError<SmolStr, MemoryAddress, Vec<u8>>) -> Self {
+  fn from(err: CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>) -> Self {
     Self {
       kind: Arc::new(MockFSMErrorKind::Transform(err)),
       messages: Vec::new(),
@@ -137,7 +137,7 @@ impl FinateStateMachineResponse for MockFSMResponse {
 
 #[derive(Debug)]
 struct MockFSMInner {
-  logs: Vec<FinateStateMachineLog<SmolStr, MemoryAddress, Vec<u8>>>,
+  logs: Vec<CommittedLog<SmolStr, MemoryAddress, Vec<u8>>>,
   memberships: Vec<Membership<SmolStr, MemoryAddress>>,
 }
 
@@ -182,8 +182,6 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
 
   type Snapshot = MockFSMSnapshot<R>;
 
-  type SnapshotSink = FileSnapshotSink<SmolStr, MemoryAddress, R>;
-
   type Response = MockFSMResponse;
 
   type Id = SmolStr;
@@ -197,7 +195,7 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
   /// NOTE: This is exposed for middleware testing purposes and is not a stable API
   async fn apply(
     &self,
-    log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
+    log: CommittedLog<Self::Id, Self::Address, Self::Data>,
   ) -> Result<Self::Response, Self::Error> {
     let mut inner = self.inner.lock().await;
     inner.logs.push(log.clone());
@@ -206,10 +204,10 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
 
   async fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>>,
-  ) -> Result<Vec<Self::Response>, Self::Error> {
+    logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
+  ) -> Result<ApplyBatchResponse<Self::Response>, Self::Error> {
     let mut inner = self.inner.lock().await;
-    let mut responses = Vec::new();
+    let mut responses = ApplyBatchResponse::new();
     for log in logs {
       inner.logs.push(log.clone());
       responses.push(MockFSMResponse(inner.logs.len() as u64));
@@ -232,7 +230,7 @@ impl<R: Runtime> FinateStateMachine for MockFSM<R> {
   /// NOTE: This is exposed for middleware testing purposes and is not a stable API
   async fn restore(
     &self,
-    _snapshot: impl futures::prelude::AsyncRead + Unpin,
+    _snapshot: impl futures::AsyncRead + Send + Unpin,
   ) -> Result<(), Self::Error> {
     Ok(())
   }
@@ -245,7 +243,7 @@ pub struct MockFSMMembershipStore<R> {
 
 /// NOTE: This is exposed for middleware testing purposes and is not a stable API
 pub struct MockFSMSnapshot<R> {
-  logs: Vec<FinateStateMachineLog<SmolStr, MemoryAddress, Vec<u8>>>,
+  logs: Vec<CommittedLog<SmolStr, MemoryAddress, Vec<u8>>>,
   max_index: u64,
   _runtime: PhantomData<R>,
 }
@@ -253,11 +251,11 @@ pub struct MockFSMSnapshot<R> {
 impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
   type Error = MockFSMError<R>;
 
-  type Sink = FileSnapshotSink<SmolStr, MemoryAddress, R>;
-
   type Runtime = R;
 
-  async fn persist(&self, mut sink: Self::Sink) -> Result<(), Self::Error> {
+  async fn persist(&self, mut sink: impl SnapshotSink) -> Result<(), Self::Error> {
+    use ruraft_core::storage::SnapshotSinkExt;
+
     let encode_size = self.logs[..self.max_index as usize]
       .iter()
       .map(|l| l.encoded_len())
@@ -268,7 +266,30 @@ impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
     for log in &self.logs[..self.max_index as usize] {
       offset += log.encode(&mut buf[offset..])?;
     }
-    sink.write_all(&buf[..offset]).await.map_err(Into::into)
+    match sink.write_all(&buf[..offset]).await {
+      Ok(_) => {
+        sink.flush().await?;
+        if let Err(e) = sink.close().await {
+          tracing::error!(target = "ruraft.tests", err=%e, "failed to close snapshot sink");
+        }
+        Ok(())
+      }
+      Err(err) => {
+        if let Err(e) = sink.cancel().await {
+          tracing::error!(target = "ruraft.tests", err=%e, "failed to cancel snapshot sink");
+        }
+
+        if let Err(e) = sink.close().await {
+          tracing::error!(target = "ruraft.tests", err=%e, "failed to close snapshot sink");
+        }
+
+        Err(MockFSMError::from(err))
+      }
+    }
+  }
+
+  async fn release(&mut self) -> Result<(), Self::Error> {
+    Ok(())
   }
 }
 
@@ -321,11 +342,6 @@ where
   <R::Sleep as futures::Future>::Output: Send + 'static,
   <<R as Runtime>::Interval as futures::Stream>::Item: Send,
 {
-  // async fn make_cluster(n: usize, opts: MakeClusterOptions) -> Result<Self, DynError> {
-  //   opts.options.get_or_insert(inmem_config());
-
-  // }
-
   pub fn remove_server(&mut self, id: &str) {
     self.rafts.retain(|raft| raft.local_id().as_str() != id);
   }
@@ -793,7 +809,7 @@ where
       dirs.push(dir);
       let stable_store = MemoryStableStorage::new();
       let log_store = MemoryLogStorage::new();
-      let (dir2, snapshot_store) = file_snapshot().await;
+      let (dir2, snapshot_store) = file_snapshot();
       snaps.push(snapshot_store.clone());
       dirs.push(dir2);
       fsms.push(MockFSM::default());
@@ -920,13 +936,11 @@ impl DurationExt for Duration {
   }
 }
 
-async fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
+fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
   // Create a test dir
   let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
 
   let opts = FileSnapshotStorageOptions::new(dir.path(), 3, true);
-  let snap = FileSnapshotStorage::<SmolStr, MemoryAddress, R>::new(opts)
-    .await
-    .unwrap();
+  let snap = FileSnapshotStorage::<SmolStr, MemoryAddress, R>::new(opts).unwrap();
   (dir, snap)
 }

@@ -28,7 +28,8 @@ pub mod tests {
   use agnostic::Runtime;
   use futures::Future;
   use ruraft_net::{
-    resolver::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header, ProtocolVersion,
+    resolver::socket_addr::SocketAddrResolver, tests, tests_mod, wire::LpeWire, Header,
+    ProtocolVersion,
   };
   use smol_str::SmolStr;
   use std::{
@@ -83,53 +84,33 @@ pub mod tests {
   async fn tls_stream_layer<R: Runtime>() -> crate::tls::Tls<R> {
     use std::sync::Arc;
 
-    use async_rustls::rustls::{self, Certificate, PrivateKey};
-
-    use crate::tls::Tls;
-
-    struct SkipServerVerification;
-
-    impl SkipServerVerification {
-      fn new() -> Arc<Self> {
-        Arc::new(Self)
-      }
-    }
-
-    impl rustls::client::ServerCertVerifier for SkipServerVerification {
-      fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-      ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
-      }
-    }
+    use crate::tls::{rustls, NoopCertificateVerifier, Tls};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
     let certs = test_cert_gen::gen_keys();
 
     let cfg = rustls::ServerConfig::builder()
-      .with_safe_defaults()
       .with_no_client_auth()
       .with_single_cert(
-        vec![Certificate(
+        vec![CertificateDer::from(
           certs.server.cert_and_key.cert.get_der().to_vec(),
         )],
-        PrivateKey(certs.server.cert_and_key.key.get_der().to_vec()),
+        PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+          certs.server.cert_and_key.key.get_der().to_vec(),
+        )),
       )
       .expect("bad certificate/key");
-    let acceptor = async_rustls::TlsAcceptor::from(Arc::new(cfg));
+    let acceptor = futures_rustls::TlsAcceptor::from(Arc::new(cfg));
 
     let cfg = rustls::ClientConfig::builder()
-      .with_safe_defaults()
-      .with_custom_certificate_verifier(SkipServerVerification::new())
+      .dangerous()
+      .with_custom_certificate_verifier(NoopCertificateVerifier::new())
       .with_no_client_auth();
-    let connector = async_rustls::TlsConnector::from(Arc::new(cfg));
+    let connector = futures_rustls::TlsConnector::from(Arc::new(cfg));
     Tls::new(
-      rustls::ServerName::IpAddress("127.0.0.1".parse().unwrap()),
+      rustls::pki_types::ServerName::IpAddress(
+        "127.0.0.1".parse::<std::net::IpAddr>().unwrap().into(),
+      ),
       acceptor,
       connector,
     )

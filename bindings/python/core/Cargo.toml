@@ -1,0 +1,87 @@
+[package]
+name = "ruraft-python"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# [lib]
+# name = "ruraft_python"
+# crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["metrics", "sled", "jammdb", "redb", "serde", "tls", "native-tls"]
+
+metrics = [
+  "ruraft-lightwal/metrics",
+  "ruraft-core/metrics",
+  "ruraft-tcp/metrics",
+  "ruraft-snapshot/metrics",
+]
+
+serde = [
+  "dep:serde",
+  "serde_json",
+  "ruraft-core/serde",
+  "ruraft-tcp/serde",
+  "ruraft-snapshot/serde",
+  "ruraft-bindings-common/serde",
+  "pyo3/serde",
+  "nodecraft/serde",
+  "smol_str/serde",
+  "humantime-serde",
+]
+
+tokio = ["dep:tokio", "tokio-util", "agnostic/tokio", "pyo3-asyncio/tokio-runtime", "pyo3io/tokio"]
+async-std = ["dep:async-std", "agnostic/async-std", "pyo3-asyncio/async-std-runtime", "pyo3io/async-std"]
+smol = ["agnostic/smol"]
+
+sled = ["ruraft-lightwal/sled", "ruraft-bindings-common/sled"]
+jammdb = ["ruraft-lightwal/jammdb", "page_size", "ruraft-bindings-common/jammdb"]
+redb = ["ruraft-lightwal/redb", "ruraft-bindings-common/redb"]
+
+tls = ["ruraft-tcp/tls", "ruraft-bindings-common/tls"]
+native-tls = ["ruraft-tcp/native-tls", "ruraft-bindings-common/native-tls"]
+
+[dependencies]
+agnostic = { workspace = true }
+async-lock = { workspace = true }
+chrono = "0.4"
+derive_more = { workspace = true }
+either = { version = "1", features = ["serde"] }
+futures = { workspace = true }
+indexmap = "2"
+nodecraft = { workspace = true }
+paste = "1"
+pyo3 = { version = "0.20", features = [
+  "smallvec",
+  "indexmap",
+  "either",
+  "experimental-inspect",
+  "chrono",
+] }
+pyo3-asyncio = { version = "0.20", features = ["attributes"] }
+pyo3io = { version = "0.1", default-features = false }
+pyo3io-macros = "0.1"
+pin-project = { workspace = true }
+ruraft-core = { workspace = true }
+ruraft-bindings-common = { workspace = true }
+ruraft-lightwal = { workspace = true }
+ruraft-memory = { workspace = true }
+ruraft-snapshot = { workspace = true }
+ruraft-tcp = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+humantime-serde = { version = "1", optional = true }
+smallvec = "1"
+smol_str = { workspace = true }
+tracing = { workspace = true }
+transformable = { version = "0.1", features = ["bytes", "smallvec"] }
+
+page_size = { version = "0.6", optional = true }
+
+tokio = { version = "1", default_features = false, optional = true, features = ["fs"] }
+tokio-util = { version = "0.7", default_features = false, optional = true, features = ["compat"] }
+async-std = { version = "1", optional = true }
+
+[dev-dependencies]
+pyo3 = { version = "0.20", features = ["auto-initialize"] }

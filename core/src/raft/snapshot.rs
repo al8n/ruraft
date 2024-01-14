@@ -2,7 +2,6 @@
 use std::time::Instant;
 use std::{
   borrow::Cow,
-  future::Future,
   sync::{atomic::Ordering, Arc},
   time::Duration,
 };
@@ -18,7 +17,8 @@ use crate::{
   membership::Membership,
   options::ReloadableOptions,
   storage::{
-    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotStorage, Storage, StorageError,
+    compact_logs, LogStorage, SnapshotId, SnapshotSink, SnapshotSource, SnapshotStorage, Storage,
+    StorageError,
   },
   transport::Transport,
   FinateStateMachine, FinateStateMachineError, FinateStateMachineSnapshot, LastSnapshot,
@@ -34,7 +34,7 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
   >,
   S: Storage<
     Id = T::Id,
@@ -43,7 +43,6 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   R: Runtime,
   <R::Sleep as std::future::Future>::Output: Send,
   R: Runtime,
@@ -65,21 +64,8 @@ where
       >,
     >,
   >,
-  pub(super) user_snapshot_rx: async_channel::Receiver<
-    oneshot::Sender<
-      Result<
-        Box<
-          dyn Future<
-              Output = Result<
-                <S::Snapshot as SnapshotStorage>::Source,
-                <S::Snapshot as SnapshotStorage>::Error,
-              >,
-            > + Send,
-        >,
-        Error<F, S, T>,
-      >,
-    >,
-  >,
+  pub(super) user_snapshot_rx:
+    async_channel::Receiver<oneshot::Sender<Result<SnapshotSource<S>, Error<F, S, T>>>>,
   pub(super) opts: Arc<Atomic<ReloadableOptions>>,
   pub(super) wg: AsyncWaitGroup,
   pub(super) shutdown_rx: async_channel::Receiver<()>,
@@ -91,7 +77,7 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
+    Runtime = R,
   >,
   S: Storage<
     Id = T::Id,
@@ -117,19 +103,29 @@ where
             }
 
             // Trigger a snapshot
-            if let Err(e) = self.take_snapshot().await {
+            let (snapshot, res) = self.take_snapshot().await;
+            if let Some(mut snapshot) = snapshot {
+              if let Err(e) = snapshot.release().await {
+                tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to release finate state machine's snapshot");
+              }
+            }
+            if let Err(e) = res {
               tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to take snapshot");
             }
           },
           rst = self.user_snapshot_rx.recv().fuse() => match rst {
             // User-triggered, run immediately
             Ok(tx) => {
-              match self.take_snapshot().await {
+              let (snapshot, res) = self.take_snapshot().await;
+              if let Some(mut snapshot) = snapshot {
+                if let Err(e) = snapshot.release().await {
+                  tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to release finate state machine's snapshot");
+                }
+              }
+              match res {
                 Ok(id) => {
                   let s = self.store.clone();
-                  let _ = tx.send(Ok(Box::new(async move {
-                    s.snapshot_store().open(&id).await
-                  })));
+                  let _ = tx.send(Ok(SnapshotSource::new(id, s)));
                 }
                 Err(e) => {
                   tracing::error!(target = "ruraft.snapshot.runner", err=%e, "failed to take snapshot");
@@ -151,7 +147,7 @@ where
     });
   }
 
-  async fn take_snapshot(&self) -> Result<SnapshotId, Error<F, S, T>> {
+  async fn take_snapshot(&self) -> (Option<F::Snapshot>, Result<SnapshotId, Error<F, S, T>>) {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
 
@@ -172,20 +168,19 @@ where
             match rx.await {
               Ok(Ok(snap)) => snap,
               Ok(Err(e)) => {
-                return match e {
+                return (None, match e {
                   Error::Raft(RaftError::NothingNewToSnapshot) => Err(Error::nothing_new_to_snapshot()),
-
                   e => {
                     // TODO: with_message
                     // Err(e.with_message(Cow::Borrowed("failed to start snapshot")))
                     Err(e)
                   },
-                };
+                });
               }
-              Err(_) => return Err(Error::closed("finate state mechine snapshot request sender closed")),
+              Err(_) => return (None, Err(Error::closed("finate state mechine snapshot request sender closed"))),
             }
           }
-          Err(_) => return Err(Error::closed("finate state mechine snapshot receiver closed")),
+          Err(_) => return (None, Err(Error::closed("finate state mechine snapshot receiver closed"))),
         };
 
         // Make a request for the memberships and extract the committed info.
@@ -199,11 +194,11 @@ where
                 // Wait until we get a response
                 match rx.await {
                   Ok(Ok(membership)) => membership,
-                  Ok(Err(e)) => return Err(e),
-                  Err(_) => return Err(Error::closed("memberships request channel closed")),
+                  Ok(Err(e)) => return (Some(snap.snapshot), Err(e)),
+                  Err(_) => return (Some(snap.snapshot), Err(Error::closed("memberships request channel closed"))),
                 }
               }
-              Err(_) => return Err(Error::closed("memberships channel closed")),
+              Err(_) => return (Some(snap.snapshot), Err(Error::closed("memberships channel closed"))),
             };
 
             // We don't support snapshots while there's a membership change outstanding
@@ -215,10 +210,10 @@ where
             // then it's not crucial that we snapshot, since there's not much going
             // on Raft-wise.
             if snap.index < committed_membership.0 {
-              return Err(Error::cant_take_snapshot(
+              return (Some(snap.snapshot), Err(Error::cant_take_snapshot(
                 committed_membership.0,
                 snap.index,
-              ));
+              )));
             }
 
 
@@ -235,7 +230,7 @@ where
             ).await {
               Ok(sink) => sink,
               Err(e) => {
-                return Err(Error::storage(<S::Error as StorageError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot"))));
+                return (Some(snap.snapshot), Err(Error::storage(<S::Error as StorageError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")))));
               },
             };
 
@@ -251,7 +246,7 @@ where
             let persist_start = Instant::now();
             let id = sink.id();
             if let Err(e) = snap.snapshot.persist(sink).await {
-              return Err(Error::fsm(<F::Error as FinateStateMachineError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot"))));
+              return (Some(snap.snapshot), Err(Error::fsm(<F::Error as FinateStateMachineError>::snapshot(e).with_message(Cow::Borrowed("failed to create snapshot")))));
             }
 
             #[cfg(feature = "metrics")]
@@ -264,17 +259,18 @@ where
             self.state.set_last_snapshot(LastSnapshot::new(snap.index, snap.term));
 
             // Compact the logs.
-            self.compact_logs(snap.index).await
+            let snap_idx = snap.index;
+            (Some(snap.snapshot), self.compact_logs(snap_idx).await
               .map(|_| {
                 tracing::info!(target = "ruraft.snapshot.runner", index=%snap.index, "snapshot complete up");
                 id
               })
-              .map_err(Error::storage)
+              .map_err(Error::storage))
           }
-          _ = self.shutdown_rx.recv().fuse() => Err(Error::shutdown()),
+          _ = self.shutdown_rx.recv().fuse() => (Some(snap.snapshot), Err(Error::shutdown())),
         }
       }
-      _ = self.shutdown_rx.recv().fuse() => Err(Error::shutdown()),
+      _ = self.shutdown_rx.recv().fuse() => (None, Err(Error::shutdown())),
     }
   }
 

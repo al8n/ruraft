@@ -1,50 +1,38 @@
-use std::{borrow::Cow, future::Future, sync::Arc};
+use std::{borrow::Cow, future::Future};
 
-use futures::AsyncRead;
+// use futures::AsyncRead;
 use nodecraft::{Address, Id};
+use smallvec::SmallVec;
 
-use crate::{membership::Membership, storage::SnapshotSink, Data};
-
-mod log;
-pub use log::*;
+use crate::{
+  storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
+  Data,
+};
 
 /// Represents a snapshot of the finate state machine.
+#[auto_impl::auto_impl(Box)]
 pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   /// Errors returned by the finate state machine snapshot.
-  type Error: std::error::Error;
-
-  /// The sink type used by the finate state machine snapshot.
-  type Sink: SnapshotSink;
+  type Error: std::error::Error + Send + Sync + 'static;
 
   /// The async runtime used by the finate state machine snapshot.
   type Runtime: agnostic::Runtime;
 
   /// Persist should write the FSM snapshot to the given sink.
-  fn persist(&self, sink: Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  ///
+  /// **Note:**
+  ///
+  /// - [`SnapshotSink::cancel`](crate::storage::SnapshotSink::cancel) should be invoked on failure.
+  /// - Whether the implementation return `Ok` or `Err`, at the end of the fn,
+  /// [`close`](futures::AsyncWriteExt::close) on `sink` should be invoked.
+  fn persist(
+    &self,
+    sink: impl SnapshotSink + 'static,
+  ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-  // /// Release is invoked when we are finished with the snapshot.
-  // fn release(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+  /// Release is invoked when we are finished with the snapshot.
+  fn release(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
-
-macro_rules! impl_finish_state_machine_snapshot_for_wrapper {
-  ($($ty: ident), +$(,)?) => {
-    $(
-      const _: () = {
-        impl<F: FinateStateMachineSnapshot> FinateStateMachineSnapshot for $ty<F> {
-          type Error = F::Error;
-          type Sink = F::Sink;
-          type Runtime = F::Runtime;
-
-          fn persist(&self, sink: Self::Sink) -> impl Future<Output = Result<(), Self::Error>> + Send {
-            (**self).persist(sink)
-          }
-        }
-      };
-    )*
-  };
-}
-
-impl_finish_state_machine_snapshot_for_wrapper!(Box, Arc);
 
 /// Represents a comprehensive set of errors arising from operations within the [`FinateStateMachine`] trait.
 ///
@@ -68,16 +56,73 @@ pub trait FinateStateMachineResponse: Send + Sync + 'static {
   fn index(&self) -> u64;
 }
 
+const INLINED_RESPONSE: usize = 2;
+
+/// Response returned by [`FinateStateMachine::apply_batch`].
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ApplyBatchResponse<R>(SmallVec<[R; INLINED_RESPONSE]>);
+
+impl<R> Default for ApplyBatchResponse<R> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl<R> ApplyBatchResponse<R> {
+  /// Creates a new instance of `ApplyBatchResponse`.
+  pub fn new() -> Self {
+    Self(SmallVec::new())
+  }
+
+  /// Creates a new instance of `ApplyBatchResponse` with the given capacity.
+  pub fn with_capacity(capacity: usize) -> Self {
+    Self(SmallVec::with_capacity(capacity))
+  }
+}
+
+impl<R> From<SmallVec<[R; INLINED_RESPONSE]>> for ApplyBatchResponse<R> {
+  fn from(value: SmallVec<[R; INLINED_RESPONSE]>) -> Self {
+    Self(value)
+  }
+}
+
+impl<R> core::ops::Deref for ApplyBatchResponse<R> {
+  type Target = SmallVec<[R; INLINED_RESPONSE]>;
+
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+
+impl<R> core::ops::DerefMut for ApplyBatchResponse<R> {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    &mut self.0
+  }
+}
+
+impl<R> FromIterator<R> for ApplyBatchResponse<R> {
+  fn from_iter<T: IntoIterator<Item = R>>(iter: T) -> Self {
+    Self(iter.into_iter().collect())
+  }
+}
+
+impl<R> IntoIterator for ApplyBatchResponse<R> {
+  type Item = R;
+  type IntoIter = smallvec::IntoIter<[R; INLINED_RESPONSE]>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.0.into_iter()
+  }
+}
+
 /// Implemented by clients to make use of the replicated log.
+#[auto_impl::auto_impl(Box, Arc)]
 pub trait FinateStateMachine: Send + Sync + 'static {
   /// Errors returned by the finate state machine.
   type Error: FinateStateMachineError<Snapshot = Self::Snapshot>;
 
   /// The snapshot type used by the finate state machine.
-  type Snapshot: FinateStateMachineSnapshot<Sink = Self::SnapshotSink, Runtime = Self::Runtime>;
-
-  /// The sink type used by the finate state machine snapshot.
-  type SnapshotSink: SnapshotSink;
+  type Snapshot: FinateStateMachineSnapshot<Runtime = Self::Runtime>;
 
   /// The response type returned by the finate state machine after apply.
   type Response: FinateStateMachineResponse;
@@ -100,7 +145,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// produce the same result on all peers in the cluster.
   fn apply(
     &self,
-    log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
+    log: CommittedLog<Self::Id, Self::Address, Self::Data>,
   ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
   /// Invoked once a batch of log entries has been committed and
@@ -114,8 +159,8 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// method if that method was called on the same Raft node as the FSM.
   fn apply_batch(
     &self,
-    logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>> + Send,
-  ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send;
+    logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
+  ) -> impl Future<Output = Result<ApplyBatchResponse<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to
   /// restore the FSM to a previous state, or to bring out-of-date followers up
@@ -136,52 +181,6 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// state before restoring the snapshot.
   fn restore(
     &self,
-    snapshot: impl AsyncRead + Send + Unpin,
+    snapshot: impl futures::AsyncRead + Unpin + Send + Sync + 'static,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
-
-macro_rules! impl_finate_state_machine_wrapper {
-  ($($ty:ident), +$(,)?) => {
-    $(
-      const _: () = {
-        impl<T: FinateStateMachine> FinateStateMachine for $ty<T> {
-          type Error = T::Error;
-          type Snapshot = T::Snapshot;
-          type SnapshotSink = T::SnapshotSink;
-          type Response = T::Response;
-          type Id = T::Id;
-          type Address = T::Address;
-          type Data = T::Data;
-          type Runtime = T::Runtime;
-
-          fn apply(
-            &self,
-            log: FinateStateMachineLog<Self::Id, Self::Address, Self::Data>,
-          ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send {
-            (**self).apply(log)
-          }
-
-          fn apply_batch(
-            &self,
-            logs: impl IntoIterator<Item = FinateStateMachineLog<Self::Id, Self::Address, Self::Data>> + Send,
-          ) -> impl Future<Output = Result<Vec<Self::Response>, Self::Error>> + Send {
-            (**self).apply_batch(logs)
-          }
-
-          fn snapshot(&self) -> impl Future<Output = Result<Self::Snapshot, Self::Error>> + Send {
-            (**self).snapshot()
-          }
-
-          fn restore(
-            &self,
-            snapshot: impl AsyncRead + Send + Unpin,
-          ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-            (**self).restore(snapshot)
-          }
-        }
-      };
-    )+
-  };
-}
-
-impl_finate_state_machine_wrapper!(Box, Arc);

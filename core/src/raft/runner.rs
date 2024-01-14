@@ -10,13 +10,13 @@ use std::{
 
 use agnostic::Runtime;
 use atomic::Atomic;
-use futures::{channel::oneshot, FutureExt};
+use futures::{channel::oneshot, AsyncWriteExt, FutureExt};
 use nodecraft::{resolver::AddressResolver, Address, Id};
 use smallvec::SmallVec;
 use wg::AsyncWaitGroup;
 
 use super::{
-  api::ApplySender, fsm::FSMRequest, state::LastLog, CountingReader, Leader,
+  api::ApplySender, fsm::FSMRequest, state::LastLog, CountingSnapshotSourceReader, Leader,
   MembershipChangeRequest, Observer, ObserverId, OptionalContact, Shutdown,
 };
 use crate::{
@@ -28,8 +28,8 @@ use crate::{
   raft::snapshot::SnapshotRestoreMonitor,
   sidecar::Sidecar,
   storage::{
-    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, SnapshotStorage,
-    StableStorage, Storage, StorageError,
+    compact_logs, remove_old_logs, Log, LogKind, LogStorage, SnapshotMeta, SnapshotSink,
+    SnapshotSinkExt, SnapshotStorage, StableStorage, Storage, StorageError,
   },
   transport::{
     AppendEntriesRequest, AppendEntriesResponse, ErrorResponse, Header, HeartbeatRequest,
@@ -96,7 +96,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -112,8 +111,7 @@ where
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
-  pub(super) rpc:
-    RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data, T::SnapshotInstaller>,
+  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
   /// last_contact is the last time we had contact from the
@@ -158,7 +156,10 @@ where
   )>,
   pub(super) verify_rx: async_channel::Receiver<oneshot::Sender<Result<(), Error<F, S, T>>>>,
   pub(super) user_restore_rx: async_channel::Receiver<(
-    <S::Snapshot as SnapshotStorage>::Source,
+    (
+      SnapshotMeta<T::Id, <T::Resolver as AddressResolver>::Address>,
+      Box<dyn futures::AsyncRead + Unpin + Send + Sync + 'static>,
+    ),
     oneshot::Sender<Result<(), Error<F, S, T>>>,
   )>,
   pub(super) leader_tx: async_channel::Sender<bool>,
@@ -177,7 +178,6 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Data = T::Data,
     Runtime = R,
   >,
@@ -204,7 +204,6 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    SnapshotSink = <S::Snapshot as SnapshotStorage>::Sink,
     Data = T::Data,
     Runtime = R,
   >,
@@ -300,7 +299,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
-    rpc_reader: Option<T::SnapshotInstaller>,
+    rpc_reader: Option<Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>>,
   ) {
     // TODO: validate the request header
     match req {
@@ -656,7 +655,7 @@ where
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
     req: InstallSnapshotRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
-    reader: T::SnapshotInstaller,
+    reader: Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>,
   ) {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
@@ -726,7 +725,7 @@ where
 
     // Separately track the progress of streaming a snapshot over the network
     // because this too can take a long time.
-    let mut counting_rpc_reader = CountingReader::from(reader);
+    let mut counting_rpc_reader = CountingSnapshotSourceReader::from(reader);
 
     // Spill the remote snapshot to disk
     let ctr = counting_rpc_reader.ctr();
@@ -781,7 +780,9 @@ where
       return respond_install_snapshot_request(
         &self.transport,
         counting_rpc_reader,
-        Err(Error::<F, S, T>::storage(<S::Error as StorageError>::io(e))),
+        Err(Error::<F, S, T>::storage(
+          <S::Error as StorageError>::snapshot(<S::Snapshot as SnapshotStorage>::Error::from(e)),
+        )),
         tx,
       )
       .await;

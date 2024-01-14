@@ -15,7 +15,18 @@ default = ["dns"]
 serde = ["dep:serde", "humantime-serde", "ruraft-core/serde"]
 
 # enable DNS node address resolver
-dns = ["agnostic/dns", "nodecraft/dns"]
+dns = ["nodecraft/dns"]
+dns-over-quic = ["dns", "nodecraft/dns-over-quic"]
+dns-over-h3 = ["dns", "nodecraft/dns-over-h3"]
+dns-over-https-rustls = ["dns", "nodecraft/dns-over-https-rustls"]
+dns-over-rustls = ["dns", "nodecraft/dns-over-rustls"]
+dns-over-openssl = ["dns", "nodecraft/dns-over-openssl"]
+dns-over-native-tls = ["dns", "nodecraft/dns-over-native-tls"]
+dns-webpki-roots = ["dns", "nodecraft/dns-webpki-roots"]
+dns-native-certs = ["dns", "nodecraft/dns-native-certs"]
+dnssec-openssl = ["dns", "nodecraft/dnssec-openssl"]
+dnssec-ring = ["dns", "nodecraft/dnssec-ring"]
+dnssec = ["dns", "nodecraft/dnssec"]
 
 # enable metrics
 metrics = ["ruraft-core/metrics", "dep:metrics"]

@@ -24,19 +24,6 @@ pub(crate) async fn override_notify_bool(
 }
 
 #[cfg(feature = "serde")]
-pub(crate) mod serde_instant {
-  use serde::Serializer;
-  use std::time::Instant;
-
-  pub fn serialize<S>(time: &Option<Instant>, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: Serializer,
-  {
-    humantime_serde::option::serialize(&time.map(|t| t.elapsed()), serializer)
-  }
-}
-
-#[cfg(feature = "serde")]
 pub(crate) mod serde_system_time {
   use atomic_time::utils::{decode_duration, encode_duration};
   use serde::{Deserialize, Deserializer, Serializer};

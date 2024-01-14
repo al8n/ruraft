@@ -23,7 +23,7 @@ use crate::{
   observer::{observe, Observation, Observer, ObserverId},
   options::ReloadableOptions,
   raft::Contact,
-  storage::{LogStorage, SnapshotSource, SnapshotStorage, Storage},
+  storage::{LogBatch, LogStorage, SnapshotStorage, Storage},
   transport::{
     AppendEntriesPipeline, AppendEntriesRequest, HeartbeatRequest, InstallSnapshotRequest,
     PipelineAppendEntriesResponse, Transport,
@@ -40,7 +40,6 @@ where
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
     Data = T::Data,
-    SnapshotSink = <S::Snapshot as super::SnapshotStorage>::Sink,
     Runtime = R,
   >,
   S: Storage<
@@ -635,13 +634,12 @@ where
     }
     // Open the most recent snapshot
     let snap_id = snapshots[0].id();
-    let snap = snap_store.open(&snap_id).await.map_err(|e| {
+    let (meta, snap) = snap_store.open(snap_id).await.map_err(|e| {
       tracing::error!(target = "ruraft.repl", id=%snap_id, err=%e, "failed to open snapshot");
       Error::snapshot(e)
     })?;
 
     // Setup the request
-    let meta = snap.meta();
     let req = InstallSnapshotRequest {
       header: self.transport.header(),
       snapshot_version: meta.version(),
@@ -750,7 +748,7 @@ where
       term,
       prev_log_entry: 0,
       prev_log_term: 0,
-      entries: Vec::with_capacity(self.max_append_entries as usize),
+      entries: LogBatch::with_capacity(self.max_append_entries as usize),
       leader_commit: self.state.commit_index(),
     };
     self.set_previous_log(ls, next_idx, &mut req).await?;

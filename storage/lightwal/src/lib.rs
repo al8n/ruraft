@@ -8,9 +8,6 @@ use std::sync::Arc;
 
 use ruraft_core::storage::{LogStorage, RaftStorage, SnapshotStorage, StableStorage, Storage};
 
-#[cfg(not(any(feature = "redb", feature = "sled", feature = "jammdb")))]
-compile_error!("At least one of the following features must be enabled: redb, sled, jammdb");
-
 /// [`jammdb`](::jammdb) backed [`StableStorage`](ruraft_core::storage::StableStorage) and [`LogStorage`](ruraft_core::storage::LogStorage) implementor.
 #[cfg(feature = "jammdb")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jammdb")))]
@@ -26,12 +23,19 @@ pub mod redb;
 #[cfg_attr(docsrs, doc(cfg(feature = "sled")))]
 pub mod sled;
 
+#[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
 const LAST_CANIDATE_ID: &str = "__ruraft_last_candidate_id__";
+#[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
 const LAST_CANIDATE_ADDR: &str = "__ruraft_last_candidate_addr__";
+#[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
 const LAST_VOTE_TERM: &str = "__ruraft_last_vote_term__";
+#[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
 const CURRENT_TERM: &str = "__ruraft_current_term__";
 
-#[cfg(feature = "metrics")]
+#[cfg(all(
+  feature = "metrics",
+  any(feature = "jammdb", feature = "redb", feature = "sled")
+))]
 fn report_store_many(logs: usize, start: std::time::Instant) {
   let duration = start.elapsed();
   let nanos = duration.as_nanos(); // Get the elapsed time in nanoseconds
@@ -50,9 +54,6 @@ pub trait Backend: sealed::Sealed {}
 
 // Implementation of the private, sealed trait
 mod sealed {
-  use agnostic::Runtime;
-  use ruraft_core::transport::{Address, Id, Transformable};
-
   use super::*;
 
   pub trait Sealed:
@@ -65,33 +66,13 @@ mod sealed {
   {
   }
 
-  #[cfg(feature = "jammdb")]
-  impl<I, A, D, R> Sealed for crate::jammdb::Db<I, A, D, R>
-  where
-    I: Id,
-    A: Address,
-    D: Transformable,
-    R: Runtime,
-  {
-  }
-
-  #[cfg(feature = "redb")]
-  impl<I, A, D, R> Sealed for crate::redb::Db<I, A, D, R>
-  where
-    I: Id,
-    A: Address,
-    D: Transformable,
-    R: Runtime,
-  {
-  }
-
-  #[cfg(feature = "sled")]
-  impl<I, A, D, R> Sealed for crate::sled::Db<I, A, D, R>
-  where
-    I: Id,
-    A: Address,
-    D: Transformable,
-    R: Runtime,
+  impl<S> Sealed for S where
+    S: LogStorage
+      + StableStorage<
+        Id = <Self as LogStorage>::Id,
+        Address = <Self as LogStorage>::Address,
+        Runtime = <Self as LogStorage>::Runtime,
+      >
   {
   }
 
@@ -147,7 +128,10 @@ impl<
   }
 }
 
-#[cfg(any(feature = "test", test))]
+#[cfg(all(
+  any(feature = "test", test),
+  any(feature = "jammdb", feature = "redb", feature = "sled")
+))]
 mod test {
   pub use ruraft_core::tests::storage::*;
 }

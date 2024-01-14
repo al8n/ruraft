@@ -17,7 +17,7 @@ use crate::{
 };
 
 /// The suffrage of a server.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(
   feature = "serde",
   derive(serde_repr::Serialize_repr, serde_repr::Deserialize_repr)
@@ -29,6 +29,12 @@ pub enum ServerSuffrage {
   Voter,
   /// The server cannot vote.
   Nonvoter,
+}
+
+impl core::fmt::Debug for ServerSuffrage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(self.as_str())
+  }
 }
 
 /// Returend when the fail to parse [`ServerSuffrage`].
@@ -81,14 +87,14 @@ impl ServerSuffrage {
 }
 
 /// A server in the cluster.
-#[viewit::viewit]
+#[viewit::viewit(setters(prefix = "with"))]
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Server<I, A> {
   /// A unique string identifying this server for all time.
   #[viewit(
     getter(const, style = "ref", attrs(doc = "Returns the id of the server.")),
-    setter(attrs(doc = "Sets the id of the server."))
+    setter(attrs(doc = "Sets the id of the server in builder pattern."))
   )]
   id: I,
 
@@ -99,13 +105,13 @@ pub struct Server<I, A> {
       style = "ref",
       attrs(doc = "Returns the address of the server.")
     ),
-    setter(attrs(doc = "Sets the address of the server."))
+    setter(attrs(doc = "Sets the address of the server in builder pattern."))
   )]
   addr: A,
   /// Determines whether the server gets a vote.
   #[viewit(
     getter(const, attrs(doc = "Returns the suffrage of the server.")),
-    setter(attrs(doc = "Sets the suffrage of the server."))
+    setter(attrs(doc = "Sets the suffrage of the server in builder pattern."))
   )]
   suffrage: ServerSuffrage,
 }
@@ -126,11 +132,36 @@ impl<I: PartialEq, A: PartialEq> PartialEq for Server<I, A> {
 
 impl<I: Eq, A: Eq> Eq for Server<I, A> {}
 
+impl<I: Hash, A: Hash> Hash for Server<I, A> {
+  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    self.id.hash(state);
+    self.addr.hash(state);
+  }
+}
+
 impl<I, A> Server<I, A> {
   /// Creates a new `Server`.
   #[inline]
   pub fn new(id: I, addr: A, suffrage: ServerSuffrage) -> Self {
     Self { id, addr, suffrage }
+  }
+
+  /// Sets the id of the server.
+  #[inline]
+  pub fn set_id(&mut self, id: I) {
+    self.id = id;
+  }
+
+  /// Sets the address of the server.
+  #[inline]
+  pub fn set_addr(&mut self, addr: A) {
+    self.addr = addr;
+  }
+
+  /// Sets the suffrage of the server.
+  #[inline]
+  pub fn set_suffrage(&mut self, suffrage: ServerSuffrage) {
+    self.suffrage = suffrage;
   }
 }
 
@@ -430,6 +461,19 @@ impl<I: Eq + Hash, A: Eq> MembershipBuilder<I, A> {
       .unwrap_or_default()
   }
 
+  /// Returns `true` if the server is a [`ServerSuffrage::Nonvoter`].
+  pub fn is_nonvoter<Q>(&self, id: &Q) -> bool
+  where
+    I: Borrow<Q>,
+    Q: core::hash::Hash + Eq + ?Sized,
+  {
+    self
+      .servers
+      .get(id)
+      .map(|(_, s)| *s == ServerSuffrage::Nonvoter)
+      .unwrap_or_default()
+  }
+
   /// Returns true if the server identified by 'id' is in in the
   /// provided [`Membership`].
   pub fn contains_id<Q>(&self, id: &Q) -> bool
@@ -692,6 +736,18 @@ impl<I, A> Membership<I, A> {
     self.quorum_size
   }
 
+  /// Returns the number of voters in the membership.
+  #[inline]
+  pub const fn voters(&self) -> usize {
+    self.voters
+  }
+
+  /// Returns the number of nonvoters in the membership.
+  #[inline]
+  pub fn nonvoters(&self) -> usize {
+    self.servers.len() - self.voters
+  }
+
   /// Returns an iterator over the membership
   pub fn iter(&self) -> impl Iterator<Item = (&I, &(A, ServerSuffrage))> {
     self.servers.iter()
@@ -761,6 +817,19 @@ impl<I: Eq + Hash, A> Membership<I, A> {
       .servers
       .get(id)
       .map(|(_, s)| *s == ServerSuffrage::Voter)
+      .unwrap_or_default()
+  }
+
+  /// Returns `true` if the server is a [`ServerSuffrage::Nonvoter`].
+  pub fn is_nonvoter<Q>(&self, id: &Q) -> bool
+  where
+    I: Borrow<Q>,
+    Q: core::hash::Hash + Eq + ?Sized,
+  {
+    self
+      .servers
+      .get(id)
+      .map(|(_, s)| *s == ServerSuffrage::Nonvoter)
       .unwrap_or_default()
   }
 

@@ -8,12 +8,13 @@ use std::{
   time::Duration,
 };
 
+pub use ::native_tls;
 use agnostic::{
   net::{Net, TcpListener, TcpStream},
   Runtime,
 };
 use async_native_tls::TlsStream as AsyncNativeTlsStream;
-pub use async_native_tls::{TlsAcceptor, TlsConnector};
+pub use async_native_tls::{self, TlsAcceptor, TlsConnector};
 use futures::{AsyncRead, AsyncWrite};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};

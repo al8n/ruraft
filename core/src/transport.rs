@@ -173,18 +173,10 @@ pub trait Transport: Send + Sync + 'static {
     Data = Self::Data,
   >;
 
-  /// Represents the type used by the transport to install the snapshot from remote.
-  type SnapshotInstaller: AsyncRead + Unpin + Send + 'static;
-
   /// Consumes and responds to incoming RPC requests.
   fn consumer(
     &self,
-  ) -> RpcConsumer<
-    Self::Id,
-    <Self::Resolver as AddressResolver>::Address,
-    Self::Data,
-    Self::SnapshotInstaller,
-  >;
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>;
 
   /// Provides the local unique identifier, helping in distinguishing this node from its peers.
   fn local_id(&self) -> &Self::Id;
@@ -192,8 +184,8 @@ pub trait Transport: Send + Sync + 'static {
   /// Provides the local network address, aiding in distinguishing this node from peers.
   fn local_addr(&self) -> &<Self::Resolver as AddressResolver>::Address;
 
-  /// Provides the concrete network address for peers in the Raft cluster to communicate with.
-  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress;
+  /// Provides the address this transport is binding to.
+  fn bind_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress;
 
   /// Provides the protocol version used by the transport.
   fn version(&self) -> ProtocolVersion;
@@ -316,7 +308,7 @@ pub mod tests {
       term: 10,
       prev_log_entry: 100,
       prev_log_term: 4,
-      entries: vec![Log::__crate_new(101, 4, LogKind::Noop)],
+      entries: vec![Log::__crate_new(101, 4, LogKind::Noop)].into(),
       leader_commit: 90,
     }
   }

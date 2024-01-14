@@ -2,6 +2,7 @@ use std::{
   io,
   net::SocketAddr,
   pin::Pin,
+  sync::Arc,
   task::{Context, Poll},
   time::Duration,
 };
@@ -10,17 +11,81 @@ use agnostic::{
   net::{Net, TcpListener, TcpStream},
   Runtime,
 };
-pub use async_rustls::{client, rustls::ServerName, server, TlsAcceptor, TlsConnector};
 use futures::{AsyncRead, AsyncWrite};
+pub use futures_rustls::{
+  client, pki_types::ServerName, rustls, server, TlsAcceptor, TlsConnector,
+};
 use nodecraft::resolver::AddressResolver;
 use ruraft_net::{stream::*, NetTransport};
+use rustls::{client::danger::ServerCertVerifier, SignatureScheme};
 
 /// Tls transport based on `rustls`
 pub type TlsTransport<I, A, D, W> = NetTransport<I, A, D, Tls<<A as AddressResolver>::Runtime>, W>;
 
+/// A certificate verifier that does not verify the server certificate.
+/// This is useful for testing. Do not use in production.
+#[derive(Debug, Default)]
+pub struct NoopCertificateVerifier;
+
+impl NoopCertificateVerifier {
+  /// Constructs a new `NoopCertificateVerifier`.
+  pub fn new() -> Arc<Self> {
+    Arc::new(Self)
+  }
+}
+
+impl ServerCertVerifier for NoopCertificateVerifier {
+  fn verify_server_cert(
+    &self,
+    _end_entity: &rustls::pki_types::CertificateDer<'_>,
+    _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+    _server_name: &rustls::pki_types::ServerName<'_>,
+    _ocsp_response: &[u8],
+    _now: rustls::pki_types::UnixTime,
+  ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+    Ok(rustls::client::danger::ServerCertVerified::assertion())
+  }
+
+  fn verify_tls12_signature(
+    &self,
+    _message: &[u8],
+    _cert: &rustls::pki_types::CertificateDer<'_>,
+    _dss: &rustls::DigitallySignedStruct,
+  ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+  }
+
+  fn verify_tls13_signature(
+    &self,
+    _message: &[u8],
+    _cert: &rustls::pki_types::CertificateDer<'_>,
+    _dss: &rustls::DigitallySignedStruct,
+  ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+  }
+
+  fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+    vec![
+      SignatureScheme::RSA_PKCS1_SHA1,
+      SignatureScheme::ECDSA_SHA1_Legacy,
+      SignatureScheme::RSA_PKCS1_SHA256,
+      SignatureScheme::ECDSA_NISTP256_SHA256,
+      SignatureScheme::RSA_PKCS1_SHA384,
+      SignatureScheme::ECDSA_NISTP384_SHA384,
+      SignatureScheme::RSA_PKCS1_SHA512,
+      SignatureScheme::ECDSA_NISTP521_SHA512,
+      SignatureScheme::RSA_PSS_SHA256,
+      SignatureScheme::RSA_PSS_SHA384,
+      SignatureScheme::RSA_PSS_SHA512,
+      SignatureScheme::ED25519,
+      SignatureScheme::ED448,
+    ]
+  }
+}
+
 /// Tls stream layer
 pub struct Tls<R> {
-  domain: ServerName,
+  domain: ServerName<'static>,
   acceptor: Option<TlsAcceptor>,
   connector: TlsConnector,
   _marker: std::marker::PhantomData<R>,
@@ -29,7 +94,7 @@ pub struct Tls<R> {
 impl<R> Tls<R> {
   /// Create a new tcp stream layer
   #[inline]
-  pub fn new(domain: ServerName, acceptor: TlsAcceptor, connector: TlsConnector) -> Self {
+  pub fn new(domain: ServerName<'static>, acceptor: TlsAcceptor, connector: TlsConnector) -> Self {
     Self {
       domain,
       acceptor: Some(acceptor),

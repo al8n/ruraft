@@ -78,13 +78,13 @@ impl<R: Runtime> SnapshotRestoreMonitor<R> {
 }
 
 #[pin_project::pin_project]
-pub(crate) struct CountingReader<R: AsyncRead> {
+pub(crate) struct CountingSnapshotSourceReader<R> {
   #[pin]
   r: R,
   bytes: Arc<AtomicU64>,
 }
 
-impl<R: AsyncRead> From<R> for CountingReader<R> {
+impl<R> From<R> for CountingSnapshotSourceReader<R> {
   fn from(r: R) -> Self {
     Self {
       r,
@@ -93,13 +93,13 @@ impl<R: AsyncRead> From<R> for CountingReader<R> {
   }
 }
 
-impl<R: AsyncRead> CountingReader<R> {
+impl<R> CountingSnapshotSourceReader<R> {
   pub fn ctr(&self) -> Arc<AtomicU64> {
     self.bytes.clone()
   }
 }
 
-impl<R: AsyncRead> AsyncRead for CountingReader<R> {
+impl<R: AsyncRead> AsyncRead for CountingSnapshotSourceReader<R> {
   fn poll_read(
     self: std::pin::Pin<&mut Self>,
     cx: &mut std::task::Context<'_>,

@@ -11,13 +11,13 @@ use std::{
 
 use agnostic::Runtime;
 use byteorder::{ByteOrder, NetworkEndian};
-use futures::AsyncWriteExt;
 use once_cell::sync::Lazy;
 use ruraft_core::{
   membership::Membership,
   options::SnapshotVersion,
-  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotSource, SnapshotStorage},
+  storage::{SnapshotId, SnapshotMeta, SnapshotSink, SnapshotStorage},
   transport::{Address, Id, Transformable},
+  CheapClone,
 };
 use ruraft_utils::{io::ChecksumableWriter, make_dir_all};
 
@@ -83,7 +83,8 @@ pub enum FileSnapshotStorageError {
   getters(vis_all = "pub"),
   setters(vis_all = "pub", prefix = "with")
 )]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileSnapshotStorageOptions {
   /// The base directory to store snapshots in.
   #[viewit(
@@ -270,7 +271,7 @@ where
   R: Runtime,
 {
   /// Create a new file snapshot storage from the given [`FileSnapshotStorageOptions`].
-  pub async fn new(opts: FileSnapshotStorageOptions) -> Result<Self, FileSnapshotStorageError>
+  pub fn new(opts: FileSnapshotStorageOptions) -> Result<Self, FileSnapshotStorageError>
   where
     Self: Sized,
   {
@@ -313,11 +314,10 @@ where
   R: Runtime,
 {
   type Error = FileSnapshotStorageError;
-  type Sink = FileSnapshotSink<Self::Id, Self::Address, R>;
   type Id = I;
   type Address = A;
   type Runtime = R;
-  type Source = FileSnapshotSource<Self::Id, Self::Address, R>;
+  type Sink = FileSnapshotSink<I, A, R>;
 
   async fn create(
     &self,
@@ -409,7 +409,16 @@ where
   }
 
   /// Open takes a snapshot ID and provides a ReadCloser.
-  async fn open(&self, id: &SnapshotId) -> Result<Self::Source, Self::Error> {
+  async fn open(
+    &self,
+    id: SnapshotId,
+  ) -> Result<
+    (
+      SnapshotMeta<Self::Id, Self::Address>,
+      impl futures::AsyncRead + Send + Sync + Unpin + 'static,
+    ),
+    Self::Error,
+  > {
     let filename = id.name();
     // Get the metadata
     let meta = self.read_meta(filename.as_str()).map_err(|e| {
@@ -443,11 +452,12 @@ where
       e
     })?;
 
-    Ok(FileSnapshotSource {
-      meta,
-      file: BufReader::new(state_file),
-      _runtime: std::marker::PhantomData,
-    })
+    Ok((
+      meta.meta,
+      FileSnapshotSource {
+        file: BufReader::new(state_file),
+      },
+    ))
   }
 }
 
@@ -455,16 +465,59 @@ where
 /// on disk so that we can verify the snapshot.
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-struct FileSnapshotMeta<I, A> {
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      flatten,
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
+#[cfg_attr(
+  feature = "serde",
+  serde(
+    rename_all = "snake_case",
+    bound(
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>",
     )
-  )]
+  )
+)]
+pub struct FileSnapshotMeta<I, A> {
+  #[cfg_attr(feature = "serde", serde(flatten))]
   meta: SnapshotMeta<I, A>,
   crc: u64,
+}
+
+impl<I, A> FileSnapshotMeta<I, A> {
+  /// Returns the checksum of the snapshot file.
+  #[inline]
+  pub const fn checksum(&self) -> u64 {
+    self.crc
+  }
+}
+
+impl<I, A> core::ops::Deref for FileSnapshotMeta<I, A> {
+  type Target = SnapshotMeta<I, A>;
+
+  fn deref(&self) -> &Self::Target {
+    &self.meta
+  }
+}
+
+impl<I, A> Clone for FileSnapshotMeta<I, A> {
+  fn clone(&self) -> Self {
+    Self {
+      meta: self.meta.clone(),
+      crc: self.crc,
+    }
+  }
+}
+
+impl<I, A> CheapClone for FileSnapshotMeta<I, A> {}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialOrd for FileSnapshotMeta<I, A> {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl<I: core::hash::Hash + Eq, A: PartialEq> Ord for FileSnapshotMeta<I, A> {
+  fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    self.meta.cmp(&other.meta)
+  }
 }
 
 impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for FileSnapshotMeta<I, A> {
@@ -476,38 +529,18 @@ impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for FileSnapshotMeta<I, A
 impl<I: core::hash::Hash + Eq, A: PartialEq> Eq for FileSnapshotMeta<I, A> {}
 
 /// The [`SnapshotSource`] implementor for [`FileSnapshotStorage`].
-pub struct FileSnapshotSource<I, A, R> {
-  meta: FileSnapshotMeta<I, A>,
+#[repr(transparent)]
+pub struct FileSnapshotSource {
   file: BufReader<File>,
-  _runtime: std::marker::PhantomData<R>,
 }
 
-impl<I, A, R> futures::io::AsyncRead for FileSnapshotSource<I, A, R>
-where
-  I: Send + Sync + Unpin + 'static,
-  A: Send + Sync + Unpin + 'static,
-  R: Send + Sync + Unpin + 'static,
-{
+impl futures::io::AsyncRead for FileSnapshotSource {
   fn poll_read(
     mut self: Pin<&mut Self>,
     _cx: &mut Context<'_>,
     buf: &mut [u8],
   ) -> Poll<io::Result<usize>> {
     Poll::Ready(self.file.read(buf))
-  }
-}
-
-impl<I, A, R> SnapshotSource for FileSnapshotSource<I, A, R>
-where
-  I: Id + Unpin,
-  A: Address + Unpin,
-  R: Runtime,
-{
-  type Runtime = R;
-  type Id = I;
-  type Address = A;
-  fn meta(&self) -> &SnapshotMeta<Self::Id, Self::Address> {
-    &self.meta.meta
   }
 }
 
@@ -697,32 +730,29 @@ where
   A::Error: Unpin,
   R: Runtime,
 {
-  type Runtime = R;
-
   fn id(&self) -> SnapshotId {
     self.meta.meta.id()
   }
 
-  async fn cancel(&mut self) -> io::Result<()> {
+  fn poll_cancel(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
     // Make sure close is idempotent
     if self.closed {
-      return Ok(());
+      return Poll::Ready(Ok(()));
     }
 
-    self.closed = true;
+    let this = self.get_mut();
+    this.closed = true;
 
     // Close the open handles
-    self
-      .finalize()
-      .map_err(|e| {
-        tracing::error!(target = "ruraft.snapshot.file", err=%e, "failed to finalize snapshot");
-        e
-      })
-      .and_then(|_| fs::remove_dir_all(&self.dir))
-  }
-
-  async fn close(mut self) -> io::Result<()> {
-    AsyncWriteExt::close(&mut self).await
+    Poll::Ready(
+      this
+        .finalize()
+        .map_err(|e| {
+          tracing::error!(target = "ruraft.snapshot.file", err=%e, "failed to finalize snapshot");
+          e
+        })
+        .and_then(|_| fs::remove_dir_all(&this.dir)),
+    )
   }
 }
 
@@ -793,6 +823,7 @@ pub mod tests {
   use std::net::SocketAddr;
 
   use futures::{AsyncReadExt, AsyncWriteExt};
+  use ruraft_core::storage::SnapshotSinkExt;
   use smol_str::SmolStr;
 
   use super::*;
@@ -812,7 +843,6 @@ pub mod tests {
       #[cfg(any(feature = "test", test))]
       false,
     ))
-    .await
     .unwrap();
 
     snap
@@ -833,7 +863,6 @@ pub mod tests {
     let snap = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
       &dir, 3, false,
     ))
-    .await
     .unwrap();
 
     // check no snapshots
@@ -868,7 +897,7 @@ pub mod tests {
     assert_eq!(latest.size, 13);
 
     // Read the snapshot
-    let mut src = snap.open(&latest.id()).await.unwrap();
+    let (_meta, mut src) = snap.open(latest.id()).await.unwrap();
 
     // Read out everything
     let mut buf = Vec::new();
@@ -890,7 +919,6 @@ pub mod tests {
     let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir, 3, false),
     )
-    .await
     .unwrap();
 
     let mut snap = storage
@@ -918,11 +946,10 @@ pub mod tests {
     let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir, 2, false),
     )
-    .await
     .unwrap();
 
     for i in 10..15 {
-      let sink = storage
+      let mut sink = storage
         .create(
           SnapshotVersion::V1,
           i as u64,
@@ -964,9 +991,7 @@ pub mod tests {
 
     let Err(err) = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir2, 3, false),
-    )
-    .await
-    else {
+    ) else {
       panic!("should fail to use dir with bad perms");
     };
     assert!(matches!(
@@ -988,9 +1013,8 @@ pub mod tests {
     drop(parent);
 
     FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(FileSnapshotStorageOptions::new(
-      &dir2, 3, false,
+      dir2, 3, false,
     ))
-    .await
     .expect("should not fail when using non existing parent");
   }
 
@@ -1007,10 +1031,9 @@ pub mod tests {
     let storage = FileSnapshotStorage::<SmolStr, SocketAddr, R>::new(
       FileSnapshotStorageOptions::new(&dir, 3, false),
     )
-    .await
     .unwrap();
 
-    let sink = storage
+    let mut sink = storage
       .create(
         SnapshotVersion::V1,
         130350,
@@ -1022,7 +1045,7 @@ pub mod tests {
       .unwrap();
     sink.close().await.unwrap();
 
-    let sink = storage
+    let mut sink = storage
       .create(
         SnapshotVersion::V1,
         204917,

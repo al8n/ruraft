@@ -1,0 +1,67 @@
+[package]
+name = "ruraft-bindings-common"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+rust-version.workspace = true
+metadata.workspace = true
+
+[features]
+default = ["sled"]
+
+metrics = [
+  "ruraft-core/metrics",
+  "ruraft-lightwal?/metrics",
+  "ruraft-memory/metrics",
+  "ruraft-snapshot/metrics",
+  "ruraft-tcp/metrics",
+]
+
+dns = ["ruraft-tcp/dns"]
+dns-over-quic = ["dns", "ruraft-tcp/dns-over-quic"]
+dns-over-h3 = ["dns", "ruraft-tcp/dns-over-h3"]
+dns-over-https-rustls = ["dns", "ruraft-tcp/dns-over-https-rustls"]
+dns-over-rustls = ["dns", "ruraft-tcp/dns-over-rustls"]
+dns-over-openssl = ["dns", "ruraft-tcp/dns-over-openssl"]
+dns-over-native-tls = ["dns", "ruraft-tcp/dns-over-native-tls"]
+dns-webpki-roots = ["dns", "ruraft-tcp/dns-webpki-roots"]
+dns-native-certs = ["dns", "ruraft-tcp/dns-native-certs"]
+dnssec-openssl = ["dns", "ruraft-tcp/dnssec-openssl"]
+dnssec-ring = ["dns", "ruraft-tcp/dnssec-ring"]
+dnssec = ["dns", "ruraft-tcp/dnssec"]
+
+tls = ["ruraft-tcp/tls"]
+native-tls = ["ruraft-tcp/native-tls"]
+
+sled = ["ruraft-lightwal/sled"]
+redb = ["ruraft-lightwal/redb"]
+jammdb = ["ruraft-lightwal/jammdb", "page_size"]
+
+python = ["pyo3"]
+
+serde = ["dep:serde"]
+
+[dependencies]
+agnostic.workspace = true
+bytes.workspace = true
+derive_more.workspace = true 
+nodecraft.workspace = true
+futures.workspace = true
+paste = "1"
+pin-project.workspace = true
+ruraft-core.workspace = true
+ruraft-lightwal = { workspace = true, default-features = false, optional = true }
+ruraft-memory.workspace = true
+ruraft-snapshot.workspace = true
+ruraft-tcp = { workspace = true, default-features = false, features = ["dns", "serde"] }
+ruraft-utils.workspace = true
+ruraft-wire.workspace = true
+smallvec.workspace = true
+
+serde = { workspace = true, optional = true }
+
+pyo3 = { version = "0.20", optional = true }
+
+page_size = { version = "0.6", optional = true }

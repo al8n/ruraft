@@ -377,7 +377,8 @@ where
     } else {
       req.entries().last().map(|e| e.index())
     };
-    let (rpc, handle) = Rpc::new(Request::AppendEntries(req), None);
+
+    let (rpc, handle) = Rpc::new::<Cursor<Vec<u8>>>(Request::AppendEntries(req), None);
 
     // Check if we have been already shutdown, otherwise the random choose
     // made by select statement below might pick consumerCh even if
@@ -482,12 +483,12 @@ where
 {
   inner: Arc<RwLock<MemoryTransportInner<I, A, D, W>>>,
   timeout: Duration,
-  advertise_address: A::ResolvedAddress,
+  bind_address: A::ResolvedAddress,
   local_address: A::Address,
   local_id: I,
   resolver: Arc<A>,
-  consumer: RpcConsumer<I, A::Address, D, Cursor<Vec<u8>>>,
-  producer: RpcProducer<I, A::Address, D, Cursor<Vec<u8>>>,
+  consumer: RpcConsumer<I, A::Address, D>,
+  producer: RpcProducer<I, A::Address, D>,
   protocol_version: ProtocolVersion,
 }
 
@@ -515,7 +516,7 @@ where
     Self {
       inner: self.inner.clone(),
       timeout: self.timeout,
-      advertise_address: self.advertise_address.cheap_clone(),
+      bind_address: self.bind_address.cheap_clone(),
       resolver: self.resolver.clone(),
       local_address: self.local_address.cheap_clone(),
       local_id: self.local_id.clone(),
@@ -544,7 +545,7 @@ where
         pipelines: vec![],
       })),
       timeout: opts.timeout.unwrap_or(Duration::from_millis(500)),
-      advertise_address: resolved,
+      bind_address: resolved,
       resolver: Arc::new(resolver),
       local_id: opts.id,
       local_address: addr,
@@ -574,7 +575,7 @@ where
     opts: MemoryTransportOptions<I>,
   ) -> Result<Self, Error<I, A, W>> {
     let (tx, rx) = rpc();
-    let advertise_addr = resolver.resolve(&addr).await.map_err(Error::Resolver)?;
+    let bind_addr = resolver.resolve(&addr).await.map_err(Error::Resolver)?;
 
     Ok(Self {
       inner: Arc::new(RwLock::new(MemoryTransportInner {
@@ -582,7 +583,7 @@ where
         pipelines: vec![],
       })),
       timeout: opts.timeout.unwrap_or(Duration::from_millis(500)),
-      advertise_address: advertise_addr,
+      bind_address: bind_addr,
       resolver: Arc::new(resolver),
       local_id: opts.id,
       local_address: addr,
@@ -714,16 +715,9 @@ where
 
   type Wire = W;
 
-  type SnapshotInstaller = Cursor<Vec<u8>>;
-
   fn consumer(
     &self,
-  ) -> RpcConsumer<
-    Self::Id,
-    <Self::Resolver as AddressResolver>::Address,
-    Self::Data,
-    Self::SnapshotInstaller,
-  > {
+  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
     self.consumer.clone()
   }
 
@@ -750,8 +744,8 @@ where
   ) {
   }
 
-  fn advertise_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
-    &self.advertise_address
+  fn bind_addr(&self) -> &<Self::Resolver as AddressResolver>::ResolvedAddress {
+    &self.bind_address
   }
 
   fn resolver(&self) -> &Self::Resolver {
@@ -911,7 +905,9 @@ where
 pub(super) mod tests {
   use std::marker::PhantomData;
 
+  use futures::StreamExt;
   use ruraft_core::{
+    log_batch,
     transport::{Address, AppendEntriesRequest, AppendEntriesResponse, WireError},
     Node,
   };
@@ -1061,6 +1057,7 @@ pub(super) mod tests {
 
     <A::Runtime as Runtime>::spawn_detach(async move {
       let consumer = t2.consumer();
+      futures::pin_mut!(consumer);
       let mut i = 0;
       let h = t2.header();
       loop {
@@ -1069,7 +1066,7 @@ pub(super) mod tests {
             stopped_tx.close();
             return;
           },
-          rpc = consumer.recv().fuse() => {
+          rpc = consumer.next().fuse() => {
             let rpc = rpc.unwrap();
             i += 1;
             rpc.respond(Response::AppendEntries(
@@ -1098,7 +1095,7 @@ pub(super) mod tests {
           term: 0,
           prev_log_entry: 0,
           prev_log_term: 0,
-          entries: vec![],
+          entries: log_batch![],
           leader_commit: 0,
         },
       )
@@ -1121,7 +1118,7 @@ pub(super) mod tests {
           term: 0,
           prev_log_entry: 0,
           prev_log_term: 0,
-          entries: vec![],
+          entries: log_batch![],
           leader_commit: 0,
         },
       )

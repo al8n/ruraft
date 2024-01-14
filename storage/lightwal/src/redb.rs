@@ -236,10 +236,31 @@ impl DbOptions {
     }
   }
 
-  /// Sets the cache size.
-  pub fn set_cache_size(mut self, cache_size: usize) -> Self {
+  /// Returns the path of the database.
+  pub fn path(&self) -> &Path {
+    self.path.as_path()
+  }
+
+  /// Sets the path of the database in builder pattern.
+  pub fn with_path(mut self, path: PathBuf) -> Self {
+    self.path = path;
+    self
+  }
+
+  /// Sets the path of the database.
+  pub fn set_path(&mut self, path: PathBuf) {
+    self.path = path;
+  }
+
+  /// Sets the cache size in builder pattern.
+  pub fn with_cache_size(mut self, cache_size: usize) -> Self {
     self.cache_size = cache_size;
     self
+  }
+
+  /// Sets the cache size.
+  pub fn set_cache_size(&mut self, cache_size: usize) {
+    self.cache_size = cache_size;
   }
 
   /// Sets the repair callback.

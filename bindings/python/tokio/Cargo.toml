@@ -1,0 +1,19 @@
+[package]
+name = "tokio-raft"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "tokio_raft"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.20"
+ruraft-python = { path = "../core", features = ["tokio"] }
+
+[build-dependencies]
+cargo-manifest = "0.13"
+heck = "0.4"
+ruraft-python = { path = "../core", features = ["tokio"] }

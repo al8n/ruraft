@@ -1,8 +1,7 @@
-use std::{future::Future, ops::RangeBounds, sync::Arc, time::SystemTime};
+use std::{future::Future, ops::RangeBounds};
 
 #[cfg(feature = "metrics")]
 use futures::FutureExt;
-use nodecraft::Transformable;
 
 use crate::{
   membership::Membership,
@@ -10,15 +9,24 @@ use crate::{
   Data,
 };
 
-mod transform;
-pub use transform::*;
+mod types;
+pub use types::*;
 
 /// A log entry that contains a new membership.
-#[derive(Clone)]
 pub struct MembershipLog<I, A> {
   membership: Membership<I, A>,
   index: u64,
   term: u64,
+}
+
+impl<I, A> Clone for MembershipLog<I, A> {
+  fn clone(&self) -> Self {
+    Self {
+      membership: self.membership.clone(),
+      index: self.index,
+      term: self.term,
+    }
+  }
 }
 
 impl<I, A> MembershipLog<I, A> {
@@ -38,228 +46,6 @@ impl<I, A> MembershipLog<I, A> {
   #[inline]
   pub const fn membership(&self) -> &Membership<I, A> {
     &self.membership
-  }
-}
-
-/// Describes various types of log entries.
-#[derive(Debug)]
-#[non_exhaustive]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub enum LogKind<I, A, D> {
-  /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  Data(Arc<D>),
-
-  /// Used to assert leadership.
-  Noop,
-
-  /// Used to ensure all preceding operations have been
-  /// applied to the [`FinateStateMachine`]. It is similar to LogNoop, but instead of returning
-  /// once committed, it only returns once the [`FinateStateMachine`] manager acks it. Otherwise,
-  /// it is possible there are operations committed but not yet applied to
-  /// the [`FinateStateMachine`].
-  Barrier,
-
-  /// Establishes a membership change. It is
-  /// created when a server is added, removed, promoted, etc.
-  Membership(
-    #[cfg_attr(
-      feature = "serde",
-      serde(
-        bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-      )
-    )]
-    Membership<I, A>,
-  ),
-}
-
-impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for LogKind<I, A, D> {
-  fn eq(&self, other: &Self) -> bool {
-    match (self, other) {
-      (Self::Data(data), Self::Data(other_data)) => data == other_data,
-      (Self::Noop, Self::Noop) => true,
-      (Self::Barrier, Self::Barrier) => true,
-      (Self::Membership(membership), Self::Membership(other_membership)) => {
-        membership == other_membership
-      }
-      _ => false,
-    }
-  }
-}
-
-impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for LogKind<I, A, D> {}
-
-impl<I: Clone, A: Clone, D> Clone for LogKind<I, A, D> {
-  fn clone(&self) -> Self {
-    match self {
-      Self::Data(data) => Self::Data(data.clone()),
-      Self::Noop => Self::Noop,
-      Self::Barrier => Self::Barrier,
-      Self::Membership(membership) => Self::Membership(membership.clone()),
-    }
-  }
-}
-
-impl<I, A, D> LogKind<I, A, D> {
-  fn tag(&self) -> u8 {
-    match self {
-      Self::Data(_) => 0,
-      Self::Noop => 1,
-      Self::Barrier => 2,
-      Self::Membership(_) => 3,
-    }
-  }
-}
-
-/// Log entries are replicated to all members of the Raft cluster
-/// and form the heart of the replicated state machine.
-///
-/// The `clone` on `Log` is cheap and not require deep copy and allocation.
-#[viewit::viewit(vis_all = "pub(crate)", getters(vis_all = "pub"), setters(skip))]
-#[derive(Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Log<I, A, D> {
-  /// Holds the kind of the log entry.
-  #[viewit(
-    getter(
-      vis = "pub",
-      const,
-      style = "ref",
-      attrs(doc = "Returns the log entry's kind.")
-    ),
-    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
-  )]
-  #[cfg_attr(
-    feature = "serde",
-    serde(
-      bound = "I: Eq + ::core::hash::Hash + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, A: Eq + ::core::fmt::Display + ::serde::Serialize + for<'a> ::serde::Deserialize<'a>, D: ::serde::Serialize + for<'a> ::serde::Deserialize<'a>"
-    )
-  )]
-  kind: LogKind<I, A, D>,
-
-  /// Holds the index of the log entry.
-  #[viewit(
-    getter(vis = "pub", const, attrs(doc = "Returns the log entry's index.")),
-    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's index."))
-  )]
-  index: u64,
-
-  /// Holds the term of the log entry.
-  #[viewit(
-    getter(vis = "pub", const, attrs(doc = "Returns the log entry's term.")),
-    setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's term."))
-  )]
-  term: u64,
-
-  /// Stores the time (timestamp in milliseconds) the leader first appended this log to it's
-  /// [`LogStorage`]. Followers will observe the leader's time. It is not used for
-  /// coordination or as part of the replication protocol at all. It exists only
-  /// to provide operational information for example how many seconds worth of
-  /// logs are present on the leader which might impact follower's ability to
-  /// catch up after restoring a large snapshot. We should never rely on this
-  /// being in the past when appending on a follower or reading a log back since
-  /// the clock skew can mean a follower could see a log with a future timestamp.
-  /// In general too the leader is not required to persist the log before
-  /// delivering to followers although the current implementation happens to do
-  /// this.
-  #[viewit(
-    getter(
-      vis = "pub",
-      const,
-      attrs(
-        doc = "Returns the time (timestamp in milliseconds) the leader first appended this log to it's
-    [`LogStorage`]."
-      )
-    ),
-    setter(
-      vis = "pub(crate)",
-      attrs(
-        doc = "Sets  the time (timestamp in milliseconds) the leader first appended this log to it's
-    [`LogStorage`]."
-      )
-    )
-  )]
-  #[cfg_attr(
-    feature = "serde",
-    serde(with = "crate::utils::serde_system_time::option")
-  )]
-  appended_at: Option<SystemTime>,
-}
-
-impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Log<I, A, D> {
-  fn eq(&self, other: &Self) -> bool {
-    self.index == other.index
-      && self.term == other.term
-      && self.kind == other.kind
-      && self.appended_at == other.appended_at
-  }
-}
-
-impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for Log<I, A, D> {}
-
-impl<I: Clone, A: Clone, D> Clone for Log<I, A, D> {
-  fn clone(&self) -> Self {
-    Self {
-      index: self.index,
-      term: self.term,
-      kind: self.kind.clone(),
-      appended_at: self.appended_at,
-    }
-  }
-}
-
-impl<I, A, D> Log<I, A, D> {
-  /// Create a [`Log`]
-  #[inline]
-  pub fn new(data: D) -> Self {
-    Self {
-      index: 0,
-      term: 0,
-      kind: LogKind::Data(Arc::new(data)),
-      appended_at: None,
-    }
-  }
-
-  /// Only used for testing.
-  #[cfg(feature = "test")]
-  pub fn set_index(mut self, index: u64) -> Self {
-    self.index = index;
-    self
-  }
-
-  /// Only used for testing.
-  #[cfg(feature = "test")]
-  pub fn set_term(mut self, term: u64) -> Self {
-    self.term = term;
-    self
-  }
-
-  #[inline]
-  pub(crate) const fn is_membership(&self) -> bool {
-    matches!(self.kind, LogKind::Membership(_))
-  }
-
-  #[inline]
-  pub(crate) fn is_noop(&self) -> bool {
-    matches!(self.kind, LogKind::Noop)
-  }
-
-  #[inline]
-  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
-    Self {
-      index,
-      term,
-      kind,
-      appended_at: None,
-    }
-  }
-
-  /// Only used for testing.
-  #[cfg(any(feature = "test", test))]
-  #[inline]
-  #[doc(hidden)]
-  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
-    Self::crate_new(term, index, kind)
   }
 }
 
