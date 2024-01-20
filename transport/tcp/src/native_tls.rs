@@ -4,6 +4,7 @@ use std::{
   io,
   net::SocketAddr,
   pin::Pin,
+  sync::Arc,
   task::{Context, Poll},
   time::Duration,
 };
@@ -25,7 +26,7 @@ pub type NativeTlsTransport<I, A, D, W> =
 
 /// Tls stream layer
 pub struct NativeTls<R> {
-  acceptor: Option<TlsAcceptor>,
+  acceptor: Arc<TlsAcceptor>,
   connector: TlsConnector,
   domain: String,
   _marker: std::marker::PhantomData<R>,
@@ -40,7 +41,7 @@ impl<R> NativeTls<R> {
     connector: TlsConnector,
   ) -> Self {
     Self {
-      acceptor: Some(acceptor),
+      acceptor: Arc::new(acceptor),
       connector,
       domain: server_name.into(),
       _marker: std::marker::PhantomData,
@@ -62,11 +63,8 @@ impl<R: Runtime> StreamLayer for NativeTls<R> {
     Ok(NativeTlsStream { stream })
   }
 
-  async fn bind(&mut self, addr: SocketAddr) -> io::Result<Self::Listener> {
-    let acceptor = self
-      .acceptor
-      .take()
-      .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "already bind to local machine"))?;
+  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    let acceptor = self.acceptor.clone();
     <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
       .await
       .map(|ln| NativeTlsListener { ln, acceptor })
@@ -76,17 +74,15 @@ impl<R: Runtime> StreamLayer for NativeTls<R> {
 /// Listener of the TLS stream layer
 pub struct NativeTlsListener<R: Runtime> {
   ln: <R::Net as Net>::TcpListener,
-  acceptor: TlsAcceptor,
+  acceptor: Arc<TlsAcceptor>,
 }
 
 impl<R: Runtime> Listener for NativeTlsListener<R> {
   type Stream = NativeTlsStream<R>;
 
-  async fn accept(&mut self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
+  async fn accept(&self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
     let (conn, addr) = self.ln.accept().await?;
-    let stream = self
-      .acceptor
-      .accept(conn)
+    let stream = TlsAcceptor::accept(&self.acceptor, conn)
       .await
       .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
     Ok((NativeTlsStream { stream }, addr))

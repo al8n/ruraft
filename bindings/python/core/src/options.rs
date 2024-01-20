@@ -746,8 +746,6 @@ pub enum SupportedSnapshotStorageOptions {
 }
 
 pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
-
-
   let submodule = PyModule::new(py, "options")?;
   submodule.add_class::<Options>()?;
   submodule.add_class::<ReloadableOptions>()?;
@@ -766,14 +764,13 @@ from os import PathLike
 from .types import Header
 from typing import Optional
 
-  "#.to_string();
+  "#
+  .to_string();
 
   pyi.push_str(&Options::pyi());
   pyi.push_str(&ReloadableOptions::pyi());
   pyi.push_str(&SnapshotVersion::pyi());
   pyi.push_str(&ProtocolVersion::pyi());
-
-
 
   pyi
 }

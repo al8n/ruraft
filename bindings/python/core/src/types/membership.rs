@@ -1,4 +1,4 @@
-use crate::{Pyi, exceptions::MembershipError};
+use crate::{exceptions::MembershipError, Pyi};
 
 use super::*;
 
@@ -608,14 +608,14 @@ pub fn register(py: Python<'_>) -> PyResult<&PyModule> {
   Ok(subm)
 }
 
-
 pub fn pyi() -> String {
   let mut pyi = r#"
 
 from typing import List
 from .types import NodeId, NodeAddress
 
-  "#.to_string();
+  "#
+  .to_string();
 
   pyi.push_str(&ServerSuffrage::pyi());
   pyi.push_str(&Server::pyi());

@@ -6,9 +6,9 @@ compile_error!("Cannot enable both tokio and async-std runtime at the same time"
 
 use std::pin::Pin;
 
-use agnostic::Runtime;
 #[cfg(feature = "tokio")]
 pub use agnostic::tokio::TokioRuntime;
+use agnostic::Runtime;
 
 #[cfg(feature = "async-std")]
 pub use agnostic::async_std::AsyncStdRuntime;
@@ -107,7 +107,10 @@ pub trait IntoSupportedRuntime: Runtime {
     Ok(())
   }
 
-  fn generate_options_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+  fn generate_options_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
     let python_path = path.as_ref();
     let pyi = options::pyi();
     rewrite_on_modified(
@@ -123,7 +126,10 @@ pub trait IntoSupportedRuntime: Runtime {
     Ok(())
   }
 
-  fn generate_membership_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+  fn generate_membership_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
     let python_path = path.as_ref();
     let pyi = types::membership::pyi();
     rewrite_on_modified(
@@ -139,7 +145,10 @@ pub trait IntoSupportedRuntime: Runtime {
     Ok(())
   }
 
-  fn generate_types_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+  fn generate_types_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
     let python_path = path.as_ref();
     let pyi = types::pyi();
     rewrite_on_modified(
@@ -151,13 +160,22 @@ pub trait IntoSupportedRuntime: Runtime {
 
   fn register_storage_module(py: Python<'_>, m: &PyModule) -> PyResult<()>;
 
-  fn generate_storage_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()>;
+  fn generate_storage_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()>;
 
   fn register_init_module(py: Python<'_>, m: &PyModule) -> PyResult<()>;
 
-  fn generate_init_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()>;
+  fn generate_init_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()>;
 
-  fn generate_fsm_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+  fn generate_fsm_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
     let python_path = path.as_ref();
     let pyi = fsm::pyi();
     rewrite_on_modified(python_path.join("fsm.pyi"), pyi)?;
@@ -187,8 +205,11 @@ impl IntoSupportedRuntime for agnostic::tokio::TokioRuntime {
     Ok(())
   }
 
-  fn generate_init_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
-    let pyi = raft::pyi_tokio(); 
+  fn generate_init_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
+    let pyi = raft::pyi_tokio();
     let python_path = path.as_ref();
     rewrite_on_modified(
       python_path.join("__init__.py"),
@@ -206,7 +227,10 @@ __all__ = _internal.__all__
     rewrite_on_modified(python_path.join("__init__.pyi"), pyi.as_str())
   }
 
-  fn generate_storage_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+  fn generate_storage_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
     let pyi = storage::pyi_tokio();
     let python_path = path.as_ref();
     rewrite_on_modified(
@@ -237,8 +261,11 @@ impl IntoSupportedRuntime for agnostic::async_std::AsyncStdRuntime {
     Ok(())
   }
 
-  fn generate_init_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
-    let pyi = raft::pyi_async_std(); 
+  fn generate_init_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
+    let pyi = raft::pyi_async_std();
     let python_path = path.as_ref();
     rewrite_on_modified(
       python_path.join("__init__.py"),
@@ -256,7 +283,10 @@ __all__ = _internal.__all__
     rewrite_on_modified(python_path.join("__init__.pyi"), pyi.as_str())
   }
 
-  fn generate_storage_module_files(lib: &str, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+  fn generate_storage_module_files(
+    lib: &str,
+    path: impl AsRef<std::path::Path>,
+  ) -> std::io::Result<()> {
     let pyi = storage::pyi_async_std();
     let python_path = path.as_ref();
     rewrite_on_modified(

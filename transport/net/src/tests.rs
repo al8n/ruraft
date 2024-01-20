@@ -1246,7 +1246,7 @@ async fn test_network_transport_listenbackoff() {
   impl Listener for TestCountingStreamLayer {
     type Stream = Self;
 
-    async fn accept(&mut self) -> std::io::Result<(Self::Stream, SocketAddr)> {
+    async fn accept(&self) -> std::io::Result<(Self::Stream, SocketAddr)> {
       self.num_calls.fetch_add(1, Ordering::SeqCst);
       Err(std::io::Error::new(
         std::io::ErrorKind::Other,
@@ -1268,7 +1268,7 @@ async fn test_network_transport_listenbackoff() {
       panic!("no needed")
     }
 
-    async fn bind(&mut self, _addr: SocketAddr) -> std::io::Result<Self::Listener> {
+    async fn bind(&self, _addr: SocketAddr) -> std::io::Result<Self::Listener> {
       Ok(self.clone())
     }
   }

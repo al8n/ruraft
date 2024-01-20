@@ -86,7 +86,7 @@ impl ServerCertVerifier for NoopCertificateVerifier {
 /// Tls stream layer
 pub struct Tls<R> {
   domain: ServerName<'static>,
-  acceptor: Option<TlsAcceptor>,
+  acceptor: Arc<TlsAcceptor>,
   connector: TlsConnector,
   _marker: std::marker::PhantomData<R>,
 }
@@ -97,7 +97,7 @@ impl<R> Tls<R> {
   pub fn new(domain: ServerName<'static>, acceptor: TlsAcceptor, connector: TlsConnector) -> Self {
     Self {
       domain,
-      acceptor: Some(acceptor),
+      acceptor: Arc::new(acceptor),
       connector,
       _marker: std::marker::PhantomData,
     }
@@ -116,11 +116,8 @@ impl<R: Runtime> StreamLayer for Tls<R> {
     })
   }
 
-  async fn bind(&mut self, addr: SocketAddr) -> io::Result<Self::Listener> {
-    let acceptor = self
-      .acceptor
-      .take()
-      .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "already bind to local machine"))?;
+  async fn bind(&self, addr: SocketAddr) -> io::Result<Self::Listener> {
+    let acceptor = self.acceptor.clone();
     <<R::Net as Net>::TcpListener as TcpListener>::bind(addr)
       .await
       .map(|ln| TlsListener { ln, acceptor })
@@ -130,15 +127,15 @@ impl<R: Runtime> StreamLayer for Tls<R> {
 /// Listener of the TLS stream layer
 pub struct TlsListener<R: Runtime> {
   ln: <R::Net as Net>::TcpListener,
-  acceptor: TlsAcceptor,
+  acceptor: Arc<TlsAcceptor>,
 }
 
 impl<R: Runtime> Listener for TlsListener<R> {
   type Stream = TlsStream<R>;
 
-  async fn accept(&mut self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
+  async fn accept(&self) -> io::Result<(Self::Stream, std::net::SocketAddr)> {
     let (conn, addr) = self.ln.accept().await?;
-    let stream = self.acceptor.accept(conn).await?;
+    let stream = TlsAcceptor::accept(&self.acceptor, conn).await?;
     Ok((
       TlsStream {
         stream: TlsStreamKind::Server(stream),

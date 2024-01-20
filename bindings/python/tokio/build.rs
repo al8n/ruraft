@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use heck::ToSnakeCase;
+use std::path::PathBuf;
 
 fn main() {
   let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

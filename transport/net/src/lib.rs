@@ -393,7 +393,7 @@ where
     local_header: Header<I, A::Address>,
     bind_addr: A::ResolvedAddress,
     resolver: A,
-    mut stream_layer: S,
+    stream_layer: S,
     opts: NetTransportOptions,
   ) -> Result<Self, Error<I, A, W>> {
     let (shutdown_tx, shutdown_rx) = async_channel::unbounded();
@@ -840,7 +840,7 @@ where
   D: Data,
   S: StreamLayer,
 {
-  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(mut self)
+  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(self)
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
     <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
