@@ -650,7 +650,19 @@ where
                 let _ = tx.send(Err(e));
               }
               Ok(Ok(())) => {
-                let _ = tx.send(Ok(()));
+                // Wait for up to election_timeout before flagging the
+                // leadership transfer as done and unblocking applies in
+                // the leader_loop.
+                futures::select! {
+                  _ = R::sleep(opts.load(Ordering::Acquire).election_timeout()).fuse() => {
+                    tracing::debug!("raft: leadership transfer timeout");
+                    let _ = tx.send(Err(Error::leadership_transfer_timeout()));
+                  }
+                  _ = left_leader_loop_rx.recv().fuse() => {
+                    tracing::debug!("raft: lost leadership during transfer (expected)");
+                    let _ = tx.send(Ok(()));
+                  }
+                }
               }
               Err(e) => {
                 tracing::error!(target = "ruraft.leader", err=%e, "done signal sender was closed unexpectedly");
