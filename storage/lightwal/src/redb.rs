@@ -2,7 +2,6 @@ use std::{
   borrow::Cow,
   io,
   path::{Path, PathBuf},
-  sync::Arc,
 };
 
 use ::redb::{
@@ -11,7 +10,7 @@ use ::redb::{
 };
 use agnostic::Runtime;
 use ruraft_core::{
-  storage::{Log, LogStorage, LogTransformError, StableStorage},
+  storage::{Log, LogTransformError},
   transport::{Address, Id, Transformable},
   Node,
 };

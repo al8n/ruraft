@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::RangeBounds, sync::Arc};
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use async_lock::Mutex;
 use ruraft_core::{
   storage::{Log, LogStorage},
@@ -85,7 +85,7 @@ where
   D: Data,
   I: Id,
   A: Address,
-  R: Runtime,
+  R: RuntimeLite,
 {
   /// The error type returned by the log storage.
   type Error = MemoryLogStorageError;

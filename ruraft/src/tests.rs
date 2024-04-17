@@ -9,7 +9,7 @@ use std::{
   time::{Duration, Instant},
 };
 
-use agnostic::{Delay, Runtime, Sleep};
+use agnostic_lite::{RuntimeLite, time::AsyncSleep};
 use async_lock::Mutex;
 use futures::{AsyncWriteExt, Future, FutureExt};
 use ruraft_core::{
@@ -71,7 +71,7 @@ impl<R> Clone for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> From<io::Error> for MockFSMError<R> {
+impl<R: RuntimeLite> From<io::Error> for MockFSMError<R> {
   fn from(err: io::Error) -> Self {
     Self {
       kind: Arc::new(MockFSMErrorKind::IO(err)),
@@ -81,7 +81,7 @@ impl<R: Runtime> From<io::Error> for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> From<CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
+impl<R: RuntimeLite> From<CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>>
   for MockFSMError<R>
 {
   fn from(err: CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>>) -> Self {
@@ -93,7 +93,7 @@ impl<R: Runtime> From<CommittedLogTransformError<SmolStr, MemoryAddress, Vec<u8>
   }
 }
 
-impl<R: Runtime> std::fmt::Debug for MockFSMError<R> {
+impl<R: RuntimeLite> std::fmt::Debug for MockFSMError<R> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct(std::any::type_name::<Self>())
       .field("messages", &self.messages)
@@ -101,7 +101,7 @@ impl<R: Runtime> std::fmt::Debug for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> std::fmt::Display for MockFSMError<R> {
+impl<R: RuntimeLite> std::fmt::Display for MockFSMError<R> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     for (idx, msg) in self.messages.iter().enumerate() {
       writeln!(f, "\t{idx}: {}", msg)?;
@@ -110,9 +110,9 @@ impl<R: Runtime> std::fmt::Display for MockFSMError<R> {
   }
 }
 
-impl<R: Runtime> std::error::Error for MockFSMError<R> {}
+impl<R: RuntimeLite> std::error::Error for MockFSMError<R> {}
 
-impl<R: Runtime> FinateStateMachineError for MockFSMError<R> {
+impl<R: RuntimeLite> FinateStateMachineError for MockFSMError<R> {
   type Snapshot = MockFSMSnapshot<R>;
 
   fn snapshot(err: <Self::Snapshot as FinateStateMachineSnapshot>::Error) -> Self {
@@ -177,7 +177,7 @@ impl<R> Default for MockFSM<R> {
   }
 }
 
-impl<R: Runtime> FinateStateMachine for MockFSM<R> {
+impl<R: RuntimeLite> FinateStateMachine for MockFSM<R> {
   type Error = MockFSMError<R>;
 
   type Snapshot = MockFSMSnapshot<R>;
@@ -248,7 +248,7 @@ pub struct MockFSMSnapshot<R> {
   _runtime: PhantomData<R>,
 }
 
-impl<R: Runtime> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
+impl<R: RuntimeLite> FinateStateMachineSnapshot for MockFSMSnapshot<R> {
   type Error = MockFSMError<R>;
 
   type Runtime = R;
@@ -305,7 +305,7 @@ struct MakeClusterOptions {
 struct Cluster<W, R>
 where
   W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
-  R: Runtime,
+  R: RuntimeLite,
   <R::Sleep as futures::Future>::Output: Send + 'static,
 {
   dirs: Vec<Arc<TempDir>>,
@@ -338,7 +338,7 @@ where
 impl<W, R> Cluster<W, R>
 where
   W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   pub fn remove_server(&mut self, id: &str) {
     self.rafts.retain(|raft| raft.local_id().as_str() != id);
@@ -872,7 +872,7 @@ async fn fully_connect<W, R>(
   trans: &[MemoryTransport<SmolStr, MemoryAddressResolver<MemoryAddress, R>, Vec<u8>, W>],
 ) where
   W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
-  R: Runtime,
+  R: RuntimeLite,
   <R::Sleep as futures::Future>::Output: Send + 'static,
 {
   tracing::debug!("fully connecting");
@@ -934,7 +934,7 @@ impl DurationExt for Duration {
   }
 }
 
-fn file_snapshot<R: Runtime>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
+fn file_snapshot<R: RuntimeLite>() -> (TempDir, FileSnapshotStorage<SmolStr, MemoryAddress, R>) {
   // Create a test dir
   let dir = tempfile::Builder::new().prefix("ruraft").tempdir().unwrap();
 

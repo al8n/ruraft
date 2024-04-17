@@ -1,10 +1,10 @@
-use std::{borrow::Cow, io, ops::Bound, sync::Arc};
+use std::{borrow::Cow, io, ops::Bound};
 
 use ::sled::{transaction::TransactionError, Batch, Error as DbError, Tree};
 pub use ::sled::{Config as DbOptions, Mode};
 use agnostic::Runtime;
 use ruraft_core::{
-  storage::{Log, LogStorage, LogTransformError, StableStorage},
+  storage::{Log, LogTransformError},
   transport::{Address, Id, Transformable},
   Node,
 };

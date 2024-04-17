@@ -6,12 +6,9 @@ use futures::StreamExt;
 use ruraft_core::{
   log_batch,
   storage::{Log, LogKind},
-  transport::{
-    tests::{__make_append_req, __make_append_resp},
-    Transport, *,
-  },
+  transport::tests::{__make_append_req, __make_append_resp},
 };
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use super::*;
 
@@ -207,6 +204,14 @@ impl<A: Address, R: Runtime> AddressResolver for TestAddressResolver<A, R> {
 
   type Runtime = R;
 
+  type Options = ();
+  
+  async fn new(_options: Self::Options) -> Result<Self, Self::Error>
+  where
+    Self: Sized {
+    Ok(Self::new())
+  }
+  
   async fn resolve(&self, address: &Self::Address) -> Result<Self::ResolvedAddress, Self::Error> {
     Ok(address.clone())
   }
@@ -228,8 +233,7 @@ pub async fn close_streams<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+)
 {
   // Transport 1 is consumer
   let trans1 = NetTransport::<I, A, D, S, W>::new(
@@ -284,7 +288,7 @@ pub async fn close_streams<
   let (err_tx, err_rx) = async_channel::bounded(100);
 
   // Listen for a request
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     let trans1_consumer = trans1.consumer();
     futures::pin_mut!(trans1_consumer);
 
@@ -296,7 +300,7 @@ pub async fn close_streams<
             panic!("unexpected respond fail");
           };
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -315,7 +319,7 @@ pub async fn close_streams<
       let expected_resp = resp.clone();
       let target = trans1_header.from().clone();
       let req = args.clone();
-      <A::Runtime as Runtime>::spawn_detach(async move {
+      <A::Runtime as RuntimeLite>::spawn_detach(async move {
         scopeguard::defer!(new_wg.done());
 
         match trans.append_entries(&target, req).await {
@@ -388,7 +392,7 @@ where
 pub async fn heartbeat_fastpath<
   I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  D,
   S: StreamLayer,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
@@ -401,8 +405,7 @@ pub async fn heartbeat_fastpath<
   stream_layer2: S,
   resolver2: A,
 ) where
-  D: core::fmt::Debug + PartialEq,
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  D: Data + core::fmt::Debug + PartialEq,
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -446,8 +449,7 @@ pub async fn append_entries<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+)
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -475,7 +477,7 @@ pub async fn append_entries<
 pub async fn append_entries_pipeline<
   I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  D,
   S: StreamLayer,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 >(
@@ -488,8 +490,7 @@ pub async fn append_entries_pipeline<
   stream_layer2: S,
   resolver2: A,
 ) where
-  D: core::fmt::Debug + PartialEq,
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  D: Data + core::fmt::Debug + PartialEq,
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -529,8 +530,7 @@ pub async fn append_entries_pipeline_close_streams<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+)
 {
   // Transport 1 is consumer
   let trans1 = NetTransport::<_, _, D, _, W>::new(
@@ -565,7 +565,7 @@ pub async fn append_entries_pipeline_close_streams<
   scopeguard::defer!(let _ = shutdown_tx.close(););
 
   // Listen for a request
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     futures::pin_mut!(trans1_consumer);
 
     loop {
@@ -599,7 +599,7 @@ pub async fn append_entries_pipeline_close_streams<
       // On the last one, close the streams on the transport one.
       if cancel_stream && i == 10 {
         trans1.close_streams().await;
-        <A::Runtime as Runtime>::sleep(Duration::from_millis(10)).await;
+        <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(10)).await;
       }
 
       if pipeline.append_entries(args.clone()).await.is_err() {
@@ -625,7 +625,7 @@ pub async fn append_entries_pipeline_close_streams<
             }
           }
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout when cancel streams is {}", cancel_stream);
         },
       }
@@ -658,7 +658,7 @@ pub async fn append_entries_pipeline_max_rpc_inflight_default<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
@@ -691,7 +691,7 @@ pub async fn append_entries_pipeline_max_rpc_inflight_0<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
@@ -724,7 +724,7 @@ pub async fn append_entries_pipeline_max_rpc_inflight_one<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
@@ -757,7 +757,7 @@ pub async fn append_entries_pipeline_max_rpc_inflight_some<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
     header1,
@@ -790,7 +790,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   resolver2: A,
   max: usize,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   let config1 = NetTransportOptions::new()
     .with_max_pool(2)
@@ -832,9 +832,9 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
 
   // Kill the transports on the timeout to unblock. That means things that
   // shouldn't have blocked did block.
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     futures::select! {
-      _ = <A::Runtime as Runtime>::sleep(Duration::from_secs(5)).fuse() => {
+      _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_secs(5)).fuse() => {
       },
       _ = ctx_rx.recv().fuse() => {
       },
@@ -878,7 +878,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   futures::pin_mut!(pc);
   // Verify the next send blocks without blocking test forever
   let (err_tx, err_rx) = async_channel::bounded(1);
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     if let Err(e) = pipeline.append_entries(args.clone()).await {
       err_tx.send(e).await.expect("failed to send error");
     }
@@ -890,7 +890,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
         panic!("unexpected error");
       }
     },
-    _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(50)).fuse() => {
+    _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(50)).fuse() => {
       // OK it's probably blocked or we got _really_ unlucky with scheduling!
     },
   }
@@ -911,7 +911,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
     _ = err_rx.recv().fuse() => {
       // Ok
     },
-    _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(50)).fuse() => {
+    _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(50)).fuse() => {
       panic!("last append didn't unblock");
     },
   }
@@ -934,7 +934,7 @@ pub async fn vote<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -975,7 +975,7 @@ pub async fn timeout_now<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -1016,7 +1016,7 @@ pub async fn install_snapshot<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -1056,8 +1056,7 @@ pub async fn pooled_conn<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+)
 {
   let trans1 = NetTransport::<_, _, D, _, W>::new(
     header1,
@@ -1107,7 +1106,7 @@ pub async fn pooled_conn<
   let (err_tx, err_rx) = async_channel::bounded(100);
 
   // Listen for a request
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     let trans1_consumer = trans1.consumer();
     futures::pin_mut!(trans1_consumer);
 
@@ -1119,7 +1118,7 @@ pub async fn pooled_conn<
             panic!("unexpected respond fail");
           };
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -1135,7 +1134,7 @@ pub async fn pooled_conn<
     let expected_resp = resp.clone();
     let target = trans1_header.from().clone();
     let req = args.clone();
-    <A::Runtime as Runtime>::spawn_detach(async move {
+    <A::Runtime as RuntimeLite>::spawn_detach(async move {
       scopeguard::defer!(new_wg.done());
 
       match trans.append_entries(&target, req).await {

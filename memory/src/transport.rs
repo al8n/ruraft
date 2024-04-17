@@ -6,7 +6,7 @@ use std::{
   time::{Duration, SystemTime},
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use async_lock::{Mutex, RwLock};
 use futures::{io::Cursor, Future, FutureExt};
 use ruraft_core::{
@@ -211,10 +211,7 @@ where
 impl<I, A, D, W> MemoryTransportPipeline<I, A, D, W>
 where
   I: Id,
-
   A: AddressResolver,
-
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 {
@@ -238,7 +235,7 @@ where
       inprogress_tx,
     };
 
-    <A::Runtime as Runtime>::spawn_detach(Self::decode_response(
+    <A::Runtime as RuntimeLite>::spawn_detach(Self::decode_response(
       inprogress_rx,
       finish_tx,
       this.trans.timeout,
@@ -314,7 +311,7 @@ where
                     }
                   }
                 }
-                _ = <A::Runtime as Runtime>::sleep(timeout).fuse() => {
+                _ = <A::Runtime as RuntimeLite>::sleep(timeout).fuse() => {
                   futures::select! {
                     res = finish_tx.send(Err(Error::CommandTimeout)).fuse() => {
                       if res.is_err() {
@@ -342,7 +339,7 @@ where
 
   A: AddressResolver,
 
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 {
@@ -390,7 +387,7 @@ where
     if self.trans.timeout > Duration::ZERO {
       futures::select! {
         _ = self.peer.producer.send(rpc).fuse() => {},
-        _ = <A::Runtime as Runtime>::sleep(self.trans.timeout).fuse() => return Err(Error::CommandTimeout),
+        _ = <A::Runtime as RuntimeLite>::sleep(self.trans.timeout).fuse() => return Err(Error::CommandTimeout),
         _ = self.shutdown_rx.recv().fuse() => return Err(Error::PipelineShutdown),
       }
     } else {
@@ -607,7 +604,7 @@ where
 
   A: AddressResolver,
 
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 {
@@ -671,7 +668,7 @@ where
 
         futures::select! {
           _ = peer.producer.send(rpc).fuse() => {}
-          _ = <A::Runtime as Runtime>::sleep(timeout).fuse() => return Err(Error::SendTimeout),
+          _ = <A::Runtime as RuntimeLite>::sleep(timeout).fuse() => return Err(Error::SendTimeout),
         }
 
         // Wait for a response
@@ -684,7 +681,7 @@ where
 
             Ok(resp)
           }
-          _ = <A::Runtime as Runtime>::sleep(timeout).fuse() => Err(Error::CommandTimeout),
+          _ = <A::Runtime as RuntimeLite>::sleep(timeout).fuse() => Err(Error::CommandTimeout),
         }
       }
     }
@@ -697,7 +694,7 @@ where
 
   A: AddressResolver,
 
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
   D: Data,
   W: Wire<Id = I, Address = A::Address, Data = D>,
 {
@@ -1016,7 +1013,7 @@ pub(super) mod tests {
   ///
   /// - Description:
   ///   - Test that the [`MemoryTransport`] can send and receive messages, and the timeout also works.
-  pub async fn memory_transport_write_timeout<I: Id, A: AddressResolver>(
+  pub async fn memory_transport_write_timeout<I, A>(
     id1: I,
     addr1: A::Address,
     resolver1: A,
@@ -1026,7 +1023,6 @@ pub(super) mod tests {
   ) where
     I: Id,
     A: AddressResolver,
-    <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
   {
     // InmemTransport should timeout if the other end has gone away
     // when it tries to send a request.
@@ -1055,7 +1051,7 @@ pub(super) mod tests {
     let (stopped_tx, stopped_rx) = async_channel::bounded::<()>(1);
     let t2_header = t2.header();
 
-    <A::Runtime as Runtime>::spawn_detach(async move {
+    <A::Runtime as RuntimeLite>::spawn_detach(async move {
       let consumer = t2.consumer();
       futures::pin_mut!(consumer);
       let mut i = 0;
@@ -1107,7 +1103,7 @@ pub(super) mod tests {
 
     futures::select! {
       _ = stopped_rx.recv().fuse() => {},
-      _ = <A::Runtime as Runtime>::sleep(Duration::from_secs(1)).fuse() => panic!("timed out waiting for responder to stop"),
+      _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_secs(1)).fuse() => panic!("timed out waiting for responder to stop"),
     }
 
     let err = t1

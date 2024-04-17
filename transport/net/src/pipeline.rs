@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use super::{stream::Connection, *};
+use super::*;
 
 #[derive(Debug, Copy, Clone)]
 struct Event {
@@ -71,7 +71,7 @@ where
     let (reader, writer) = conn.into_split();
 
     let tshutdown_rx = shutdown_rx.clone();
-    <A::Runtime as Runtime>::spawn_detach(async move {
+    <A::Runtime as RuntimeLite>::spawn_detach(async move {
       Self::decode_responses(reader, finish_tx, inprogress_rx, tshutdown_rx).await
     });
 

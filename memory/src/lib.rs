@@ -14,13 +14,13 @@ pub mod storage;
 pub mod transport;
 
 /// Exports unit tests to let users test [`MemorySnapshotStorage`] implementation if they want to
-/// use their own [`agnostic::Runtime`] implementation.
+/// use their own [`agnostic_lite::RuntimeLite`] implementation.
 #[cfg(any(feature = "test", test))]
 #[cfg_attr(docsrs, doc(cfg(any(test, feature = "test"))))]
 pub mod tests {
   use std::net::SocketAddr;
 
-  use agnostic::Runtime;
+  use agnostic_lite::RuntimeLite;
   use futures::Future;
   use ruraft_core::{membership::Membership, options::SnapshotVersion, tests::storage::*};
   use smol_str::SmolStr;
@@ -38,7 +38,7 @@ pub mod tests {
   ///
   /// - Description:
   ///   - Test that the [`MemoryTransport`] [`MemoryAddress`] and [`MemoryAddressResolver`] can send and receive messages, and the timeout also works.
-  pub async fn memory_transport_resolver_address_write_timeout<R: Runtime>()
+  pub async fn memory_transport_resolver_address_write_timeout<R: RuntimeLite>()
   where
     <R::Sleep as Future>::Output: Send + 'static,
   {
@@ -59,7 +59,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test get first index
-  pub async fn memory_log_storage_first_index<R: Runtime>() {
+  pub async fn memory_log_storage_first_index<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     first_index(&s).await
   }
@@ -69,7 +69,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test get last index
-  pub async fn memory_log_storage_last_index<R: Runtime>() {
+  pub async fn memory_log_storage_last_index<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     last_index(&s).await
   }
@@ -79,7 +79,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test get log
-  pub async fn memory_log_storage_get_log<R: Runtime>() {
+  pub async fn memory_log_storage_get_log<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     get_log(&s).await
   }
@@ -89,7 +89,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test store log
-  pub async fn memory_log_storage_store_log<R: Runtime>() {
+  pub async fn memory_log_storage_store_log<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     store_log(&s).await
   }
@@ -99,7 +99,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test store logs
-  pub async fn memory_log_storage_store_logs<R: Runtime>() {
+  pub async fn memory_log_storage_store_logs<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     store_logs(&s).await
   }
@@ -109,7 +109,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test remove logs by range
-  pub async fn memory_log_storage_remove_range<R: Runtime>() {
+  pub async fn memory_log_storage_remove_range<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     remove_range(&s).await
   }
@@ -121,7 +121,7 @@ pub mod tests {
   /// Test oldest log
   #[cfg(all(feature = "test", feature = "metrics"))]
   #[cfg_attr(docsrs, doc(cfg(all(feature = "test", feature = "metrics"))))]
-  pub async fn memory_log_storage_oldest_log<R: Runtime>() {
+  pub async fn memory_log_storage_oldest_log<R: RuntimeLite>() {
     let s = MemoryLogStorage::<_, _, _, R>::new();
     oldest_log(&s).await
   }
@@ -131,7 +131,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test current term
-  pub async fn memory_stable_storage_current_term<R: Runtime>() {
+  pub async fn memory_stable_storage_current_term<R: RuntimeLite>() {
     let s = MemoryStableStorage::<_, _, R>::new();
     current_term(&s).await
   }
@@ -141,7 +141,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test last vote term
-  pub async fn memory_stable_storage_last_vote_term<R: Runtime>() {
+  pub async fn memory_stable_storage_last_vote_term<R: RuntimeLite>() {
     let s = MemoryStableStorage::<_, _, R>::new();
     last_vote_term(&s).await
   }
@@ -151,7 +151,7 @@ pub mod tests {
   /// Description:
   ///
   /// Test last vote candidate
-  pub async fn memory_stable_storage_last_vote_candidate<R: Runtime>() {
+  pub async fn memory_stable_storage_last_vote_candidate<R: RuntimeLite>() {
     let s = MemoryStableStorage::<_, _, R>::new();
     last_vote_candidate(&s).await
   }
@@ -160,7 +160,7 @@ pub mod tests {
   ///
   /// Description:
   /// - create snapshot
-  pub async fn memory_snapshot_storage_create<R: Runtime>() {
+  pub async fn memory_snapshot_storage_create<R: RuntimeLite>() {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
     use ruraft_core::storage::SnapshotStorage;
 
@@ -211,7 +211,7 @@ pub mod tests {
   ///
   /// Description:
   /// - open snapshot twice
-  pub async fn memory_snapshot_storage_open_snapshot_twice<R: Runtime>() {
+  pub async fn memory_snapshot_storage_open_snapshot_twice<R: RuntimeLite>() {
     use futures::io::{AsyncReadExt, AsyncWriteExt};
     use ruraft_core::storage::{SnapshotSink, SnapshotSinkExt, SnapshotStorage};
 

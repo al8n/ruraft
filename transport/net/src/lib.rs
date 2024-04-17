@@ -41,7 +41,7 @@ use std::{
 #[cfg(feature = "metrics")]
 use std::time::Instant;
 
-use agnostic::Runtime;
+use agnostic::{Runtime, RuntimeLite};
 use async_lock::Mutex;
 use futures::{
   io::{BufReader, BufWriter},
@@ -433,7 +433,7 @@ where
       stream_ctx: stream_ctx.clone(),
       heartbeat_handler: heartbeat_handler.clone(),
     };
-    <A::Runtime as Runtime>::spawn_detach(RequestHandler::<I, A::Address, D, S>::run::<A, W>(
+    <A::Runtime as RuntimeLite>::spawn_detach(RequestHandler::<I, A::Address, D, S>::run::<A, W>(
       request_handler,
     ));
 
@@ -864,7 +864,7 @@ where
 
               let (tx, rx) = async_channel::bounded(1);
               self.stream_ctx.push(tx);
-              <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::spawn_detach(async move {
+              <<Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
                 Self::handle_connection::<Resolver, W>(
                   rx,
                   &heartbeat_handler,

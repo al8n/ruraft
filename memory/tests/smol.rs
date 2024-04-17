@@ -1,4 +1,4 @@
-use agnostic::{smol::SmolRuntime, Runtime};
+use agnostic::{smol::SmolRuntime, RuntimeLite};
 use ruraft_core::{tests::run as run_unit_test, unit_tests};
 use ruraft_memory::tests::*;
 

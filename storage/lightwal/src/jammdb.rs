@@ -3,13 +3,12 @@ use std::{
   io,
   ops::Bound,
   path::{Path, PathBuf},
-  sync::Arc,
 };
 
 use ::jammdb::{Error as DbError, DB};
 use agnostic::Runtime;
 use ruraft_core::{
-  storage::{Log, LogStorage, LogTransformError, StableStorage},
+  storage::{Log, LogTransformError},
   transport::{Address, Id, Transformable},
   Node,
 };
