@@ -339,8 +339,6 @@ impl<W, R> Cluster<W, R>
 where
   W: Wire<Id = SmolStr, Address = MemoryAddress, Data = Vec<u8>>,
   R: Runtime,
-  <R::Sleep as futures::Future>::Output: Send + 'static,
-  <<R as Runtime>::Interval as futures::Stream>::Item: Send,
 {
   pub fn remove_server(&mut self, id: &str) {
     self.rafts.retain(|raft| raft.local_id().as_str() != id);

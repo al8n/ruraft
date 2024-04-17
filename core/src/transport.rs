@@ -1,6 +1,6 @@
 use std::{future::Future, sync::Arc};
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use futures::{AsyncRead, AsyncWrite, Stream};
 
 mod rpc;
@@ -146,7 +146,7 @@ pub trait Transport: Send + Sync + 'static {
   type Error: TransportError<Id = Self::Id, Resolver = Self::Resolver, Wire = Self::Wire>;
 
   /// Specifies the runtime environment for transport operations.
-  type Runtime: Runtime;
+  type Runtime: RuntimeLite;
 
   /// Unique identifier for nodes.
   type Id: Id;
@@ -286,7 +286,7 @@ pub trait Transport: Send + Sync + 'static {
 /// Exports unit tests to let users test transport implementation.
 #[cfg(any(feature = "test", test))]
 pub mod tests {
-  use std::{future::Future, time::Duration};
+  use std::time::Duration;
 
   use futures::{FutureExt, StreamExt};
 
@@ -378,11 +378,7 @@ pub mod tests {
   }
 
   /// Test [`Transport::append_entries`](Transport::append_entries).
-  pub async fn append_entries<T: Transport>(trans1: T, trans2: T)
-  where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
-      Send + 'static,
-  {
+  pub async fn append_entries<T: Transport>(trans1: T, trans2: T) {
     let trans1_header = trans1.header();
     let args = __make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
     let expected_resp =
@@ -390,7 +386,7 @@ pub mod tests {
     let consumer = trans1.consumer();
     let resp = expected_resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(consumer);
 
       futures::select! {
@@ -400,7 +396,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -417,8 +413,6 @@ pub mod tests {
   pub async fn append_entries_pipeline<T: Transport>(trans1: T, trans2: T)
   where
     T::Data: core::fmt::Debug + PartialEq,
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
-      Send + 'static,
   {
     let trans1_consumer = trans1.consumer();
     let trans1_header = trans1.header();
@@ -430,7 +424,7 @@ pub mod tests {
     let resp1 = resp.clone();
 
     // Listen for a request
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       for _ in 0..10 {
         futures::select! {
@@ -446,7 +440,7 @@ pub mod tests {
               panic!("unexpected respond fail");
             };
           },
-          _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(12200)).fuse() => {
+          _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(12200)).fuse() => {
             panic!("timeout");
           },
         }
@@ -471,7 +465,7 @@ pub mod tests {
           let res = res.unwrap().unwrap();
           assert_eq!(res.response(), &resp1);
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -482,7 +476,7 @@ pub mod tests {
   /// Test [`Transport::vote`](Transport::vote).
   pub async fn vote<T: Transport>(trans1: T, trans2: T)
   where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+    <<<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::Sleep as Future>::Output:
       Send + 'static,
   {
     let trans1_consumer = trans1.consumer();
@@ -503,7 +497,7 @@ pub mod tests {
     };
     let resp1 = resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -519,7 +513,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -532,7 +526,7 @@ pub mod tests {
   /// Test [`Transport::timeout_now`](Transport::timeout_now).
   pub async fn timeout_now<T: Transport>(trans1: T, trans2: T)
   where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+    <<<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::Sleep as Future>::Output:
       Send + 'static,
   {
     let trans1_consumer = trans1.consumer();
@@ -547,7 +541,7 @@ pub mod tests {
     };
     let resp1 = resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -563,7 +557,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -579,7 +573,7 @@ pub mod tests {
   /// Test [`Transport::install_snapshot`](Transport::install_snapshot).
   pub async fn install_snapshot<T: Transport>(trans1: T, trans2: T)
   where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+    <<<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::Sleep as Future>::Output:
       Send + 'static,
   {
     use futures::AsyncReadExt;
@@ -614,7 +608,7 @@ pub mod tests {
     };
     let resp1 = resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -638,7 +632,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }

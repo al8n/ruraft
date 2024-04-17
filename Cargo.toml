@@ -28,16 +28,17 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-agnostic = "0.2"
+agnostic = "0.3"
+agnostic-lite = { version = "0.3", features = ["time"] }
 async-channel = "2"
 async-lock = "3"
-bytes = "1.5"
-byteorder = "1.5"
+bytes = "1"
+byteorder = "1"
 derive_more = "0.99"
 futures = "0.3"
-humantime-serde = "1.1"
-nodecraft = { version = "0.2", features = ["transformable"] }
-pin-project = "1.1"
+humantime-serde = "1"
+nodecraft = { version = "0.3", features = ["transformable"] }
+pin-project = "1"
 pollster = "0.3"
 ruraft-core = { path = "./core" }
 ruraft-bindings-common = { path = "./bindings/common" }
@@ -56,4 +57,4 @@ thiserror = "1"
 tracing = { version = "0.1" }
 metrics = { version = "0.22" }
 viewit = { version = "0.1.5" }
-wg = { version = "0.4", features = ["async"] }
+wg = { version = "0.8", features = ["future"] }

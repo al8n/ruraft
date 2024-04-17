@@ -6,19 +6,19 @@ use std::{
   time::Duration,
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use futures::{AsyncRead, FutureExt, StreamExt};
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 const SNAPSHOT_RESTORE_MONITOR_INTERVAL: Duration = Duration::from_secs(10);
 
-pub(crate) struct SnapshotRestoreMonitor<R: Runtime> {
+pub(crate) struct SnapshotRestoreMonitor<R: RuntimeLite> {
   wg: AsyncWaitGroup,
   shutdown_tx: async_channel::Sender<()>,
   _runtime: std::marker::PhantomData<R>,
 }
 
-impl<R: Runtime> SnapshotRestoreMonitor<R> {
+impl<R: RuntimeLite> SnapshotRestoreMonitor<R> {
   pub(crate) fn new(ctr: Arc<AtomicU64>, size: u64, network_transfer: bool) -> Self {
     let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
     let wg = AsyncWaitGroup::new();

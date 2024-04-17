@@ -1,6 +1,7 @@
 use std::{borrow::Cow, future::Future};
 
 // use futures::AsyncRead;
+use agnostic_lite::RuntimeLite;
 use nodecraft::{Address, Id};
 use smallvec::SmallVec;
 
@@ -16,7 +17,7 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   type Error: std::error::Error + Send + Sync + 'static;
 
   /// The async runtime used by the finate state machine snapshot.
-  type Runtime: agnostic::Runtime;
+  type Runtime: RuntimeLite;
 
   /// Persist should write the FSM snapshot to the given sink.
   ///
@@ -137,7 +138,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   type Data: Data;
 
   /// The async runtime used by the finate state machine.
-  type Runtime: agnostic::Runtime;
+  type Runtime: RuntimeLite;
 
   /// Invoked once a log entry is committed by a majority of the cluster.
   ///

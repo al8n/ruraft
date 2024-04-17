@@ -35,7 +35,7 @@ test = ["ruraft-core/test", "smol_str", "wg"]
 
 [dependencies]
 arc-swap = "1"
-agnostic = { workspace = true }
+agnostic = { workspace = true, features = ["net"] }
 async-channel = { workspace = true }
 async-lock = { workspace = true }
 concurrent-queue = "2"

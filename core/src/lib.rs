@@ -1,4 +1,4 @@
-//!
+//! Raft
 #![allow(clippy::type_complexity)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
@@ -80,7 +80,7 @@ mod raft;
 use nodecraft::Transformable;
 pub use raft::*;
 
-///
+/// The sidecar run alongside the Raft.
 pub mod sidecar;
 /// Storage layer traits and structs for the Raft.
 pub mod storage;

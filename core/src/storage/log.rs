@@ -1,3 +1,4 @@
+use agnostic_lite::RuntimeLite;
 use std::{future::Future, ops::RangeBounds};
 
 #[cfg(feature = "metrics")]
@@ -58,7 +59,7 @@ pub trait LogStorage: Send + Sync + 'static {
   /// The error type returned by the log storage.
   type Error: std::error::Error + Clone + Send + Sync + 'static;
   /// The async runtime used by the storage.
-  type Runtime: agnostic::Runtime;
+  type Runtime: agnostic_lite::RuntimeLite;
 
   /// The id type used to identify nodes.
   type Id: Id;
@@ -172,14 +173,11 @@ pub(crate) trait LogStorageExt: LogStorage {
     &self,
     interval: std::time::Duration,
     stop_rx: async_channel::Receiver<()>,
-  ) -> impl Future<Output = ()> + Send
-  where
-    <<Self::Runtime as agnostic::Runtime>::Sleep as std::future::Future>::Output: Send,
-  {
+  ) -> impl Future<Output = ()> + Send {
     async move {
       loop {
         futures::select! {
-          _ = <Self::Runtime as agnostic::Runtime>::sleep(interval).fuse() => {
+          _ = <Self::Runtime as RuntimeLite>::sleep(interval).fuse() => {
             // In error case emit 0 as the age
             let mut age_ms = 0;
             if let Ok(Some(log)) = self.oldest_log().await {

@@ -1,4 +1,4 @@
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use arc_swap::ArcSwap;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt, Stream, StreamExt};
@@ -8,14 +8,13 @@ use ruraft_utils::{backoff, capped_exponential_backoff, random_timeout};
 
 use std::{
   collections::HashMap,
-  future::Future,
   sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
   },
   time::{Duration, Instant},
 };
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use super::{super::super::spawn_local, Commitment, Node, State, Verify};
 use crate::{
@@ -49,11 +48,8 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: super::Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   /// A long running task that replicates log entries to a single
   /// follower.
@@ -272,8 +268,6 @@ pub(super) struct ReplicationRunner<F: FinateStateMachine, S: Storage, T: Transp
 impl<F: FinateStateMachine, S, T: Transport> ReplicationRunner<F, S, T>
 where
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
-
-  <<T::Runtime as Runtime>::Sleep as Future>::Output: Send,
 {
   fn spawn(
     self,
@@ -332,7 +326,7 @@ where
         // follower. See https://github.com/hashicorp/raft/issues/282.
         _ = {
           let timeout = random_timeout(self.commit_timeout).unwrap();
-          <T::Runtime as Runtime>::sleep(timeout)
+          <T::Runtime as RuntimeLite>::sleep(timeout)
         }.fuse() => {
           let last_log_idx = self.state.last_log().index;
           should_stop = self.replicate_to(last_log_idx).await;
@@ -442,7 +436,7 @@ where
           }
           _ = {
             let timeout = random_timeout(self.commit_timeout).unwrap();
-            <T::Runtime as Runtime>::sleep(timeout)
+            <T::Runtime as RuntimeLite>::sleep(timeout)
           }.fuse() => {
             let last_log_idx = self.state.last_log().index;
             should_stop = self.pipeline_send(&remote, &mut pipeline, &self.next_index, last_log_idx).await;
@@ -532,7 +526,7 @@ where
       if self.failures > 0 {
         let timeout = backoff(FAILURE_WAIT, self.failures, MAX_FAILURE_SCALE);
         futures::select! {
-          _ = <T::Runtime as Runtime>::sleep(timeout).fuse() => {}
+          _ = <T::Runtime as RuntimeLite>::sleep(timeout).fuse() => {}
           _ = self.shutdown_rx.recv().fuse() => return true,
         }
       }
@@ -858,8 +852,6 @@ where
   F: FinateStateMachine,
   T: Transport,
   S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
-
-  <<T::Runtime as Runtime>::Sleep as Future>::Output: Send,
   C: Stream<
       Item = Result<
         PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>,
@@ -971,7 +963,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
         _ = stop_heartbeat_rx.recv().fuse() => return,
         _ = {
           let timeout = random_timeout(opts.load(Ordering::Acquire).heartbeat_timeout()).unwrap();
-          <T::Runtime as Runtime>::sleep(timeout)
+          <T::Runtime as RuntimeLite>::sleep(timeout)
         }.fuse() => {}
       }
 
@@ -1025,7 +1017,7 @@ impl<F: FinateStateMachine, S: Storage, T: Transport> HeartbeatRunner<F, S, T> {
           .await;
           failures += 1;
           futures::select! {
-            _ = <T::Runtime as Runtime>::sleep(next_backoff_time).fuse() => {}
+            _ = <T::Runtime as RuntimeLite>::sleep(next_backoff_time).fuse() => {}
             _ = stop_heartbeat_rx.recv().fuse() => return,
           }
         }

@@ -383,7 +383,6 @@ impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
   I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
@@ -479,7 +478,6 @@ impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
 where
   I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
@@ -750,7 +748,6 @@ impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
 where
   I: Id,
   A: AddressResolver<ResolvedAddress = SocketAddr>,
-  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
@@ -843,7 +840,6 @@ where
   async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(self)
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
-    <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
     const BASE_DELAY: Duration = Duration::from_millis(5);
     const MAX_DELAY: Duration = Duration::from_secs(1);
@@ -921,7 +917,6 @@ where
     local_header: Header<I, A>,
   ) where
     <Resolver as AddressResolver>::Runtime: Runtime,
-    <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
     let (reader, mut writer) = {
       let (reader, writer) = conn.into_split();
@@ -987,9 +982,6 @@ where
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<Option<BufReader<<S::Stream as Connection>::OwnedReadHalf>>, Error<I, Resolver, W>>
-  where
-    <Resolver as AddressResolver>::Runtime: Runtime,
-    <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   {
     // TODO: metrics
     // measuring the time to get the first byte separately because the heartbeat conn will hang out here
@@ -1100,11 +1092,7 @@ where
     handle: RpcHandle<I, A>,
     shutdown_rx: async_channel::Receiver<()>,
     #[cfg(feature = "metrics")] respond_label: &'static str,
-  ) -> Result<(), Error<I, Resolver, W>>
-  where
-    <Resolver as AddressResolver>::Runtime: Runtime,
-    <<<Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
-  {
+  ) -> Result<(), Error<I, Resolver, W>> {
     #[cfg(feature = "metrics")]
     let resp_wait_start = Instant::now();
     #[cfg(feature = "metrics")]

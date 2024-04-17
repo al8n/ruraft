@@ -8,12 +8,12 @@ use std::{
   time::Instant,
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use atomic::Atomic;
 use futures::{channel::oneshot, AsyncWriteExt, FutureExt};
 use nodecraft::{resolver::AddressResolver, Address, Id};
 use smallvec::SmallVec;
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use super::{
   api::ApplySender, fsm::FSMRequest, state::LastLog, CountingSnapshotSourceReader, Leader,
@@ -107,7 +107,7 @@ where
   T: Transport<Runtime = R>,
 
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
@@ -190,7 +190,7 @@ where
   T: Transport<Runtime = R>,
 
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   type Target = State;
 
@@ -214,11 +214,8 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   pub(super) fn spawn(
     mut self,

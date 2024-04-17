@@ -138,10 +138,7 @@ where
 impl<I, A, D, S, W> AppendEntriesPipeline for NetAppendEntriesPipeline<I, A, D, S, W>
 where
   I: Id,
-
   A: AddressResolver,
-
-  <<<A as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output: Send,
   D: Data,
   S: StreamLayer,
   W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,

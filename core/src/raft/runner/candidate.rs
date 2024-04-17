@@ -1,9 +1,4 @@
-use std::sync::atomic::Ordering;
-
-use crate::{
-  membership::ServerSuffrage,
-  transport::{Header, VoteRequest, VoteResponse},
-};
+use crate::membership::ServerSuffrage;
 
 use super::*;
 use futures::{future::Either, StreamExt};
@@ -24,11 +19,8 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   pub(super) async fn run_candidate(
     &mut self,

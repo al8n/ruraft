@@ -5,6 +5,8 @@ pub use log::*;
 mod stable;
 pub use stable::*;
 
+use agnostic_lite::RuntimeLite;
+
 use std::{borrow::Cow, future::Future};
 
 use crate::{
@@ -113,7 +115,7 @@ pub trait Storage: Send + Sync + 'static {
   // type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;
 
   /// The async runtime used by the storage.
-  type Runtime: agnostic::Runtime;
+  type Runtime: RuntimeLite;
 
   /// Returns a reference to the stable storage.
   fn stable_store(&self) -> &Self::Stable;

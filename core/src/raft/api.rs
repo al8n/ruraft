@@ -6,7 +6,7 @@ use std::{
   time::{Duration, Instant},
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use futures::{channel::oneshot, future::Either, Stream};
 use nodecraft::resolver::AddressResolver;
 
@@ -38,7 +38,7 @@ where
   >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   /// Returns the current state of the reloadable fields in Raft's
   /// options. This is useful for programs to discover the current state for
@@ -170,8 +170,7 @@ where
   >,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
+  R: RuntimeLite,
 {
   /// Used to apply a command to the [`FinateStateMachine`] in a highly consistent
   /// manner. This returns a future that can be used to wait on the application.
@@ -674,10 +673,8 @@ where
     Runtime = R,
   >,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
+  R: RuntimeLite,
 {
   async fn apply_in(&self, data: T::Data, timeout: Option<Duration>) -> ApplyFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {

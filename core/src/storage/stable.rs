@@ -12,7 +12,7 @@ pub trait StableStorage: Send + Sync + 'static {
   /// The error type returned by the stable storage.
   type Error: std::error::Error + Send + Sync + 'static;
   /// The async runtime used by the storage.
-  type Runtime: agnostic::Runtime;
+  type Runtime: agnostic_lite::RuntimeLite;
   /// The id type used to identify node.
   type Id: Id;
   /// The address type of node.
