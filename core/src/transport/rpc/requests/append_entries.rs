@@ -1,6 +1,6 @@
 use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 
-use crate::{storage::LogBatch, Data, MESSAGE_SIZE_LEN};
+use crate::{storage::LogBatch, MESSAGE_SIZE_LEN};
 
 use super::*;
 
@@ -14,12 +14,12 @@ use super::*;
   serde(
     rename_all = "snake_case",
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub struct AppendEntriesRequest<I, A, D> {
+pub struct AppendEntriesRequest<I, A> {
   /// The header of the request
   #[viewit(
     getter(const, style = "ref", attrs(doc = "Get the header of the request"),),
@@ -62,7 +62,7 @@ pub struct AppendEntriesRequest<I, A, D> {
     ),
     setter(attrs(doc = "Set the log entries of the append request"),)
   )]
-  entries: LogBatch<I, A, D>,
+  entries: LogBatch<I, A>,
 
   /// Commit index on the leader
   #[viewit(
@@ -75,7 +75,7 @@ pub struct AppendEntriesRequest<I, A, D> {
   leader_commit: u64,
 }
 
-impl<I: Clone, A: Clone, D> Clone for AppendEntriesRequest<I, A, D> {
+impl<I: Clone, A: Clone> Clone for AppendEntriesRequest<I, A> {
   fn clone(&self) -> Self {
     Self {
       header: self.header.clone(),
@@ -88,9 +88,7 @@ impl<I: Clone, A: Clone, D> Clone for AppendEntriesRequest<I, A, D> {
   }
 }
 
-impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq
-  for AppendEntriesRequest<I, A, D>
-{
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for AppendEntriesRequest<I, A> {
   fn eq(&self, other: &Self) -> bool {
     self.header == other.header
       && self.term == other.term
@@ -101,9 +99,9 @@ impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq
   }
 }
 
-impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for AppendEntriesRequest<I, A, D> {}
+impl<I: core::hash::Hash + Eq, A: Eq> Eq for AppendEntriesRequest<I, A> {}
 
-impl<I, A, D> AppendEntriesRequest<I, A, D> {
+impl<I, A> AppendEntriesRequest<I, A> {
   /// Create a new [`AppendEntriesRequest`] with the given `id` and `addr` and `version`. Other fields
   /// are set to their default values.
   #[inline]
@@ -152,7 +150,7 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
 
   /// Returns a mutable reference of the log entries.
   #[inline]
-  pub fn entries_mut(&mut self) -> &mut LogBatch<I, A, D> {
+  pub fn entries_mut(&mut self) -> &mut LogBatch<I, A> {
     &mut self.entries
   }
 }
@@ -162,11 +160,10 @@ impl<I, A, D> AppendEntriesRequest<I, A, D> {
 // --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // | len (4 bytes) | header (variable) | term (uvarint) | prev_log_entry (uvarint) | prev_log_term (uvarint) | leader_commit (uvarint) | num_logs | log1 | log2 | ... |
 // --------------------------------------------------------------------------------------------------------------------------------------------------------------------
-impl<I, A, D> Transformable for AppendEntriesRequest<I, A, D>
+impl<I, A> Transformable for AppendEntriesRequest<I, A>
 where
   I: Id,
   A: Address,
-  D: Data,
 {
   type Error = TransformError;
 
@@ -259,7 +256,7 @@ where
 
     for _ in 0..num_entrires {
       let (readed, entry) =
-        <Log<I, A, D> as Transformable>::decode(&src[offset..]).map_err(Self::Error::decode)?;
+        <Log<I, A> as Transformable>::decode(&src[offset..]).map_err(Self::Error::decode)?;
       offset += readed;
       entries.push(entry);
     }
@@ -285,11 +282,10 @@ where
 }
 
 #[cfg(any(feature = "test", test))]
-impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
+impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr> {
   #[doc(hidden)]
   pub fn __large() -> Self {
     use crate::storage::LogKind;
-    use std::sync::Arc;
 
     Self {
       header: Header::__large(),
@@ -299,27 +295,27 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
       entries: log_batch![
         Log::__crate_new(3, 2, LogKind::Noop),
         Log::__crate_new(4, 2, LogKind::Barrier),
-        Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(5, 2, LogKind::Data(vec![1, 2, 3].into())),
         Log::__crate_new(6, 2, LogKind::Noop),
         Log::__crate_new(7, 2, LogKind::Barrier),
-        Log::__crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(8, 2, LogKind::Data(vec![1, 2, 3].into())),
         Log::__crate_new(9, 2, LogKind::Noop),
         Log::__crate_new(10, 2, LogKind::Barrier),
         {
-          let mut l = Log::__crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+          let mut l = Log::__crate_new(11, 2, LogKind::Data(vec![1, 2, 3].into()));
           l.appended_at = Some(std::time::SystemTime::now());
           l
         },
         Log::__crate_new(3, 2, LogKind::Noop),
         Log::__crate_new(4, 2, LogKind::Barrier),
-        Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(5, 2, LogKind::Data(vec![1, 2, 3].into())),
         Log::__crate_new(6, 2, LogKind::Noop),
         Log::__crate_new(7, 2, LogKind::Barrier),
-        Log::__crate_new(8, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(8, 2, LogKind::Data(vec![1, 2, 3].into())),
         Log::__crate_new(9, 2, LogKind::Noop),
         Log::__crate_new(10, 2, LogKind::Barrier),
         {
-          let mut l = Log::__crate_new(11, 2, LogKind::Data(Arc::new(vec![1, 2, 3])));
+          let mut l = Log::__crate_new(11, 2, LogKind::Data(vec![1, 2, 3].into()));
           l.appended_at = Some(std::time::SystemTime::now());
           l
         },
@@ -331,7 +327,6 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
   #[doc(hidden)]
   pub fn __small() -> Self {
     use crate::storage::LogKind;
-    use std::sync::Arc;
 
     Self {
       header: Header::__small(),
@@ -341,7 +336,7 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
       entries: log_batch![
         Log::__crate_new(3, 2, LogKind::Noop),
         Log::__crate_new(4, 2, LogKind::Barrier),
-        Log::__crate_new(5, 2, LogKind::Data(Arc::new(vec![1, 2, 3]))),
+        Log::__crate_new(5, 2, LogKind::Data(vec![1, 2, 3].into())),
       ],
       leader_commit: 3,
     }
@@ -349,4 +344,4 @@ impl AppendEntriesRequest<smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> {
 }
 
 #[cfg(test)]
-unit_test_transformable_roundtrip!(AppendEntriesRequest <smol_str::SmolStr, std::net::SocketAddr, Vec<u8>> => append_entries_request);
+unit_test_transformable_roundtrip!(AppendEntriesRequest <smol_str::SmolStr, std::net::SocketAddr> => append_entries_request);

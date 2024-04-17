@@ -37,10 +37,11 @@ impl<A: Address, R: RuntimeLite> AddressResolver for MemoryAddressResolver<A, R>
 
   async fn new(_options: Self::Options) -> Result<Self, Self::Error>
   where
-    Self: Sized {
+    Self: Sized,
+  {
     Ok(Self::new())
   }
-  
+
   async fn resolve(&self, address: &Self::Address) -> Result<Self::ResolvedAddress, Self::Error> {
     Ok(address.cheap_clone())
   }

@@ -105,8 +105,6 @@ impl<
 
   type Address = <B as StableStorage>::Address;
 
-  type Data = <B as LogStorage>::Data;
-
   type Stable = B;
 
   type Snapshot = S;

@@ -38,15 +38,9 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: super::Sidecar<Runtime = R>,
   R: RuntimeLite,
@@ -267,7 +261,7 @@ pub(super) struct ReplicationRunner<F: FinateStateMachine, S: Storage, T: Transp
 
 impl<F: FinateStateMachine, S, T: Transport> ReplicationRunner<F, S, T>
 where
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address>,
 {
   fn spawn(
     self,
@@ -730,10 +724,8 @@ where
     &self,
     next_idx: u64,
     last_idx: u64,
-  ) -> Result<
-    AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
-    Error<F, S, T>,
-  > {
+  ) -> Result<AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>, Error<F, S, T>>
+  {
     let header = self.transport.header();
     let term = self.current_term;
     let ls = self.storage.log_store();
@@ -758,7 +750,7 @@ where
     &self,
     ls: &S::Log,
     next_idx: u64,
-    req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) -> Result<(), Error<F, S, T>> {
     let LastSnapshot {
       term: last_snapshot_term,
@@ -798,7 +790,7 @@ where
     ls: &S::Log,
     next_idx: u64,
     last_idx: u64,
-    req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    req: &mut AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) -> Result<(), Error<F, S, T>> {
     // Append up to MaxAppendEntries or up to the lastIndex. we need to use a
     // consistent value for maxAppendEntries in the lines below in case it ever
@@ -851,7 +843,7 @@ impl<F, S, T, C> PipelineDecodeRunner<F, S, T, C>
 where
   F: FinateStateMachine,
   T: Transport,
-  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Data = T::Data>,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address>,
   C: Stream<
       Item = Result<
         PipelineAppendEntriesResponse<T::Id, <T::Resolver as AddressResolver>::Address>,

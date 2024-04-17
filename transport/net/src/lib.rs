@@ -49,7 +49,7 @@ use futures::{
 };
 use ruraft_core::Node;
 
-pub use ruraft_core::{options::ProtocolVersion, transport::*, Data};
+pub use ruraft_core::{options::ProtocolVersion, transport::*};
 
 /// Re-exports [`ruraft-wire`](ruraft_wire).
 pub mod wire {
@@ -355,7 +355,7 @@ impl StreamContext {
 /// InstallSnapshot is special, in that after the request we stream
 /// the entire state. That socket is not re-used as the connection state
 /// is not known if there is an error.
-pub struct NetTransport<I, A, D, S, W>
+pub struct NetTransport<I, A, S, W, R>
 where
   A: AddressResolver,
   S: StreamLayer,
@@ -366,7 +366,7 @@ where
   shutdown_tx: async_channel::Sender<()>,
   local_header: Header<I, <A as AddressResolver>::Address>,
   bind_addr: SocketAddr,
-  consumer: RpcConsumer<I, <A as AddressResolver>::Address, D>,
+  consumer: RpcConsumer<I, <A as AddressResolver>::Address>,
   resolver: A,
   conn_pool: Mutex<HashMap<<A as AddressResolver>::Address, smallvec::SmallVec<[S::Stream; 2]>>>,
   protocol_version: ProtocolVersion,
@@ -376,16 +376,17 @@ where
   stream_layer: S,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A::Address>>>,
   stream_ctx: Arc<StreamContext>,
-  _w: std::marker::PhantomData<W>,
+  _w: std::marker::PhantomData<(W, R)>,
 }
 
-impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
+impl<I, A, S, W, R> NetTransport<I, A, S, W, R>
 where
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
+
   S: StreamLayer,
-  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address>,
+  R: Runtime,
 {
   /// Create a new [`NetTransport`].
   pub async fn new(
@@ -433,7 +434,7 @@ where
       stream_ctx: stream_ctx.clone(),
       heartbeat_handler: heartbeat_handler.clone(),
     };
-    <A::Runtime as RuntimeLite>::spawn_detach(RequestHandler::<I, A::Address, D, S>::run::<A, W>(
+    <A::Runtime as RuntimeLite>::spawn_detach(RequestHandler::<I, A::Address, S>::run::<A, W>(
       request_handler,
     ));
 
@@ -474,30 +475,26 @@ where
   }
 }
 
-impl<I, A, D, S, W> Transport for NetTransport<I, A, D, S, W>
+impl<I, A, S, W, R> Transport for NetTransport<I, A, S, W, R>
 where
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address>,
+  R: Runtime,
 {
   type Error = Error<Self::Id, Self::Resolver, Self::Wire>;
-  type Runtime = <Self::Resolver as AddressResolver>::Runtime;
+  type Runtime = R;
 
   type Id = I;
 
-  type Pipeline = NetAppendEntriesPipeline<Self::Id, Self::Resolver, Self::Data, S, Self::Wire>;
+  type Pipeline = NetAppendEntriesPipeline<Self::Id, Self::Resolver, S, Self::Wire>;
 
   type Resolver = A;
 
   type Wire = W;
 
-  type Data = D;
-
-  fn consumer(
-    &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
+  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
     self.consumer.clone()
   }
 
@@ -566,7 +563,7 @@ where
   async fn append_entries(
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>,
+    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<
     AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,
@@ -744,13 +741,14 @@ where
   }
 }
 
-impl<I, A, D, S, W> NetTransport<I, A, D, S, W>
+impl<I, A, S, W, R> NetTransport<I, A, S, W, R>
 where
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
+
   S: StreamLayer,
-  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address>,
+  R: Runtime,
 {
   async fn return_conn(&self, conn: S::Stream, addr: <A as AddressResolver>::Address) {
     if self.shutdown.load(Ordering::Acquire) {
@@ -776,7 +774,7 @@ where
   async fn send(
     &self,
     target: SocketAddr,
-    req: Request<I, <A as AddressResolver>::Address, D>,
+    req: Request<I, <A as AddressResolver>::Address>,
   ) -> Result<S::Stream, <Self as Transport>::Error> {
     // Get a connection
     let mut conn = {
@@ -804,7 +802,7 @@ where
   }
 }
 
-impl<I, A, D, S, W> Drop for NetTransport<I, A, D, S, W>
+impl<I, A, S, W, R> Drop for NetTransport<I, A, S, W, R>
 where
   A: AddressResolver,
   S: StreamLayer,
@@ -820,24 +818,23 @@ where
 }
 
 /// Used to handle connection from remote peers.
-struct RequestHandler<I, A, D, S: StreamLayer> {
+struct RequestHandler<I, A, S: StreamLayer> {
   ln: S::Listener,
   local_header: Header<I, A>,
-  producer: RpcProducer<I, A, D>,
+  producer: RpcProducer<I, A>,
   shutdown: Arc<AtomicBool>,
   shutdown_rx: async_channel::Receiver<()>,
   heartbeat_handler: Arc<ArcSwapOption<HeartbeatHandler<I, A>>>,
   stream_ctx: Arc<StreamContext>,
 }
 
-impl<I, A, D, S> RequestHandler<I, A, D, S>
+impl<I, A, S> RequestHandler<I, A, S>
 where
   I: Id,
   A: Address,
-  D: Data,
   S: StreamLayer,
 {
-  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(self)
+  async fn run<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(self)
   where
     <Resolver as AddressResolver>::Runtime: Runtime,
   {
@@ -891,7 +888,7 @@ where
               }
 
               futures::select! {
-                _ = <<Resolver as AddressResolver>::Runtime as agnostic::Runtime>::sleep(loop_delay).fuse() => continue,
+                _ = <<Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(loop_delay).fuse() => continue,
                 _ = self.shutdown_rx.recv().fuse() => {
                   tracing::debug!(target = "ruraft.net.transport", "received shutdown signal, exit request handler task...");
                   return;
@@ -908,11 +905,11 @@ where
     }
   }
 
-  async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
+  async fn handle_connection<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(
     ctx: async_channel::Receiver<()>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
     conn: S::Stream,
-    producer: RpcProducer<I, A, D>,
+    producer: RpcProducer<I, A>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) where
@@ -974,11 +971,11 @@ where
     }
   }
 
-  async fn handle_command<Resolver: AddressResolver, W: Wire<Id = I, Address = A, Data = D>>(
+  async fn handle_command<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(
     mut reader: BufReader<<S::Stream as Connection>::OwnedReadHalf>,
     writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     heartbeat_handler: &ArcSwapOption<HeartbeatHandler<I, A>>,
-    producer: RpcProducer<I, A, D>,
+    producer: RpcProducer<I, A>,
     shutdown_rx: async_channel::Receiver<()>,
     local_header: Header<I, A>,
   ) -> Result<Option<BufReader<<S::Stream as Connection>::OwnedReadHalf>>, Error<I, Resolver, W>>
@@ -1083,10 +1080,7 @@ where
     .map(|_| reader)
   }
 
-  async fn wait_and_send_response<
-    Resolver: AddressResolver,
-    W: Wire<Id = I, Address = A, Data = D>,
-  >(
+  async fn wait_and_send_response<Resolver: AddressResolver, W: Wire<Id = I, Address = A>>(
     mut writer: &mut BufWriter<<S::Stream as Connection>::OwnedWriteHalf>,
     local_header: Header<I, A>,
     handle: RpcHandle<I, A>,
@@ -1137,7 +1131,7 @@ trait RequestMetricsExt {
 }
 
 #[cfg(feature = "metrics")]
-impl<I, A, D> RequestMetricsExt for Request<I, A, D> {
+impl<I, A> RequestMetricsExt for Request<I, A> {
   fn enqueue_label(&self) -> &'static str {
     match self {
       Self::AppendEntries(_) => "ruraft.net.rpc.enqueue.append_entries",

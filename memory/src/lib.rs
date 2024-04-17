@@ -60,7 +60,7 @@ pub mod tests {
   ///
   /// Test get first index
   pub async fn memory_log_storage_first_index<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     first_index(&s).await
   }
 
@@ -70,7 +70,7 @@ pub mod tests {
   ///
   /// Test get last index
   pub async fn memory_log_storage_last_index<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     last_index(&s).await
   }
 
@@ -80,7 +80,7 @@ pub mod tests {
   ///
   /// Test get log
   pub async fn memory_log_storage_get_log<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     get_log(&s).await
   }
 
@@ -90,7 +90,7 @@ pub mod tests {
   ///
   /// Test store log
   pub async fn memory_log_storage_store_log<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     store_log(&s).await
   }
 
@@ -100,7 +100,7 @@ pub mod tests {
   ///
   /// Test store logs
   pub async fn memory_log_storage_store_logs<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     store_logs(&s).await
   }
 
@@ -110,7 +110,7 @@ pub mod tests {
   ///
   /// Test remove logs by range
   pub async fn memory_log_storage_remove_range<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     remove_range(&s).await
   }
 
@@ -122,7 +122,7 @@ pub mod tests {
   #[cfg(all(feature = "test", feature = "metrics"))]
   #[cfg_attr(docsrs, doc(cfg(all(feature = "test", feature = "metrics"))))]
   pub async fn memory_log_storage_oldest_log<R: RuntimeLite>() {
-    let s = MemoryLogStorage::<_, _, _, R>::new();
+    let s = MemoryLogStorage::<_, _, R>::new();
     oldest_log(&s).await
   }
 

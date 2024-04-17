@@ -16,7 +16,7 @@ use ruraft_core::{
     Response, Rpc, RpcConsumer, RpcHandle, RpcProducer, Transformable, Transport, TransportError,
     Wire,
   },
-  CheapClone, Data,
+  CheapClone,
 };
 
 pub use self::address::MemoryAddress;
@@ -171,14 +171,14 @@ struct PipelineInflight<I, A> {
 }
 
 /// Append entries pipeline used by [`MemoryTransport`].
-pub struct MemoryTransportPipeline<I, A, D, W>
+pub struct MemoryTransportPipeline<I, A, W>
 where
   I: Id,
   A: AddressResolver,
   W: Wire,
 {
-  trans: MemoryTransport<I, A, D, W>,
-  peer: MemoryTransport<I, A, D, W>,
+  trans: MemoryTransport<I, A, W>,
+  peer: MemoryTransport<I, A, W>,
   peer_addr: A::Address,
   inprogress_tx: async_channel::Sender<PipelineInflight<I, A::Address>>,
   finish_rx:
@@ -188,7 +188,7 @@ where
   shutdown_rx: async_channel::Receiver<()>,
 }
 
-impl<I, A, D, W> Clone for MemoryTransportPipeline<I, A, D, W>
+impl<I, A, W> Clone for MemoryTransportPipeline<I, A, W>
 where
   I: Id,
   A: AddressResolver,
@@ -208,16 +208,16 @@ where
   }
 }
 
-impl<I, A, D, W> MemoryTransportPipeline<I, A, D, W>
+impl<I, A, W> MemoryTransportPipeline<I, A, W>
 where
   I: Id,
   A: AddressResolver,
-  D: Data,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+
+  W: Wire<Id = I, Address = A::Address>,
 {
   fn new(
-    trans: MemoryTransport<I, A, D, W>,
-    peer: MemoryTransport<I, A, D, W>,
+    trans: MemoryTransport<I, A, W>,
+    peer: MemoryTransport<I, A, W>,
     addr: A::Address,
   ) -> Self {
     let (shutdown_tx, shutdown_rx) = async_channel::bounded(1);
@@ -333,23 +333,19 @@ where
   }
 }
 
-impl<I, A, D, W> AppendEntriesPipeline for MemoryTransportPipeline<I, A, D, W>
+impl<I, A, W> AppendEntriesPipeline for MemoryTransportPipeline<I, A, W>
 where
   I: Id,
 
   A: AddressResolver,
 
   <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
-  D: Data,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+
+  W: Wire<Id = I, Address = A::Address>,
 {
   type Error = Error<I, A, W>;
-
   type Id = I;
-
   type Address = A::Address;
-
-  type Data = D;
 
   fn consumer(
     &self,
@@ -365,7 +361,7 @@ where
 
   async fn append_entries(
     &mut self,
-    req: ruraft_core::transport::AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
+    req: ruraft_core::transport::AppendEntriesRequest<Self::Id, Self::Address>,
   ) -> Result<(), Self::Error> {
     let term = req.term;
     let num_entries = req.entries().len();
@@ -460,36 +456,36 @@ impl<I> MemoryTransportOptions<I> {
   }
 }
 
-struct MemoryTransportInner<I, A, D, W>
+struct MemoryTransportInner<I, A, W>
 where
   I: Id,
   A: AddressResolver,
   W: Wire,
 {
-  peers: HashMap<A::Address, MemoryTransport<I, A, D, W>>,
-  pipelines: Vec<MemoryTransportPipeline<I, A, D, W>>,
+  peers: HashMap<A::Address, MemoryTransport<I, A, W>>,
+  pipelines: Vec<MemoryTransportPipeline<I, A, W>>,
 }
 
 /// Implements the [`Transport`] trait, to allow Raft to be
 /// tested in-memory without going over a network.
-pub struct MemoryTransport<I, A, D, W>
+pub struct MemoryTransport<I, A, W>
 where
   I: Id,
   A: AddressResolver,
   W: Wire,
 {
-  inner: Arc<RwLock<MemoryTransportInner<I, A, D, W>>>,
+  inner: Arc<RwLock<MemoryTransportInner<I, A, W>>>,
   timeout: Duration,
   bind_address: A::ResolvedAddress,
   local_address: A::Address,
   local_id: I,
   resolver: Arc<A>,
-  consumer: RpcConsumer<I, A::Address, D>,
-  producer: RpcProducer<I, A::Address, D>,
+  consumer: RpcConsumer<I, A::Address>,
+  producer: RpcProducer<I, A::Address>,
   protocol_version: ProtocolVersion,
 }
 
-impl<I, A, D, W> core::fmt::Debug for MemoryTransport<I, A, D, W>
+impl<I, A, W> core::fmt::Debug for MemoryTransport<I, A, W>
 where
   I: Id,
   A: AddressResolver,
@@ -503,7 +499,7 @@ where
   }
 }
 
-impl<I, A, D, W> Clone for MemoryTransport<I, A, D, W>
+impl<I, A, W> Clone for MemoryTransport<I, A, W>
 where
   I: Id,
   A: AddressResolver,
@@ -524,7 +520,7 @@ where
   }
 }
 
-impl<I, A, D, W> MemoryTransport<I, A, D, W>
+impl<I, A, W> MemoryTransport<I, A, W>
 where
   I: Id,
   A: AddressResolver<Address = MemoryAddress>,
@@ -558,7 +554,7 @@ where
   }
 }
 
-impl<I, A, D, W> MemoryTransport<I, A, D, W>
+impl<I, A, W> MemoryTransport<I, A, W>
 where
   I: Id,
   A: AddressResolver,
@@ -598,19 +594,19 @@ where
   }
 }
 
-impl<I, A, D, W> MemoryTransport<I, A, D, W>
+impl<I, A, W> MemoryTransport<I, A, W>
 where
   I: Id,
 
   A: AddressResolver,
 
   <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
-  D: Data,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+
+  W: Wire<Id = I, Address = A::Address>,
 {
   /// Used to remove the ability to route to a given peer.
   pub async fn disconnect(&self, peer: &A::Address) {
-    let mut inner: async_lock::RwLockWriteGuard<'_, MemoryTransportInner<I, A, D, W>> =
+    let mut inner: async_lock::RwLockWriteGuard<'_, MemoryTransportInner<I, A, W>> =
       self.inner.write().await;
     inner.peers.remove(peer);
 
@@ -643,19 +639,18 @@ where
   }
 }
 
-impl<I, A, D, W> MemoryTransport<I, A, D, W>
+impl<I, A, W> MemoryTransport<I, A, W>
 where
   I: Id,
 
   A: AddressResolver,
 
-  D: Data,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
 {
   async fn make_rpc(
     &self,
     target: A::Address,
-    req: Request<I, A::Address, D>,
+    req: Request<I, A::Address>,
     conn: Option<Cursor<Vec<u8>>>,
     timeout: Duration,
   ) -> Result<Response<I, A::Address>, Error<I, A, W>> {
@@ -688,15 +683,15 @@ where
   }
 }
 
-impl<I, A, D, W> Transport for MemoryTransport<I, A, D, W>
+impl<I, A, W> Transport for MemoryTransport<I, A, W>
 where
   I: Id,
 
   A: AddressResolver,
 
   <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
-  D: Data,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+
+  W: Wire<Id = I, Address = A::Address>,
 {
   type Error = Error<I, A, W>;
 
@@ -704,17 +699,13 @@ where
 
   type Id = I;
 
-  type Data = D;
-
-  type Pipeline = MemoryTransportPipeline<I, A, D, W>;
+  type Pipeline = MemoryTransportPipeline<I, A, W>;
 
   type Resolver = A;
 
   type Wire = W;
 
-  fn consumer(
-    &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
+  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
     self.consumer.clone()
   }
 
@@ -770,7 +761,6 @@ where
     req: ruraft_core::transport::AppendEntriesRequest<
       Self::Id,
       <Self::Resolver as AddressResolver>::Address,
-      Self::Data,
     >,
   ) -> Result<
     ruraft_core::transport::AppendEntriesResponse<
@@ -940,15 +930,12 @@ pub(super) mod tests {
 
   impl std::error::Error for NoopWireError {}
 
-  struct NoopWire<I, A, D>(PhantomData<(I, A, D)>);
+  struct NoopWire<I, A>(PhantomData<(I, A)>);
 
-  impl<I: Id, A: Address, D: Data> Wire for NoopWire<I, A, D>
+  impl<I: Id, A: Address> Wire for NoopWire<I, A>
   where
     I: Id,
-
     A: Send + Sync + 'static,
-
-    D: Data,
   {
     type Error = NoopWireError;
 
@@ -956,13 +943,9 @@ pub(super) mod tests {
 
     type Address = A;
 
-    type Data = D;
-
     type Bytes = Vec<u8>;
 
-    fn encode_request(
-      _req: &Request<Self::Id, Self::Address, Self::Data>,
-    ) -> Result<Self::Bytes, Self::Error> {
+    fn encode_request(_req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error> {
       unreachable!()
     }
 
@@ -973,7 +956,7 @@ pub(super) mod tests {
     }
 
     async fn encode_request_to_writer(
-      _req: &Request<Self::Id, Self::Address, Self::Data>,
+      _req: &Request<Self::Id, Self::Address>,
       _writer: impl futures::prelude::AsyncWrite + Send + Unpin,
     ) -> std::io::Result<()> {
       unreachable!()
@@ -986,9 +969,7 @@ pub(super) mod tests {
       unreachable!()
     }
 
-    fn decode_request(
-      _src: &[u8],
-    ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
+    fn decode_request(_src: &[u8]) -> Result<Request<Self::Id, Self::Address>, Self::Error> {
       todo!()
     }
 
@@ -998,7 +979,7 @@ pub(super) mod tests {
 
     async fn decode_request_from_reader(
       _reader: impl futures::prelude::AsyncRead + Send + Unpin,
-    ) -> std::io::Result<Request<Self::Id, Self::Address, Self::Data>> {
+    ) -> std::io::Result<Request<Self::Id, Self::Address>> {
       todo!()
     }
 
@@ -1030,14 +1011,14 @@ pub(super) mod tests {
     // without having to contrive to fill up the buffer first.
     let timeout = Duration::from_millis(10);
 
-    let t1 = MemoryTransport::<_, _, Vec<u8>, NoopWire<I, A::Address, _>>::with_address(
+    let t1 = MemoryTransport::<_, _, NoopWire<I, A::Address>>::with_address(
       addr1,
       resolver1,
       MemoryTransportOptions::new(id1.clone()).with_timeout(Some(timeout)),
     )
     .await
     .unwrap();
-    let t2 = MemoryTransport::<_, _, Vec<u8>, NoopWire<I, A::Address, _>>::with_address(
+    let t2 = MemoryTransport::<_, _, NoopWire<I, A::Address>>::with_address(
       addr2.clone(),
       resolver2,
       MemoryTransportOptions::new(id2).with_timeout(Some(timeout)),

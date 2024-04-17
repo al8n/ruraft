@@ -2,7 +2,7 @@ use std::{io, marker::PhantomData};
 
 use bytes::Bytes;
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use ruraft_core::{transport::*, Data};
+use ruraft_core::transport::*;
 
 /// The error kind of [`LpeWire`].
 pub enum ErrorKind {
@@ -115,28 +115,28 @@ impl WireError for Error {
 /// **Note**: It is recommended to use a [`BufWriter`](futures_util::io::BufWriter)/[`BufReader`](futures_util::io::BufWriter) to
 /// wrap the writer/reader when using the async APIs of this implementation.
 #[repr(transparent)]
-pub struct LpeWire<I, A, D>(PhantomData<(I, A, D)>);
+pub struct LpeWire<I, A>(PhantomData<(I, A)>);
 
-impl<I, A, D> LpeWire<I, A, D> {
+impl<I, A> LpeWire<I, A> {
   /// Creates a new [`LpeWire`].
   pub const fn new() -> Self {
     Self(PhantomData)
   }
 }
 
-impl<I, A, D> Default for LpeWire<I, A, D> {
+impl<I, A> Default for LpeWire<I, A> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, A, D> Clone for LpeWire<I, A, D> {
+impl<I, A> Clone for LpeWire<I, A> {
   fn clone(&self) -> Self {
     *self
   }
 }
 
-impl<I, A, D> Copy for LpeWire<I, A, D> {}
+impl<I, A> Copy for LpeWire<I, A> {}
 
 macro_rules! encode {
   ($tag: ident: $target: ident) => {{
@@ -174,11 +174,10 @@ macro_rules! decode_from_reader {
   }}
 }
 
-impl<I, A, D> Wire for LpeWire<I, A, D>
+impl<I, A> Wire for LpeWire<I, A>
 where
   I: Id,
   A: Address,
-  D: Data,
 {
   type Error = Error;
 
@@ -186,13 +185,9 @@ where
 
   type Address = A;
 
-  type Data = D;
-
   type Bytes = bytes::Bytes;
 
-  fn encode_request(
-    req: &Request<Self::Id, Self::Address, Self::Data>,
-  ) -> Result<Self::Bytes, Self::Error> {
+  fn encode_request(req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error> {
     let tag = req.tag();
     match req {
       Request::AppendEntries(req) => encode!(tag: req),
@@ -218,7 +213,7 @@ where
   }
 
   async fn encode_request_to_writer(
-    req: &Request<Self::Id, Self::Address, Self::Data>,
+    req: &Request<Self::Id, Self::Address>,
     mut writer: impl AsyncWrite + Send + Unpin,
   ) -> std::io::Result<()> {
     let tag = req.tag();
@@ -248,14 +243,12 @@ where
     }
   }
 
-  fn decode_request(
-    mut src: &[u8],
-  ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error> {
+  fn decode_request(mut src: &[u8]) -> Result<Request<Self::Id, Self::Address>, Self::Error> {
     let tag = src[0];
     src = &src[1..];
 
     match tag {
-      AppendEntriesRequest::<I, A, D>::TAG => decode!(Request::AppendEntries(src)),
+      AppendEntriesRequest::<I, A>::TAG => decode!(Request::AppendEntries(src)),
       VoteRequest::<I, A>::TAG => decode!(Request::Vote(src)),
       InstallSnapshotRequest::<I, A>::TAG => decode!(Request::InstallSnapshot(src)),
       TimeoutNowRequest::<I, A>::TAG => decode!(Request::TimeoutNow(src)),
@@ -284,12 +277,12 @@ where
 
   async fn decode_request_from_reader(
     mut reader: impl AsyncRead + Send + Unpin,
-  ) -> io::Result<Request<Self::Id, Self::Address, Self::Data>> {
+  ) -> io::Result<Request<Self::Id, Self::Address>> {
     let mut tag = [0; 1];
     reader.read_exact(&mut tag).await?;
     let tag = tag[0];
     match tag {
-      AppendEntriesRequest::<I, A, D>::TAG => decode_from_reader!(Request::AppendEntries(reader)),
+      AppendEntriesRequest::<I, A>::TAG => decode_from_reader!(Request::AppendEntries(reader)),
       VoteRequest::<I, A>::TAG => decode_from_reader!(Request::Vote(reader)),
       InstallSnapshotRequest::<I, A>::TAG => {
         decode_from_reader!(Request::InstallSnapshot(reader))

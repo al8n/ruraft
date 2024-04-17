@@ -34,11 +34,6 @@ pub use nodecraft::CheapClone;
 
 const MESSAGE_SIZE_LEN: usize = core::mem::size_of::<u32>();
 
-/// A trait for the data type that can be used as the user data of the Raft.
-pub trait Data: Transformable {}
-
-impl<T: Transformable> Data for T {}
-
 /// Add `test` prefix to the predefined unit test fn with a given [`Runtime`](agonstic::Runtime)
 #[cfg(any(feature = "test", test))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "test", test))))]

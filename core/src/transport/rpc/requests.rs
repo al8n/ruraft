@@ -24,15 +24,15 @@ enum_wrapper!(
     serde(
       rename_all = "snake_case",
       bound(
-        serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-        deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+        serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+        deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display +  serde::Deserialize<'de>",
       )
     )
   )]
   #[non_exhaustive]
-  pub enum Request<I, A, D> {
+  pub enum Request<I, A> {
     /// Append entries request.
-    AppendEntries(AppendEntriesRequest<I, A, D>) = 0,
+    AppendEntries(AppendEntriesRequest<I, A>) = 0,
     /// Vote request.
     Vote(VoteRequest<I, A>) = 1,
     /// Install snapshot request.
@@ -44,7 +44,7 @@ enum_wrapper!(
   }
 );
 
-impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Request<I, A, D> {
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for Request<I, A> {
   fn eq(&self, other: &Self) -> bool {
     match (self, other) {
       (Self::AppendEntries(a), Self::AppendEntries(b)) => a == b,
@@ -57,4 +57,4 @@ impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Request
   }
 }
 
-impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for Request<I, A, D> {}
+impl<I: core::hash::Hash + Eq, A: Eq> Eq for Request<I, A> {}

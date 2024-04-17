@@ -108,10 +108,7 @@ impl<D: Data, R: Runtime> LogStorage for SupportedLogStorage<D, R> {
     }
   }
 
-  async fn get_log(
-    &self,
-    index: u64,
-  ) -> Result<Option<Log<Self::Id, Self::Address, Self::Data>>, Self::Error> {
+  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error> {
     match self {
       #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
       Self::Light(db) => db.get_log(index).await.map_err(From::from),
@@ -119,10 +116,7 @@ impl<D: Data, R: Runtime> LogStorage for SupportedLogStorage<D, R> {
     }
   }
 
-  async fn store_log(
-    &self,
-    log: &Log<Self::Id, Self::Address, Self::Data>,
-  ) -> Result<(), Self::Error> {
+  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error> {
     match self {
       #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
       Self::Light(db) => db.store_log(log).await.map_err(From::from),
@@ -130,10 +124,7 @@ impl<D: Data, R: Runtime> LogStorage for SupportedLogStorage<D, R> {
     }
   }
 
-  async fn store_logs(
-    &self,
-    logs: &[Log<Self::Id, Self::Address, Self::Data>],
-  ) -> Result<(), Self::Error> {
+  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error> {
     match self {
       #[cfg(any(feature = "jammdb", feature = "redb", feature = "sled"))]
       Self::Light(db) => db.store_logs(logs).await.map_err(From::from),

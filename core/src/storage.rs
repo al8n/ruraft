@@ -11,7 +11,7 @@ use std::{borrow::Cow, future::Future};
 
 use crate::{
   transport::{Address, Id},
-  Data, State,
+  State,
 };
 
 /// Represents a comprehensive set of errors arising from operations within the [`Storage`] trait.
@@ -94,8 +94,6 @@ pub trait Storage: Send + Sync + 'static {
   type Id: Id;
   /// The address type of node.
   type Address: Address;
-  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  type Data: Data;
 
   /// Stable storage
   type Stable: StableStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
@@ -104,12 +102,7 @@ pub trait Storage: Send + Sync + 'static {
   type Snapshot: SnapshotStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   /// Log storage
-  type Log: LogStorage<
-    Id = Self::Id,
-    Address = Self::Address,
-    Data = Self::Data,
-    Runtime = Self::Runtime,
-  >;
+  type Log: LogStorage<Id = Self::Id, Address = Self::Address, Runtime = Self::Runtime>;
 
   // /// Membership storage
   // type Membership: MembershipStorage<Id = Self::Id, Address = Self::Address>;
@@ -368,10 +361,8 @@ where
   S: SnapshotStorage<Id = L::Id, Address = L::Address, Runtime = L::Runtime>,
 {
   type Error = RaftStorageError<L, ST, S>;
-
   type Id = <L as LogStorage>::Id;
   type Address = <L as LogStorage>::Address;
-  type Data = <L as LogStorage>::Data;
 
   type Stable = ST;
   type Snapshot = S;
@@ -491,21 +482,20 @@ pub(super) mod tests {
   use crate::Node;
 
   use super::{Log, LogStorage, StableStorage};
+  use bytes::Bytes;
   use smol_str::SmolStr;
   use std::net::SocketAddr;
 
   /// Test [`LogStorage::first_index`](LogStorage::first_index) implementation.
-  pub async fn first_index<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
-    s: &S,
-  ) {
+  pub async fn first_index<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     // Should get 0 index on empty log
     assert!(s.first_index().await.unwrap().is_none());
 
     // Set a mock raft log
     let logs = vec![
-      Log::new(b"log1".to_vec()).set_index(1),
-      Log::new(b"log2".to_vec()).set_index(2),
-      Log::new(b"log3".to_vec()).set_index(3),
+      Log::new(Bytes::from_static(b"log1")).set_index(1),
+      Log::new(Bytes::from_static(b"log2")).set_index(2),
+      Log::new(Bytes::from_static(b"log3")).set_index(3),
     ];
     s.store_logs(&logs).await.unwrap();
 
@@ -514,17 +504,15 @@ pub(super) mod tests {
   }
 
   /// Test [`LogStorage::last_index`](LogStorage::last_index) implementation.
-  pub async fn last_index<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
-    s: &S,
-  ) {
+  pub async fn last_index<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     // Should get 0 index on empty log
     assert!(s.last_index().await.unwrap().is_none());
 
     // Set a mock raft log
     let logs = vec![
-      Log::new(b"log1".to_vec()).set_index(1),
-      Log::new(b"log2".to_vec()).set_index(2),
-      Log::new(b"log3".to_vec()).set_index(3),
+      Log::new(Bytes::from_static(b"log1")).set_index(1),
+      Log::new(Bytes::from_static(b"log2")).set_index(2),
+      Log::new(Bytes::from_static(b"log3")).set_index(3),
     ];
     s.store_logs(&logs).await.unwrap();
 
@@ -533,15 +521,15 @@ pub(super) mod tests {
   }
 
   /// Test [`LogStorage::get_log`](LogStorage::get_log) implementation.
-  pub async fn get_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(s: &S) {
+  pub async fn get_log<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     // Should get 0 index on empty log
     assert!(s.get_log(1).await.unwrap().is_none());
 
     // Set a mock raft log
     let logs = vec![
-      Log::new(b"log1".to_vec()).set_index(1),
-      Log::new(b"log2".to_vec()).set_index(2),
-      Log::new(b"log3".to_vec()).set_index(3),
+      Log::new(Bytes::from_static(b"log1")).set_index(1),
+      Log::new(Bytes::from_static(b"log2")).set_index(2),
+      Log::new(Bytes::from_static(b"log3")).set_index(3),
     ];
     let log2 = logs[1].clone();
     s.store_logs(&logs).await.unwrap();
@@ -550,11 +538,11 @@ pub(super) mod tests {
   }
 
   /// Test [`LogStorage::store_log`](LogStorage::store_log) implementation.
-  pub async fn store_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(s: &S) {
+  pub async fn store_log<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     assert!(s.get_log(1).await.unwrap().is_none());
 
     // Set a mock raft log
-    let log = Log::new(b"log1".to_vec()).set_index(1);
+    let log = Log::new(Bytes::from_static(b"log1")).set_index(1);
     s.store_log(&log).await.unwrap();
 
     // Fetch the first Raft index
@@ -562,13 +550,11 @@ pub(super) mod tests {
   }
 
   /// Test [`LogStorage::store_logs`](LogStorage::store_logs) implementation.
-  pub async fn store_logs<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
-    s: &S,
-  ) {
+  pub async fn store_logs<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     // Set a mock raft log
     let logs = vec![
-      Log::new(b"log1".to_vec()).set_index(1),
-      Log::new(b"log2".to_vec()).set_index(2),
+      Log::new(Bytes::from_static(b"log1")).set_index(1),
+      Log::new(Bytes::from_static(b"log2")).set_index(2),
     ];
     s.store_logs(&logs).await.unwrap();
 
@@ -578,14 +564,12 @@ pub(super) mod tests {
   }
 
   /// Test [`LogStorage::remove_range`](LogStorage::remove_range) implementation.
-  pub async fn remove_range<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
-    s: &S,
-  ) {
+  pub async fn remove_range<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(s: &S) {
     // Set a mock raft log
     let logs = vec![
-      Log::new(b"log1".to_vec()).set_index(1),
-      Log::new(b"log2".to_vec()).set_index(2),
-      Log::new(b"log3".to_vec()).set_index(3),
+      Log::new(Bytes::from_static(b"log1")).set_index(1),
+      Log::new(Bytes::from_static(b"log2")).set_index(2),
+      Log::new(Bytes::from_static(b"log3")).set_index(3),
     ];
     s.store_logs(&logs).await.unwrap();
 
@@ -630,14 +614,12 @@ pub(super) mod tests {
 
   /// Test [`LogStorageExt::oldest_log`](crate::storage::LogStorageExt::oldest_log) implementation.
   #[cfg(all(feature = "test", feature = "metrics"))]
-  pub async fn oldest_log<S: LogStorage<Id = SmolStr, Address = SocketAddr, Data = Vec<u8>>>(
-    store: &S,
-  ) {
+  pub async fn oldest_log<S: LogStorage<Id = SmolStr, Address = SocketAddr>>(store: &S) {
     use crate::storage::{LogKind, LogStorageExt};
 
     struct TestCase {
       name: &'static str,
-      logs: Vec<Log<SmolStr, SocketAddr, Vec<u8>>>,
+      logs: Vec<Log<SmolStr, SocketAddr>>,
       want_idx: u64,
       want_err: bool,
     }

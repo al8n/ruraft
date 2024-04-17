@@ -7,7 +7,6 @@ use futures::FutureExt;
 use crate::{
   membership::Membership,
   transport::{Address, Id},
-  Data,
 };
 
 mod types;
@@ -65,8 +64,6 @@ pub trait LogStorage: Send + Sync + 'static {
   type Id: Id;
   /// The address type of node.
   type Address: Address;
-  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  type Data: Data;
 
   /// Returns the first index written. `None` or `Some(0)` means no entries.
   fn first_index(&self) -> impl Future<Output = Result<Option<u64>, Self::Error>> + Send;
@@ -78,18 +75,18 @@ pub trait LogStorage: Send + Sync + 'static {
   fn get_log(
     &self,
     index: u64,
-  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address, Self::Data>>, Self::Error>> + Send;
+  ) -> impl Future<Output = Result<Option<Log<Self::Id, Self::Address>>, Self::Error>> + Send;
 
   /// Stores a log entry
   fn store_log(
     &self,
-    log: &Log<Self::Id, Self::Address, Self::Data>,
+    log: &Log<Self::Id, Self::Address>,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Stores multiple log entries. By default the logs stored may not be contiguous with previous logs (i.e. may have a gap in Index since the last log written). If an implementation can't tolerate this it may optionally implement `MonotonicLogStore` to indicate that this is not allowed. This changes Raft's behaviour after restoring a user snapshot to remove all previous logs instead of relying on a "gap" to signal the discontinuity between logs before the snapshot and logs after.
   fn store_logs(
     &self,
-    logs: &[Log<Self::Id, Self::Address, Self::Data>],
+    logs: &[Log<Self::Id, Self::Address>],
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Removes a range of log entries.
@@ -124,10 +121,7 @@ pub(crate) trait LogStorageExt: LogStorage {
   fn oldest_log(
     &self,
   ) -> impl Future<
-    Output = Result<
-      Option<Log<Self::Id, Self::Address, Self::Data>>,
-      LogStorageExtError<Self::Error>,
-    >,
+    Output = Result<Option<Log<Self::Id, Self::Address>>, LogStorageExtError<Self::Error>>,
   > + Send {
     async move {
       // We might get unlucky and have a truncate right between getting first log

@@ -9,7 +9,7 @@ use std::{
   task::{Context, Poll},
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use byteorder::{ByteOrder, NetworkEndian};
 use once_cell::sync::Lazy;
 use ruraft_core::{
@@ -165,7 +165,7 @@ where
   I::Error: Unpin,
   A: Address + Unpin,
   A::Error: Unpin,
-  R: Runtime,
+  R: RuntimeLite,
 {
   /// Reaps any snapshots beyond the retain count.
   pub fn reap_snapshots(&self) -> io::Result<()> {
@@ -268,7 +268,7 @@ where
   I::Error: Unpin,
   A: Address + Unpin,
   A::Error: Unpin,
-  R: Runtime,
+  R: RuntimeLite,
 {
   /// Create a new file snapshot storage from the given [`FileSnapshotStorageOptions`].
   pub fn new(opts: FileSnapshotStorageOptions) -> Result<Self, FileSnapshotStorageError>
@@ -311,7 +311,7 @@ where
   I::Error: Unpin,
   A: Address + Unpin,
   A::Error: Unpin,
-  R: Runtime,
+  R: RuntimeLite,
 {
   type Error = FileSnapshotStorageError;
   type Id = I;
@@ -557,13 +557,13 @@ pub struct FileSnapshotSink<I, A, R> {
   closed: bool,
 }
 
-impl<I: Id, A: Address, R: Runtime> futures::io::AsyncWrite for FileSnapshotSink<I, A, R>
+impl<I: Id, A: Address, R> futures::io::AsyncWrite for FileSnapshotSink<I, A, R>
 where
   I: Id + Unpin,
   I::Error: Unpin,
   A: Address + Unpin,
   A::Error: Unpin,
-  R: Runtime,
+  R: RuntimeLite,
 {
   fn poll_write(
     mut self: Pin<&mut Self>,
@@ -669,7 +669,7 @@ impl<I, A, R> FileSnapshotSink<I, A, R>
 where
   I: Id,
   A: Address,
-  R: Runtime,
+  R: RuntimeLite,
 {
   fn finalize(&mut self) -> io::Result<()> {
     // Flush any remaining data
@@ -728,7 +728,7 @@ where
   I::Error: Unpin,
   A: Address + Unpin,
   A::Error: Unpin,
-  R: Runtime,
+  R: RuntimeLite,
 {
   fn id(&self) -> SnapshotId {
     self.meta.meta.id()
@@ -832,7 +832,7 @@ pub mod tests {
   ///
   /// Description:
   /// - create snapshot and missing the parent dir
-  pub async fn file_snapshot_storage_create_snapshot_missing_parent_dir<R: Runtime>() {
+  pub async fn file_snapshot_storage_create_snapshot_missing_parent_dir<R: RuntimeLite>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -855,7 +855,7 @@ pub mod tests {
   ///
   /// Description:
   /// - create snapshot
-  pub async fn file_snapshot_storage_create_snapshot<R: Runtime>() {
+  pub async fn file_snapshot_storage_create_snapshot<R: RuntimeLite>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -911,7 +911,7 @@ pub mod tests {
   ///
   /// Description:
   /// - create snapshot and cancel it
-  pub async fn file_snapshot_storage_cancel_snapshot<R: Runtime>() {
+  pub async fn file_snapshot_storage_cancel_snapshot<R: RuntimeLite>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -937,7 +937,7 @@ pub mod tests {
   ///
   /// Description:
   /// - create snapshot and retention
-  pub async fn file_snapshot_storage_retention<R: Runtime>() {
+  pub async fn file_snapshot_storage_retention<R: RuntimeLite>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -977,7 +977,7 @@ pub mod tests {
   /// Description:
   /// - bad perm
   #[cfg(unix)]
-  pub async fn file_snapshot_storage_bad_perm<R: Runtime>() {
+  pub async fn file_snapshot_storage_bad_perm<R: RuntimeLite>() {
     use std::os::unix::fs::PermissionsExt;
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
@@ -1004,7 +1004,7 @@ pub mod tests {
   ///
   /// Description:
   /// - missing parent dir
-  pub async fn file_snapshot_storage_missing_parent_dir<R: Runtime>() {
+  pub async fn file_snapshot_storage_missing_parent_dir<R: RuntimeLite>() {
     let parent = tempfile::tempdir().unwrap();
     let dir = parent.path().join("raft");
     fs::create_dir(&dir).unwrap();
@@ -1022,7 +1022,7 @@ pub mod tests {
   ///
   /// Description:
   /// - ordering
-  pub async fn file_snapshot_storage_ordering<R: Runtime>() {
+  pub async fn file_snapshot_storage_ordering<R: RuntimeLite>() {
     let parent = std::env::temp_dir();
     let dir = parent.as_path().join("raft");
     fs::create_dir(&dir).unwrap();

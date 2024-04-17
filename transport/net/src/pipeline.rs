@@ -18,13 +18,13 @@ struct Event {
 }
 
 /// [`AppendEntriesPipeline`] implementation for [`NetTransport`].
-pub struct NetAppendEntriesPipeline<I, A, D, S, W>
+pub struct NetAppendEntriesPipeline<I, A, S, W>
 where
   I: Id,
   A: AddressResolver,
-  D: Data,
+
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
 {
   conn: <S::Stream as Connection>::OwnedWriteHalf,
   inprogress_tx: async_channel::Sender<Event>,
@@ -35,27 +35,25 @@ where
   shutdown_tx: async_channel::Sender<()>,
 }
 
-impl<I, A, D, S, W> Drop for NetAppendEntriesPipeline<I, A, D, S, W>
+impl<I, A, S, W> Drop for NetAppendEntriesPipeline<I, A, S, W>
 where
   I: Id,
   A: AddressResolver,
-  D: Data,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
 {
   fn drop(&mut self) {
     self.shutdown_tx.close();
   }
 }
 
-impl<I, A, D, S, W> NetAppendEntriesPipeline<I, A, D, S, W>
+impl<I, A, S, W> NetAppendEntriesPipeline<I, A, S, W>
 where
   I: Id,
   A: AddressResolver + Send + Sync + 'static,
   A::Error: Send + Sync + 'static,
-  D: Data,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
 {
   pub(super) fn new(conn: S::Stream, max_inflight: usize, timeout: Duration) -> Self {
     if max_inflight < super::MIN_IN_FLIGHT_FOR_PIPELINING {
@@ -135,21 +133,18 @@ where
   }
 }
 
-impl<I, A, D, S, W> AppendEntriesPipeline for NetAppendEntriesPipeline<I, A, D, S, W>
+impl<I, A, S, W> AppendEntriesPipeline for NetAppendEntriesPipeline<I, A, S, W>
 where
   I: Id,
   A: AddressResolver,
-  D: Data,
   S: StreamLayer,
-  W: Wire<Id = I, Address = <A as AddressResolver>::Address, Data = D>,
+  W: Wire<Id = I, Address = <A as AddressResolver>::Address>,
 {
   type Error = super::Error<I, A, W>;
 
   type Id = I;
 
   type Address = A::Address;
-
-  type Data = D;
 
   fn consumer(
     &self,
@@ -162,7 +157,7 @@ where
 
   async fn append_entries(
     &mut self,
-    req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
+    req: AppendEntriesRequest<Self::Id, Self::Address>,
   ) -> Result<(), Self::Error> {
     let start = SystemTime::now();
     let ev = Event {

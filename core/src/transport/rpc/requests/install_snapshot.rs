@@ -15,7 +15,7 @@ use super::*;
     rename_all = "snake_case",
     bound(
       serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
