@@ -1,6 +1,6 @@
 use std::{future::Future, sync::Arc};
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use futures::{AsyncRead, AsyncWrite, Stream};
 
 mod rpc;
@@ -11,7 +11,7 @@ pub use error::*;
 
 pub use nodecraft::{resolver::AddressResolver, Address, Id, Transformable};
 
-use crate::{options::ProtocolVersion, Data, Node};
+use crate::{options::ProtocolVersion, Node};
 
 /// Represents errors that can arise during the wire encoding or decoding processes.
 ///
@@ -49,24 +49,19 @@ pub trait Wire: Send + Sync + 'static {
   /// Denotes the network address format or specification used for nodes.
   type Address: Address;
 
-  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  type Data: Data;
-
   /// Represents the byte-array format produced after encoding,
   /// which is then suitable for transmission over the network.
   type Bytes: AsRef<[u8]> + Send + Sync + 'static;
 
   /// Encodes a [`Request`] into its byte-array representation.
-  fn encode_request(
-    req: &Request<Self::Id, Self::Address, Self::Data>,
-  ) -> Result<Self::Bytes, Self::Error>;
+  fn encode_request(req: &Request<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes a [`Response`] into its byte-array representation.
   fn encode_response(resp: &Response<Self::Id, Self::Address>) -> Result<Self::Bytes, Self::Error>;
 
   /// Encodes a [`Request`] into its bytes representation to a writer.
   fn encode_request_to_writer(
-    req: &Request<Self::Id, Self::Address, Self::Data>,
+    req: &Request<Self::Id, Self::Address>,
     writer: impl AsyncWrite + Send + Unpin,
   ) -> impl Future<Output = std::io::Result<()>> + Send;
 
@@ -77,9 +72,7 @@ pub trait Wire: Send + Sync + 'static {
   ) -> impl Future<Output = std::io::Result<()>> + Send;
 
   /// Decodes a [`Request`] instance from a provided source slice.
-  fn decode_request(
-    src: &[u8],
-  ) -> Result<Request<Self::Id, Self::Address, Self::Data>, Self::Error>;
+  fn decode_request(src: &[u8]) -> Result<Request<Self::Id, Self::Address>, Self::Error>;
 
   /// Decodes a [`Response`] instance from a provided source slice.
   fn decode_response(src: &[u8]) -> Result<Response<Self::Id, Self::Address>, Self::Error>;
@@ -87,7 +80,7 @@ pub trait Wire: Send + Sync + 'static {
   /// Decodes a [`Request`] instance from a provided asynchronous reader.
   fn decode_request_from_reader(
     reader: impl AsyncRead + Send + Unpin,
-  ) -> impl Future<Output = std::io::Result<Request<Self::Id, Self::Address, Self::Data>>> + Send;
+  ) -> impl Future<Output = std::io::Result<Request<Self::Id, Self::Address>>> + Send;
 
   /// Decodes a [`Response`] instance from a provided asynchronous reader.
   fn decode_response_from_reader(
@@ -107,9 +100,6 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Network address representation of nodes.
   type Address: Address;
 
-  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  type Data: Data;
-
   /// Retrieves a stream for consuming response futures once they are ready.
   fn consumer(
     &self,
@@ -120,7 +110,7 @@ pub trait AppendEntriesPipeline: Send + Sync + 'static {
   /// Asynchronously appends entries to the target node and returns the associated response.
   fn append_entries(
     &mut self,
-    req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
+    req: AppendEntriesRequest<Self::Id, Self::Address>,
   ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
   /// Gracefully closes the pipeline and terminates any in-flight requests.
@@ -146,13 +136,10 @@ pub trait Transport: Send + Sync + 'static {
   type Error: TransportError<Id = Self::Id, Resolver = Self::Resolver, Wire = Self::Wire>;
 
   /// Specifies the runtime environment for transport operations.
-  type Runtime: Runtime;
+  type Runtime: RuntimeLite;
 
   /// Unique identifier for nodes.
   type Id: Id;
-
-  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  type Data: Data;
 
   /// The pipeline used to increase the replication throughput by masking latency and better
   /// utilizing bandwidth.
@@ -160,23 +147,16 @@ pub trait Transport: Send + Sync + 'static {
     Error = Self::Error,
     Id = Self::Id,
     Address = <Self::Resolver as AddressResolver>::Address,
-    Data = Self::Data,
   >;
 
   /// Resolves node addresses to concrete network addresses, like mapping a domain name to an IP.
   type Resolver: AddressResolver<Runtime = Self::Runtime>;
 
   /// Mechanism to encode and decode data for network transmission.
-  type Wire: Wire<
-    Id = Self::Id,
-    Address = <Self::Resolver as AddressResolver>::Address,
-    Data = Self::Data,
-  >;
+  type Wire: Wire<Id = Self::Id, Address = <Self::Resolver as AddressResolver>::Address>;
 
   /// Consumes and responds to incoming RPC requests.
-  fn consumer(
-    &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>;
+  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address>;
 
   /// Provides the local unique identifier, helping in distinguishing this node from its peers.
   fn local_id(&self) -> &Self::Id;
@@ -222,7 +202,7 @@ pub trait Transport: Send + Sync + 'static {
   fn append_entries(
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>,
+    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> impl Future<
     Output = Result<
       AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
@@ -286,7 +266,7 @@ pub trait Transport: Send + Sync + 'static {
 /// Exports unit tests to let users test transport implementation.
 #[cfg(any(feature = "test", test))]
 pub mod tests {
-  use std::{future::Future, time::Duration};
+  use std::time::Duration;
 
   use futures::{FutureExt, StreamExt};
 
@@ -299,10 +279,7 @@ pub mod tests {
   use super::*;
 
   #[doc(hidden)]
-  pub fn __make_append_req<I: Id, A: Address, D: Data>(
-    id: I,
-    addr: A,
-  ) -> AppendEntriesRequest<I, A, D> {
+  pub fn __make_append_req<I: Id, A: Address>(id: I, addr: A) -> AppendEntriesRequest<I, A> {
     AppendEntriesRequest {
       header: Header::new(ProtocolVersion::V1, id, addr),
       term: 10,
@@ -325,10 +302,7 @@ pub mod tests {
   }
 
   /// Test [`Transport::set_heartbeat_handler`](Transport::set_heartbeat_handler).
-  pub async fn heartbeat_fastpath<T: Transport>(t1: T, t2: T)
-  where
-    T::Data: core::fmt::Debug + PartialEq,
-  {
+  pub async fn heartbeat_fastpath<T: Transport>(t1: T, t2: T) {
     let args = HeartbeatRequest {
       header: t2.header().clone(),
       term: 10,
@@ -378,11 +352,7 @@ pub mod tests {
   }
 
   /// Test [`Transport::append_entries`](Transport::append_entries).
-  pub async fn append_entries<T: Transport>(trans1: T, trans2: T)
-  where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
-      Send + 'static,
-  {
+  pub async fn append_entries<T: Transport>(trans1: T, trans2: T) {
     let trans1_header = trans1.header();
     let args = __make_append_req(trans1_header.id().clone(), trans1_header.addr().clone());
     let expected_resp =
@@ -390,7 +360,7 @@ pub mod tests {
     let consumer = trans1.consumer();
     let resp = expected_resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(consumer);
 
       futures::select! {
@@ -400,7 +370,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -414,12 +384,7 @@ pub mod tests {
   }
 
   /// Test [`Transport::append_entries_pipeline`](Transport::append_entries_pipeline).
-  pub async fn append_entries_pipeline<T: Transport>(trans1: T, trans2: T)
-  where
-    T::Data: core::fmt::Debug + PartialEq,
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
-      Send + 'static,
-  {
+  pub async fn append_entries_pipeline<T: Transport>(trans1: T, trans2: T) {
     let trans1_consumer = trans1.consumer();
     let trans1_header = trans1.header();
 
@@ -430,7 +395,7 @@ pub mod tests {
     let resp1 = resp.clone();
 
     // Listen for a request
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       for _ in 0..10 {
         futures::select! {
@@ -446,7 +411,7 @@ pub mod tests {
               panic!("unexpected respond fail");
             };
           },
-          _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(12200)).fuse() => {
+          _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(12200)).fuse() => {
             panic!("timeout");
           },
         }
@@ -471,7 +436,7 @@ pub mod tests {
           let res = res.unwrap().unwrap();
           assert_eq!(res.response(), &resp1);
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -482,7 +447,7 @@ pub mod tests {
   /// Test [`Transport::vote`](Transport::vote).
   pub async fn vote<T: Transport>(trans1: T, trans2: T)
   where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+    <<<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::Sleep as Future>::Output:
       Send + 'static,
   {
     let trans1_consumer = trans1.consumer();
@@ -503,7 +468,7 @@ pub mod tests {
     };
     let resp1 = resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -519,7 +484,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -532,7 +497,7 @@ pub mod tests {
   /// Test [`Transport::timeout_now`](Transport::timeout_now).
   pub async fn timeout_now<T: Transport>(trans1: T, trans2: T)
   where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+    <<<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::Sleep as Future>::Output:
       Send + 'static,
   {
     let trans1_consumer = trans1.consumer();
@@ -547,7 +512,7 @@ pub mod tests {
     };
     let resp1 = resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -563,7 +528,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -579,7 +544,7 @@ pub mod tests {
   /// Test [`Transport::install_snapshot`](Transport::install_snapshot).
   pub async fn install_snapshot<T: Transport>(trans1: T, trans2: T)
   where
-    <<<T::Resolver as AddressResolver>::Runtime as Runtime>::Sleep as Future>::Output:
+    <<<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::Sleep as Future>::Output:
       Send + 'static,
   {
     use futures::AsyncReadExt;
@@ -614,7 +579,7 @@ pub mod tests {
     };
     let resp1 = resp.clone();
 
-    <<T::Resolver as AddressResolver>::Runtime as Runtime>::spawn_detach(async move {
+    <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::spawn_detach(async move {
       futures::pin_mut!(trans1_consumer);
       futures::select! {
         req = trans1_consumer.next().fuse() => {
@@ -638,7 +603,7 @@ pub mod tests {
             panic!("unexpected respond fail");
           };
         },
-        _ = <<T::Resolver as AddressResolver>::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <<T::Resolver as AddressResolver>::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }

@@ -8,12 +8,12 @@ use std::{
   time::Instant,
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use atomic::Atomic;
 use futures::{channel::oneshot, AsyncWriteExt, FutureExt};
 use nodecraft::{resolver::AddressResolver, Address, Id};
 use smallvec::SmallVec;
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use super::{
   api::ApplySender, fsm::FSMRequest, state::LastLog, CountingSnapshotSourceReader, Leader,
@@ -95,23 +95,17 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
 
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   pub(super) options: Arc<Options>,
   pub(super) reloadable_options: Arc<Atomic<ReloadableOptions>>,
-  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+  pub(super) rpc: RpcConsumer<T::Id, <T::Resolver as AddressResolver>::Address>,
   pub(super) memberships: Arc<Memberships<T::Id, <T::Resolver as AddressResolver>::Address>>,
   pub(super) candidate_from_leadership_transfer: Arc<AtomicBool>,
   /// last_contact is the last time we had contact from the
@@ -178,19 +172,13 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
 
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   type Target = State;
 
@@ -204,21 +192,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   pub(super) fn spawn(
     mut self,
@@ -298,7 +277,7 @@ where
   async fn handle_request(
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
-    req: Request<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    req: Request<T::Id, <T::Resolver as AddressResolver>::Address>,
     rpc_reader: Option<Box<dyn futures::AsyncRead + Send + Sync + Unpin + 'static>>,
   ) {
     // TODO: validate the request header
@@ -322,7 +301,7 @@ where
   async fn handle_append_entries(
     &self,
     tx: oneshot::Sender<Response<T::Id, <T::Resolver as AddressResolver>::Address>>,
-    mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    mut req: AppendEntriesRequest<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) {
     #[cfg(feature = "metrics")]
     let start = Instant::now();
@@ -507,7 +486,7 @@ where
   /// called from the main thread, or from constructors before any threads have begun.
   fn process_membership_log(
     &self,
-    log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    log: crate::storage::Log<T::Id, <T::Resolver as AddressResolver>::Address>,
   ) {
     if let crate::storage::LogKind::Membership(m) = log.kind {
       self
@@ -1036,7 +1015,7 @@ where
 
   fn prepare_log(
     &self,
-    l: Log<T::Id, <T::Resolver as AddressResolver>::Address, T::Data>,
+    l: Log<T::Id, <T::Resolver as AddressResolver>::Address>,
     fut: Option<ApplySender<F, Error<F, S, T>>>,
   ) -> Option<CommitTuple<F, Error<F, S, T>>> {
     match &l.kind {
@@ -1081,12 +1060,12 @@ where
 struct Inflight<F: FinateStateMachine, E> {
   #[cfg(feature = "metrics")]
   dispatch: Instant,
-  log: Log<F::Id, F::Address, F::Data>,
+  log: Log<F::Id, F::Address>,
   tx: ApplySender<F, E>,
 }
 
 pub(crate) struct CommitTuple<F: FinateStateMachine, E> {
-  pub(crate) log: Log<F::Id, F::Address, F::Data>,
+  pub(crate) log: Log<F::Id, F::Address>,
   pub(crate) tx: Option<ApplySender<F, E>>,
 }
 

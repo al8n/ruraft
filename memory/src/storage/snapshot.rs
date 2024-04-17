@@ -8,7 +8,7 @@ use std::{
   task::{Context, Poll},
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use async_lock::RwLock;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 
@@ -61,7 +61,7 @@ impl<I, A, R> SnapshotStorage for MemorySnapshotStorage<I, A, R>
 where
   I: Id,
   A: Address,
-  R: Runtime,
+  R: RuntimeLite,
 {
   type Error = io::Error;
   type Runtime = R;

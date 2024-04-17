@@ -1,5 +1,7 @@
 use std::{convert::Infallible, future::Future};
 
+use agnostic_lite::RuntimeLite;
+
 use crate::raft::Role;
 
 mod autopilot;
@@ -15,7 +17,7 @@ pub trait Sidecar: Send + Sync + 'static {
   /// The error type returned by the sidecar.
   type Error: std::error::Error + Send + Sync + 'static;
   /// The async runtime used by the sidecar.
-  type Runtime: agnostic::Runtime;
+  type Runtime: RuntimeLite;
 
   /// Runs the sidecar.
   ///
@@ -46,7 +48,7 @@ impl<R> NoopSidecar<R> {
   }
 }
 
-impl<R: agnostic::Runtime> Sidecar for NoopSidecar<R> {
+impl<R: RuntimeLite> Sidecar for NoopSidecar<R> {
   type Error = Infallible;
   type Runtime = R;
 

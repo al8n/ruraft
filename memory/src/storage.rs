@@ -12,8 +12,8 @@ pub mod stable;
 pub mod log;
 
 /// Memory based [`Storage`](ruraft_core::storage::Storage) implementation.
-pub type MemoryStorage<I, A, D, R> = RaftStorage<
-  MemoryLogStorage<I, A, D, R>,
+pub type MemoryStorage<I, A, R> = RaftStorage<
+  MemoryLogStorage<I, A, R>,
   MemoryStableStorage<I, A, R>,
   MemorySnapshotStorage<I, A, R>,
 >;

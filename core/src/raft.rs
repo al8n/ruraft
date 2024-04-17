@@ -9,14 +9,14 @@ use std::{
   time::Instant,
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_lock::Mutex;
 use atomic::Atomic;
 use atomic_time::AtomicOptionInstant;
 use futures::channel::oneshot;
 use nodecraft::CheapClone;
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use crate::{
   error::Error,
@@ -275,15 +275,10 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   leader: Leader<T::Id, <T::Resolver as AddressResolver>::Address>,
   state: Arc<State>,
@@ -354,15 +349,10 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   inner: Arc<Inner<F, S, T, SC, R>>,
 }
@@ -374,15 +364,10 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}", self.inner.transport.header().from())
@@ -396,15 +381,10 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   fn clone(&self) -> Self {
     Self {
@@ -418,19 +398,11 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   /// Used to construct a new Raft node. It takes a options, as well
   /// as implementations of various traits that are required.
@@ -455,20 +427,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   /// Used to construct a new Raft node with sidecar. It takes a options, as well
   /// as implementations of various traits that are required.
@@ -681,21 +645,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   async fn new_in(
     fsm: F,
@@ -1046,7 +1001,7 @@ where
   }
 }
 
-pub(crate) fn spawn_local<R: Runtime, F: std::future::Future + Send + 'static>(
+pub(crate) fn spawn_local<R: RuntimeLite, F: std::future::Future + Send + 'static>(
   wg: AsyncWaitGroup,
   f: F,
 ) {

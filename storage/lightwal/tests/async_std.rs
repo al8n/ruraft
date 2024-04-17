@@ -1,4 +1,4 @@
-use agnostic::{async_std::AsyncStdRuntime, Runtime};
+use agnostic::{async_std::AsyncStdRuntime, RuntimeLite};
 use ruraft_core::{tests::run as run_unit_test, unit_tests};
 
 fn run(fut: impl std::future::Future<Output = ()>) {

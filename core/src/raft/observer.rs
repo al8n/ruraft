@@ -8,7 +8,7 @@ use std::{
   time::Instant,
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use futures::{future::join_all, FutureExt, Stream};
 use nodecraft::{resolver::AddressResolver, CheapClone};
 
@@ -287,18 +287,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   /// Registers a new observer.
   ///

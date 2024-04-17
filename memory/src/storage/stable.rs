@@ -1,6 +1,6 @@
 use std::{convert::Infallible, sync::Arc};
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use async_lock::Mutex;
 use ruraft_core::{
   storage::StableStorage,
@@ -70,7 +70,7 @@ impl<I, A, R> MemoryStableStorage<I, A, R> {
   }
 }
 
-impl<I: Id, A: Address, R: Runtime> StableStorage for MemoryStableStorage<I, A, R>
+impl<I: Id, A: Address, R: RuntimeLite> StableStorage for MemoryStableStorage<I, A, R>
 where
   I: Id,
   A: Address,

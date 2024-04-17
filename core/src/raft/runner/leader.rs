@@ -1,22 +1,10 @@
-use std::{
-  borrow::Cow,
-  collections::LinkedList,
-  sync::atomic::{AtomicU64, Ordering},
-  time::Duration,
-};
+use std::{collections::LinkedList, sync::atomic::AtomicU64, time::Duration};
 
-use agnostic::Sleep;
-use futures::{future::join_all, FutureExt, Stream, StreamExt};
-use smallvec::SmallVec;
+use agnostic_lite::time::AsyncSleep;
+use futures::{future::join_all, Stream, StreamExt};
 
 use super::*;
-use crate::{
-  observer::{observe, Observation},
-  raft::{ApplyRequest, ApplySender, LastSnapshot},
-  storage::{remove_old_logs, Log, LogKind, LogStorage, SnapshotSink, StorageError},
-  transport::{TimeoutNowRequest, TransportError},
-  utils::override_notify_bool,
-};
+use crate::{raft::ApplyRequest, transport::TransportError, utils::override_notify_bool};
 
 mod commitment;
 use commitment::Commitment;
@@ -112,21 +100,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   pub(super) async fn run_leader(
     &mut self,

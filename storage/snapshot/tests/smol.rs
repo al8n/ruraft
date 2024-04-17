@@ -1,4 +1,4 @@
-use agnostic::{smol::SmolRuntime, Runtime};
+use agnostic_lite::{smol::SmolRuntime, RuntimeLite};
 use ruraft_core::{tests::run as run_unit_test, unit_tests};
 
 fn run(fut: impl std::future::Future<Output = ()>) {

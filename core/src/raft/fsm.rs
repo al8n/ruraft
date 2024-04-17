@@ -4,12 +4,12 @@ use std::sync::Arc;
 #[cfg(feature = "metrics")]
 use std::time::Instant;
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use async_channel::Receiver;
-use futures::{channel::oneshot, Future, FutureExt};
+use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
 use smallvec::SmallVec;
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use crate::{
   error::Error,
@@ -51,17 +51,11 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   pub(super) fsm: F,
   pub(super) storage: Arc<S>,
@@ -77,19 +71,11 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
-  R: Runtime,
-  <R::Sleep as Future>::Output: Send,
+  R: RuntimeLite,
 {
   /// A long running task responsible for applying logs
   /// to the FSM. This is done async of other logs since we don't want
@@ -317,7 +303,7 @@ where
           _ => return None,
         })
       })
-      .collect::<CommittedLogBatch<_, _, _>>();
+      .collect::<CommittedLogBatch<_, _>>();
 
     let len = logs.len();
     if len > 0 {

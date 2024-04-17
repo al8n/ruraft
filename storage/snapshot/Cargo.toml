@@ -15,16 +15,16 @@ serde = ["dep:serde", "smol_str?/serde", "ruraft-core/serde"]
 metrics = ["ruraft-core/metrics"]
 
 [dependencies]
-agnostic = { workspace = true }
-byteorder = { workspace = true }
+agnostic-lite.workspace = true
+byteorder.workspace = true
 crc32fast = "1.3"
-futures = { workspace = true }
+futures.workspace = true
 once_cell = "1.18"
 ruraft-core = { path = "../../core" }
 ruraft-utils = { path = "../../utils", features = ["io"] }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-viewit = { workspace = true }
+thiserror.workspace = true
+tracing.workspace = true
+viewit.workspace = true
 
 serde = { workspace = true, optional = true }
 
@@ -34,6 +34,6 @@ scopeguard = { workspace = true, optional = true }
 smol_str = { workspace = true, optional = true }
 
 [dev-dependencies]
-agnostic = { workspace = true, features = ["tokio", "async-std", "smol", "net", "dns"] }
+agnostic-lite = { workspace = true, features = ["tokio", "async-std", "smol"] }
 tokio = { version = "1.32", features = ["full"] }
 smol_str = { workspace = true }

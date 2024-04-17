@@ -6,7 +6,8 @@ use std::{
   time::{Duration, Instant},
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
+use bytes::Bytes;
 use futures::{channel::oneshot, future::Either, Stream};
 use nodecraft::resolver::AddressResolver;
 
@@ -27,18 +28,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
+  R: RuntimeLite,
 {
   /// Returns the current state of the reloadable fields in Raft's
   /// options. This is useful for programs to discover the current state for
@@ -159,19 +154,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
+  R: RuntimeLite,
 {
   /// Used to apply a command to the [`FinateStateMachine`] in a highly consistent
   /// manner. This returns a future that can be used to wait on the application.
@@ -192,7 +180,7 @@ where
   /// See also [`apply_timeout`].
   ///
   /// [`apply_timeout`]: struct.RaftCore.html#method.apply_timeout
-  pub async fn apply(&self, data: T::Data) -> ApplyFuture<F, S, T> {
+  pub async fn apply(&self, data: Bytes) -> ApplyFuture<F, S, T> {
     self.apply_in(data, None).await
   }
 
@@ -216,7 +204,7 @@ where
   /// See also [`apply`].
   ///
   /// [`apply`]: struct.RaftCore.html#method.apply
-  pub async fn apply_timeout(&self, data: T::Data, timeout: Duration) -> ApplyFuture<F, S, T> {
+  pub async fn apply_timeout(&self, data: Bytes, timeout: Duration) -> ApplyFuture<F, S, T> {
     self.apply_in(data, Some(timeout)).await
   }
 
@@ -664,22 +652,14 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
+  R: RuntimeLite,
 {
-  async fn apply_in(&self, data: T::Data, timeout: Option<Duration>) -> ApplyFuture<F, S, T> {
+  async fn apply_in(&self, data: Bytes, timeout: Option<Duration>) -> ApplyFuture<F, S, T> {
     if let Err(e) = self.is_shutdown() {
       return e;
     }
@@ -689,7 +669,7 @@ where
 
     let (tx, rx) = oneshot::channel();
     let req = ApplyRequest {
-      log: LogKind::Data(Arc::new(data)),
+      log: LogKind::Data(data),
       tx: ApplySender::Log(tx),
     };
     match timeout {
@@ -1151,7 +1131,7 @@ impl<F: FinateStateMachine, E> ApplySender<F, E> {
 }
 
 pub(super) struct ApplyRequest<F: FinateStateMachine, E> {
-  pub(super) log: LogKind<F::Id, F::Address, F::Data>,
+  pub(super) log: LogKind<F::Id, F::Address>,
   pub(super) tx: ApplySender<F, E>,
 }
 

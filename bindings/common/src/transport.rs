@@ -49,7 +49,6 @@ impl<W: Wire, R: Runtime> futures::Stream for SupportedAppendEntriesPipelineCons
 
 #[derive(derive_more::From)]
 pub enum SupportedAppendEntriesPipeline<
-  D: Data,
   W: Wire<Id = NodeId, Address = NodeAddress, Data = D>,
   R: Runtime,
 > {
@@ -106,7 +105,7 @@ where
 
   async fn append_entries(
     &mut self,
-    req: AppendEntriesRequest<Self::Id, Self::Address, Self::Data>,
+    req: AppendEntriesRequest<Self::Id, Self::Address>,
   ) -> Result<(), Self::Error> {
     match self {
       Self::Tcp(p) => p.append_entries(req).await,
@@ -139,7 +138,6 @@ pub enum SupportedTransport<D, R: Runtime> {
 
 impl<D, R: Runtime> SupportedTransport<D, R>
 where
-  D: Data,
   <R::Sleep as Future>::Output: Send + 'static,
 {
   pub async fn new(opts: SupportedTransportOptions) -> Result<Self, <Self as Transport>::Error> {
@@ -236,15 +234,13 @@ where
 
   type Data = D;
 
-  type Pipeline = SupportedAppendEntriesPipeline<Self::Data, Self::Wire, Self::Runtime>;
+  type Pipeline = SupportedAppendEntriesPipeline<Self::Wire, Self::Runtime>;
 
   type Resolver = DnsResolver<Self::Runtime>;
 
   type Wire = LpeWire<NodeId, NodeAddress, D>;
 
-  fn consumer(
-    &self,
-  ) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data> {
+  fn consumer(&self) -> RpcConsumer<Self::Id, <Self::Resolver as AddressResolver>::Address> {
     match self {
       Self::Tcp(t) => t.consumer(),
       #[cfg(feature = "tls")]
@@ -333,7 +329,7 @@ where
   async fn append_entries(
     &self,
     target: &Node<Self::Id, <Self::Resolver as AddressResolver>::Address>,
-    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address, Self::Data>,
+    req: AppendEntriesRequest<Self::Id, <Self::Resolver as AddressResolver>::Address>,
   ) -> Result<
     AppendEntriesResponse<Self::Id, <Self::Resolver as AddressResolver>::Address>,
     Self::Error,

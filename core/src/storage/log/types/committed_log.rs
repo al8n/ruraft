@@ -1,14 +1,12 @@
-use std::{
-  fmt::{Debug, Display},
-  sync::Arc,
-};
+use std::fmt::Debug;
 
 use crate::{
   membership::{Membership, MembershipTransformError},
-  Data, MESSAGE_SIZE_LEN,
+  MESSAGE_SIZE_LEN,
 };
 use byteorder::{ByteOrder, NetworkEndian};
-use nodecraft::{Address, Id, Transformable};
+use bytes::Bytes;
+use nodecraft::{transformable::BytesTransformError, Address, Id, Transformable};
 use ruraft_utils::{
   decode_varint, encode_varint, encoded_len_varint, DecodeVarintError, EncodeVarintError,
 };
@@ -22,19 +20,19 @@ use smallvec::SmallVec;
   serde(
     rename_all = "snake_case",
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub enum CommittedLogKind<I, A, D> {
+pub enum CommittedLogKind<I, A> {
   /// A normal log entry.
-  Log(Arc<D>),
+  Log(Bytes),
   /// A membership change log entry.
   Membership(Membership<I, A>),
 }
 
-impl<I, A, D> Clone for CommittedLogKind<I, A, D> {
+impl<I, A> Clone for CommittedLogKind<I, A> {
   fn clone(&self) -> Self {
     match self {
       Self::Log(data) => Self::Log(data.clone()),
@@ -43,7 +41,7 @@ impl<I, A, D> Clone for CommittedLogKind<I, A, D> {
   }
 }
 
-impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq for CommittedLogKind<I, A, D> {
+impl<I: Eq + core::hash::Hash, A: PartialEq> PartialEq for CommittedLogKind<I, A> {
   fn eq(&self, other: &Self) -> bool {
     match (self, other) {
       (Self::Log(data), Self::Log(other_data)) => data == other_data,
@@ -55,7 +53,7 @@ impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq for Committ
   }
 }
 
-impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for CommittedLogKind<I, A, D> {}
+impl<I: Eq + core::hash::Hash, A: Eq> Eq for CommittedLogKind<I, A> {}
 
 /// A log entry that can be applied to the finate state machine.
 #[viewit::viewit(setters(prefix = "with"))]
@@ -66,12 +64,12 @@ impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for CommittedLogKind<I, A, D> {}
   serde(
     rename_all = "snake_case",
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub struct CommittedLog<I, A, D> {
+pub struct CommittedLog<I, A> {
   /// The index of the log entry.
   #[viewit(
     getter(
@@ -101,17 +99,17 @@ pub struct CommittedLog<I, A, D> {
     ),
     setter(attrs(doc = "Sets the kind of the log entry."),)
   )]
-  kind: CommittedLogKind<I, A, D>,
+  kind: CommittedLogKind<I, A>,
 }
 
-impl<I, A, D> CommittedLog<I, A, D> {
+impl<I, A> CommittedLog<I, A> {
   /// Creates a new log entry.
-  pub fn new(term: u64, index: u64, kind: CommittedLogKind<I, A, D>) -> Self {
+  pub fn new(term: u64, index: u64, kind: CommittedLogKind<I, A>) -> Self {
     Self { index, term, kind }
   }
 }
 
-impl<I, A, D> Clone for CommittedLog<I, A, D> {
+impl<I, A> Clone for CommittedLog<I, A> {
   fn clone(&self) -> Self {
     Self {
       index: self.index,
@@ -121,21 +119,21 @@ impl<I, A, D> Clone for CommittedLog<I, A, D> {
   }
 }
 
-impl<I: Eq + core::hash::Hash, A: PartialEq, D: PartialEq> PartialEq for CommittedLog<I, A, D> {
+impl<I: Eq + core::hash::Hash, A: PartialEq> PartialEq for CommittedLog<I, A> {
   fn eq(&self, other: &Self) -> bool {
     self.index == other.index && self.term == other.term && self.kind == other.kind
   }
 }
 
-impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Eq for CommittedLog<I, A, D> {}
+impl<I: Eq + core::hash::Hash, A: Eq> Eq for CommittedLog<I, A> {}
 
-impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> PartialOrd for CommittedLog<I, A, D> {
+impl<I: Eq + core::hash::Hash, A: Eq> PartialOrd for CommittedLog<I, A> {
   fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
     Some(self.cmp(other))
   }
 }
 
-impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Ord for CommittedLog<I, A, D> {
+impl<I: Eq + core::hash::Hash, A: Eq> Ord for CommittedLog<I, A> {
   fn cmp(&self, other: &Self) -> std::cmp::Ordering {
     self
       .term
@@ -145,23 +143,30 @@ impl<I: Eq + core::hash::Hash, A: Eq, D: Eq> Ord for CommittedLog<I, A, D> {
 }
 
 /// The transformation error of [`CommittedLog`].
-pub enum CommittedLogTransformError<I: Transformable, A: Transformable, D: Transformable> {
+#[derive(thiserror::Error)]
+pub enum CommittedLogTransformError<I: Transformable, A: Transformable> {
   /// The membership transformation error.
-  Membership(MembershipTransformError<I, A>),
+  #[error(transparent)]
+  Membership(#[from] MembershipTransformError<I, A>),
   /// The data transformation error.
-  Data(D::Error),
+  #[error(transparent)]
+  Data(#[from] BytesTransformError),
   /// The encode buffer is too small.
+  #[error("encode buffer too small")]
   EncodeBufferTooSmall,
   /// The log is corrupted.
-  Corrupted,
+  #[error("not enough bytes to decode")]
+  NotEnoughBytes,
   /// The encode varint error.
-  EncodeVarint(EncodeVarintError),
+  #[error(transparent)]
+  EncodeVarint(#[from] EncodeVarintError),
   /// The decode varint error.
-  DecodeVarint(DecodeVarintError),
+  #[error(transparent)]
+  DecodeVarint(#[from] DecodeVarintError),
 }
 
-impl<I: Transformable + Debug, A: Transformable + Debug, D: Transformable> std::fmt::Debug
-  for CommittedLogTransformError<I, A, D>
+impl<I: Transformable + Debug, A: Transformable + Debug> std::fmt::Debug
+  for CommittedLogTransformError<I, A>
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
@@ -170,33 +175,13 @@ impl<I: Transformable + Debug, A: Transformable + Debug, D: Transformable> std::
       Self::EncodeBufferTooSmall => write!(f, "encode buffer too small"),
       Self::EncodeVarint(err) => write!(f, "encode varint: {:?}", err),
       Self::DecodeVarint(err) => write!(f, "decode varint: {:?}", err),
-      Self::Corrupted => write!(f, "corrupted"),
+      Self::NotEnoughBytes => write!(f, "not enough bytes to decode"),
     }
   }
 }
 
-impl<I: Transformable + Display, A: Transformable + Display, D: Transformable> std::fmt::Display
-  for CommittedLogTransformError<I, A, D>
-{
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      Self::Membership(err) => write!(f, "membership: {}", err),
-      Self::Data(err) => write!(f, "data: {}", err),
-      Self::EncodeBufferTooSmall => write!(f, "encode buffer too small"),
-      Self::EncodeVarint(err) => write!(f, "encode varint: {}", err),
-      Self::DecodeVarint(err) => write!(f, "decode varint: {}", err),
-      Self::Corrupted => write!(f, "corrupted"),
-    }
-  }
-}
-
-impl<I: Transformable + Debug + Display, A: Transformable + Debug + Display, D: Transformable>
-  std::error::Error for CommittedLogTransformError<I, A, D>
-{
-}
-
-impl<I: Id, A: Address, D: Data> Transformable for CommittedLog<I, A, D> {
-  type Error = CommittedLogTransformError<I, A, D>;
+impl<I: Id, A: Address> Transformable for CommittedLog<I, A> {
+  type Error = CommittedLogTransformError<I, A>;
 
   fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
@@ -251,12 +236,12 @@ impl<I: Id, A: Address, D: Data> Transformable for CommittedLog<I, A, D> {
     let src_len = src.len();
     let mut cur = 0;
     if src_len < MESSAGE_SIZE_LEN {
-      return Err(Self::Error::Corrupted);
+      return Err(Self::Error::NotEnoughBytes);
     }
     let len = NetworkEndian::read_u32(&src[..MESSAGE_SIZE_LEN]) as usize;
     cur += MESSAGE_SIZE_LEN;
     if src_len < len {
-      return Err(Self::Error::Corrupted);
+      return Err(Self::Error::NotEnoughBytes);
     }
 
     let (readed, index) = decode_varint(&src[cur..]).map_err(Self::Error::DecodeVarint)?;
@@ -267,9 +252,9 @@ impl<I: Id, A: Address, D: Data> Transformable for CommittedLog<I, A, D> {
     let kind = match src[cur] {
       0 => {
         cur += 1;
-        let (readed, data) = D::decode(&src[cur..]).map_err(Self::Error::Data)?;
+        let (readed, data) = Bytes::decode(&src[cur..]).map_err(Self::Error::Data)?;
         cur += readed;
-        CommittedLogKind::Log(Arc::new(data))
+        CommittedLogKind::Log(data)
       }
       1 => {
         cur += 1;
@@ -278,7 +263,7 @@ impl<I: Id, A: Address, D: Data> Transformable for CommittedLog<I, A, D> {
         cur += readed;
         CommittedLogKind::Membership(membership)
       }
-      _ => return Err(Self::Error::Corrupted),
+      _ => return Err(Self::Error::NotEnoughBytes),
     };
 
     debug_assert_eq!(
@@ -298,86 +283,84 @@ impl<I: Id, A: Address, D: Data> Transformable for CommittedLog<I, A, D> {
   serde(
     transparent,
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub struct CommittedLogBatch<I, A, D>(SmallVec<[CommittedLog<I, A, D>; 4]>);
+pub struct CommittedLogBatch<I, A>(SmallVec<[CommittedLog<I, A>; 4]>);
 
-impl<I, A, D> core::ops::Deref for CommittedLogBatch<I, A, D> {
-  type Target = SmallVec<[CommittedLog<I, A, D>; 4]>;
+impl<I, A> core::ops::Deref for CommittedLogBatch<I, A> {
+  type Target = SmallVec<[CommittedLog<I, A>; 4]>;
 
   fn deref(&self) -> &Self::Target {
     &self.0
   }
 }
 
-impl<I, A, D> core::ops::DerefMut for CommittedLogBatch<I, A, D> {
+impl<I, A> core::ops::DerefMut for CommittedLogBatch<I, A> {
   fn deref_mut(&mut self) -> &mut Self::Target {
     &mut self.0
   }
 }
 
-impl<I, A, D> Clone for CommittedLogBatch<I, A, D> {
+impl<I, A> Clone for CommittedLogBatch<I, A> {
   fn clone(&self) -> Self {
     Self(self.0.clone())
   }
 }
 
-impl<I, A, D> PartialEq for CommittedLogBatch<I, A, D>
+impl<I, A> PartialEq for CommittedLogBatch<I, A>
 where
   I: Eq + core::hash::Hash,
   A: PartialEq,
-  D: PartialEq,
 {
   fn eq(&self, other: &Self) -> bool {
     self.0 == other.0
   }
 }
 
-impl<I, A, D> Eq for CommittedLogBatch<I, A, D>
+impl<I, A> Eq for CommittedLogBatch<I, A>
 where
   I: Eq + core::hash::Hash,
   A: Eq,
-  D: Eq,
 {
 }
 
-impl<I, A, D> Default for CommittedLogBatch<I, A, D> {
+impl<I, A> Default for CommittedLogBatch<I, A> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, A, D> From<Vec<CommittedLog<I, A, D>>> for CommittedLogBatch<I, A, D> {
-  fn from(logs: Vec<CommittedLog<I, A, D>>) -> Self {
+impl<I, A> From<Vec<CommittedLog<I, A>>> for CommittedLogBatch<I, A> {
+  fn from(logs: Vec<CommittedLog<I, A>>) -> Self {
     Self(logs.into())
   }
 }
 
-impl<I, A, D> From<SmallVec<[CommittedLog<I, A, D>; 4]>> for CommittedLogBatch<I, A, D> {
-  fn from(logs: SmallVec<[CommittedLog<I, A, D>; 4]>) -> Self {
+impl<I, A> From<SmallVec<[CommittedLog<I, A>; 4]>> for CommittedLogBatch<I, A> {
+  fn from(logs: SmallVec<[CommittedLog<I, A>; 4]>) -> Self {
     Self(logs)
   }
 }
 
-impl<I, A, D> FromIterator<CommittedLog<I, A, D>> for CommittedLogBatch<I, A, D> {
-  fn from_iter<T: IntoIterator<Item = CommittedLog<I, A, D>>>(iter: T) -> Self {
+impl<I, A> FromIterator<CommittedLog<I, A>> for CommittedLogBatch<I, A> {
+  fn from_iter<T: IntoIterator<Item = CommittedLog<I, A>>>(iter: T) -> Self {
     Self(iter.into_iter().collect())
   }
 }
 
-impl<I, A, D> IntoIterator for CommittedLogBatch<I, A, D> {
-  type Item = CommittedLog<I, A, D>;
-  type IntoIter = smallvec::IntoIter<[CommittedLog<I, A, D>; 4]>;
+impl<I, A> IntoIterator for CommittedLogBatch<I, A> {
+  type Item = CommittedLog<I, A>;
+  type IntoIter = smallvec::IntoIter<[CommittedLog<I, A>; 4]>;
 
   fn into_iter(self) -> Self::IntoIter {
     self.0.into_iter()
   }
 }
 
-impl<I, A, D> CommittedLogBatch<I, A, D> {
+impl<I, A> CommittedLogBatch<I, A> {
   /// Creates a new batch of committed logs.
   pub fn new() -> Self {
     Self(SmallVec::new())
@@ -407,9 +390,9 @@ mod tests {
 
   use super::{CommittedLog, CommittedLogKind};
   use smol_str::SmolStr;
-  use std::{net::SocketAddr, sync::Arc};
+  use std::net::SocketAddr;
 
-  fn sample_membership() -> CommittedLog<SmolStr, SocketAddr, Vec<u8>> {
+  fn sample_membership() -> CommittedLog<SmolStr, SocketAddr> {
     CommittedLog::new(
       1,
       1,
@@ -417,7 +400,7 @@ mod tests {
     )
   }
 
-  fn large_membership() -> CommittedLog<SmolStr, SocketAddr, Vec<u8>> {
+  fn large_membership() -> CommittedLog<SmolStr, SocketAddr> {
     CommittedLog::new(
       1,
       1,
@@ -425,7 +408,7 @@ mod tests {
     )
   }
 
-  fn single_server() -> CommittedLog<SmolStr, SocketAddr, Vec<u8>> {
+  fn single_server() -> CommittedLog<SmolStr, SocketAddr> {
     CommittedLog::new(
       1,
       1,
@@ -433,20 +416,20 @@ mod tests {
     )
   }
 
-  fn data() -> CommittedLog<SmolStr, SocketAddr, Vec<u8>> {
-    CommittedLog::new(1, 1, CommittedLogKind::Log(Arc::new(vec![1, 2, 3])))
+  fn data() -> CommittedLog<SmolStr, SocketAddr> {
+    CommittedLog::new(1, 1, CommittedLogKind::Log(vec![1, 2, 3].into()))
   }
 
-  fn large_data() -> CommittedLog<SmolStr, SocketAddr, Vec<u8>> {
-    CommittedLog::new(1, 1, CommittedLogKind::Log(Arc::new(vec![255; 1000])))
+  fn large_data() -> CommittedLog<SmolStr, SocketAddr> {
+    CommittedLog::new(1, 1, CommittedLogKind::Log(vec![255; 1000].into()))
   }
 
   #[tokio::test]
   async fn test_membership_transformable_roundtrip() {
-    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr, Vec<u8> > { sample_membership() });
-    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr, Vec<u8> > { single_server() });
-    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr, Vec<u8> > { large_membership() });
-    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr, Vec<u8> > { data() });
-    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr, Vec<u8> > { large_data() });
+    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr > { sample_membership() });
+    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr > { single_server() });
+    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr > { large_membership() });
+    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr > { data() });
+    test_transformable_roundtrip!(CommittedLog < SmolStr, SocketAddr > { large_data() });
   }
 }

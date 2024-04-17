@@ -1,13 +1,11 @@
 use std::{borrow::Cow, future::Future};
 
 // use futures::AsyncRead;
+use agnostic_lite::RuntimeLite;
 use nodecraft::{Address, Id};
 use smallvec::SmallVec;
 
-use crate::{
-  storage::{CommittedLog, CommittedLogBatch, SnapshotSink},
-  Data,
-};
+use crate::storage::{CommittedLog, CommittedLogBatch, SnapshotSink};
 
 /// Represents a snapshot of the finate state machine.
 #[auto_impl::auto_impl(Box)]
@@ -16,7 +14,7 @@ pub trait FinateStateMachineSnapshot: Send + Sync + 'static {
   type Error: std::error::Error + Send + Sync + 'static;
 
   /// The async runtime used by the finate state machine snapshot.
-  type Runtime: agnostic::Runtime;
+  type Runtime: RuntimeLite;
 
   /// Persist should write the FSM snapshot to the given sink.
   ///
@@ -133,11 +131,8 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// The address type of node.
   type Address: Address;
 
-  /// The log entry's type-specific data, which will be applied to a user [`FinateStateMachine`].
-  type Data: Data;
-
   /// The async runtime used by the finate state machine.
-  type Runtime: agnostic::Runtime;
+  type Runtime: RuntimeLite;
 
   /// Invoked once a log entry is committed by a majority of the cluster.
   ///
@@ -145,7 +140,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// produce the same result on all peers in the cluster.
   fn apply(
     &self,
-    log: CommittedLog<Self::Id, Self::Address, Self::Data>,
+    log: CommittedLog<Self::Id, Self::Address>,
   ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send;
 
   /// Invoked once a batch of log entries has been committed and
@@ -159,7 +154,7 @@ pub trait FinateStateMachine: Send + Sync + 'static {
   /// method if that method was called on the same Raft node as the FSM.
   fn apply_batch(
     &self,
-    logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
+    logs: CommittedLogBatch<Self::Id, Self::Address>,
   ) -> impl Future<Output = Result<ApplyBatchResponse<Self::Response>, Self::Error>> + Send;
 
   /// Snapshot returns an FSMSnapshot used to: support log compaction, to

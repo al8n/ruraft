@@ -1,11 +1,12 @@
-use std::{sync::Arc, time::SystemTime};
+use std::time::SystemTime;
 
 use byteorder::{ByteOrder, NetworkEndian};
-use nodecraft::{Address, Id, Transformable};
+use bytes::Bytes;
+use nodecraft::{transformable::BytesTransformError, Address, Id, Transformable};
 use ruraft_utils::{decode_varint, encode_varint, encoded_len_varint};
 use smallvec::SmallVec;
 
-use crate::{membership::Membership, Data, MESSAGE_SIZE_LEN};
+use crate::{membership::Membership, MESSAGE_SIZE_LEN};
 
 /// Describes various types of log entries.
 #[derive(Debug)]
@@ -16,14 +17,14 @@ use crate::{membership::Membership, Data, MESSAGE_SIZE_LEN};
   serde(
     rename_all = "snake_case",
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub enum LogKind<I, A, D> {
+pub enum LogKind<I, A> {
   /// Holds the log entry's type-specific data, which will be applied to a user [`FinateStateMachine`](crate::FinateStateMachine).
-  Data(Arc<D>),
+  Data(Bytes),
 
   /// Used to assert leadership.
   Noop,
@@ -40,7 +41,7 @@ pub enum LogKind<I, A, D> {
   Membership(Membership<I, A>),
 }
 
-impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for LogKind<I, A, D> {
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for LogKind<I, A> {
   fn eq(&self, other: &Self) -> bool {
     match (self, other) {
       (Self::Data(data), Self::Data(other_data)) => data == other_data,
@@ -54,9 +55,9 @@ impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for LogKind
   }
 }
 
-impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for LogKind<I, A, D> {}
+impl<I: core::hash::Hash + Eq, A: Eq> Eq for LogKind<I, A> {}
 
-impl<I, A, D> Clone for LogKind<I, A, D> {
+impl<I, A> Clone for LogKind<I, A> {
   fn clone(&self) -> Self {
     match self {
       Self::Data(data) => Self::Data(data.clone()),
@@ -67,7 +68,7 @@ impl<I, A, D> Clone for LogKind<I, A, D> {
   }
 }
 
-impl<I, A, D> LogKind<I, A, D> {
+impl<I, A> LogKind<I, A> {
   fn tag(&self) -> u8 {
     match self {
       Self::Data(_) => 0,
@@ -90,12 +91,12 @@ impl<I, A, D> LogKind<I, A, D> {
   serde(
     rename_all = "snake_case",
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub struct Log<I, A, D> {
+pub struct Log<I, A> {
   /// Holds the kind of the log entry.
   #[viewit(
     getter(
@@ -107,7 +108,7 @@ pub struct Log<I, A, D> {
     setter(vis = "pub(crate)", attrs(doc = "Sets the log entry's kind."))
   )]
   #[cfg_attr(feature = "serde", serde(flatten))]
-  kind: LogKind<I, A, D>,
+  kind: LogKind<I, A>,
 
   /// Holds the index of the log entry.
   #[viewit(
@@ -158,7 +159,7 @@ pub struct Log<I, A, D> {
   appended_at: Option<SystemTime>,
 }
 
-impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Log<I, A, D> {
+impl<I: core::hash::Hash + Eq, A: PartialEq> PartialEq for Log<I, A> {
   fn eq(&self, other: &Self) -> bool {
     self.index == other.index
       && self.term == other.term
@@ -167,9 +168,9 @@ impl<I: core::hash::Hash + Eq, A: PartialEq, D: PartialEq> PartialEq for Log<I, 
   }
 }
 
-impl<I: core::hash::Hash + Eq, A: Eq, D: Eq> Eq for Log<I, A, D> {}
+impl<I: core::hash::Hash + Eq, A: Eq> Eq for Log<I, A> {}
 
-impl<I, A, D> Clone for Log<I, A, D> {
+impl<I, A> Clone for Log<I, A> {
   fn clone(&self) -> Self {
     Self {
       index: self.index,
@@ -180,14 +181,14 @@ impl<I, A, D> Clone for Log<I, A, D> {
   }
 }
 
-impl<I, A, D> Log<I, A, D> {
+impl<I, A> Log<I, A> {
   /// Create a [`Log`]
   #[inline]
-  pub fn new(data: D) -> Self {
+  pub const fn new(data: Bytes) -> Self {
     Self {
       index: 0,
       term: 0,
-      kind: LogKind::Data(Arc::new(data)),
+      kind: LogKind::Data(data),
       appended_at: None,
     }
   }
@@ -217,7 +218,7 @@ impl<I, A, D> Log<I, A, D> {
   }
 
   #[inline]
-  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+  pub(crate) const fn crate_new(term: u64, index: u64, kind: LogKind<I, A>) -> Self {
     Self {
       index,
       term,
@@ -230,31 +231,31 @@ impl<I, A, D> Log<I, A, D> {
   #[cfg(any(feature = "test", test))]
   #[inline]
   #[doc(hidden)]
-  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A, D>) -> Self {
+  pub const fn __crate_new(term: u64, index: u64, kind: LogKind<I, A>) -> Self {
     Self::crate_new(term, index, kind)
   }
 }
 
 /// Errors that can occur when transforming a [`Log`] to its bytes representation.
 #[derive(thiserror::Error)]
-pub enum LogTransformError<I: Transformable, A: Transformable, D: Transformable> {
+pub enum LogTransformError<I: Transformable, A: Transformable> {
   /// Id transform error.
-  #[error("{0}")]
+  #[error(transparent)]
   Id(I::Error),
   /// Address transform error.
-  #[error("{0}")]
+  #[error(transparent)]
   Address(A::Error),
   /// Data transform error.
-  #[error("{0}")]
-  Data(D::Error),
+  #[error(transparent)]
+  Data(#[from] BytesTransformError),
   /// Membership transform error.
-  #[error("{0}")]
-  Membership(crate::membership::MembershipTransformError<I, A>),
+  #[error(transparent)]
+  Membership(#[from] crate::membership::MembershipTransformError<I, A>),
   /// Encode varint error.
-  #[error("{0}")]
+  #[error(transparent)]
   EncodeVarint(#[from] ruraft_utils::EncodeVarintError),
   /// Decode varint error.
-  #[error("{0}")]
+  #[error(transparent)]
   DecodeVarint(#[from] ruraft_utils::DecodeVarintError),
   /// Encode buffer too small.
   #[error("dst buffer is too small")]
@@ -267,11 +268,10 @@ pub enum LogTransformError<I: Transformable, A: Transformable, D: Transformable>
   Corrupted(&'static str),
 }
 
-impl<I, A, D> core::fmt::Debug for LogTransformError<I, A, D>
+impl<I, A> core::fmt::Debug for LogTransformError<I, A>
 where
   I: Id,
   A: Address,
-  D: Transformable,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
@@ -293,13 +293,12 @@ where
 // --------------------------------------------------------------------------------------------------------
 // | total_len (4 bytes) | kind (1 byte) | index (8 bytes) | term (8 bytes) | append_at (8 bytes) | data |
 // --------------------------------------------------------------------------------------------------------
-impl<I, A, D> Transformable for Log<I, A, D>
+impl<I, A> Transformable for Log<I, A>
 where
   I: Id,
   A: Address,
-  D: Data,
 {
-  type Error = LogTransformError<I, A, D>;
+  type Error = LogTransformError<I, A>;
 
   fn encode(&self, dst: &mut [u8]) -> Result<usize, Self::Error> {
     let encoded_len = self.encoded_len();
@@ -400,10 +399,10 @@ where
 
     let log = match tag {
       0 => {
-        let (readed, data) = D::decode(&src[cur..]).map_err(LogTransformError::Data)?;
+        let (readed, data) = Bytes::decode(&src[cur..]).map_err(LogTransformError::Data)?;
         cur += readed;
         Log {
-          kind: LogKind::Data(Arc::new(data)),
+          kind: LogKind::Data(data),
           index,
           term,
           appended_at,
@@ -451,86 +450,84 @@ where
   serde(
     transparent,
     bound(
-      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize, D: serde::Serialize",
-      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + for<'a> serde::Deserialize<'a>, A: Eq + core::fmt::Display + for<'a> serde::Deserialize<'a>, D: for<'a> serde::Deserialize<'a>",
+      serialize = "I: Eq + core::hash::Hash + serde::Serialize, A: serde::Serialize",
+      deserialize = "I: Eq + core::hash::Hash + core::fmt::Display + serde::Deserialize<'de>, A: Eq + core::fmt::Display + serde::Deserialize<'de>",
     )
   )
 )]
-pub struct LogBatch<I, A, D>(SmallVec<[Log<I, A, D>; 2]>);
+pub struct LogBatch<I, A>(SmallVec<[Log<I, A>; 2]>);
 
-impl<I, A, D> core::ops::Deref for LogBatch<I, A, D> {
-  type Target = SmallVec<[Log<I, A, D>; 2]>;
+impl<I, A> core::ops::Deref for LogBatch<I, A> {
+  type Target = SmallVec<[Log<I, A>; 2]>;
 
   fn deref(&self) -> &Self::Target {
     &self.0
   }
 }
 
-impl<I, A, D> core::ops::DerefMut for LogBatch<I, A, D> {
+impl<I, A> core::ops::DerefMut for LogBatch<I, A> {
   fn deref_mut(&mut self) -> &mut Self::Target {
     &mut self.0
   }
 }
 
-impl<I, A, D> Clone for LogBatch<I, A, D> {
+impl<I, A> Clone for LogBatch<I, A> {
   fn clone(&self) -> Self {
     Self(self.0.clone())
   }
 }
 
-impl<I, A, D> PartialEq for LogBatch<I, A, D>
+impl<I, A> PartialEq for LogBatch<I, A>
 where
   I: Eq + core::hash::Hash,
   A: PartialEq,
-  D: PartialEq,
 {
   fn eq(&self, other: &Self) -> bool {
     self.0 == other.0
   }
 }
 
-impl<I, A, D> Eq for LogBatch<I, A, D>
+impl<I, A> Eq for LogBatch<I, A>
 where
   I: Eq + core::hash::Hash,
   A: Eq,
-  D: Eq,
 {
 }
 
-impl<I, A, D> Default for LogBatch<I, A, D> {
+impl<I, A> Default for LogBatch<I, A> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<I, A, D> From<Vec<Log<I, A, D>>> for LogBatch<I, A, D> {
-  fn from(logs: Vec<Log<I, A, D>>) -> Self {
+impl<I, A> From<Vec<Log<I, A>>> for LogBatch<I, A> {
+  fn from(logs: Vec<Log<I, A>>) -> Self {
     Self(logs.into())
   }
 }
 
-impl<I, A, D> From<SmallVec<[Log<I, A, D>; 2]>> for LogBatch<I, A, D> {
-  fn from(logs: SmallVec<[Log<I, A, D>; 2]>) -> Self {
+impl<I, A> From<SmallVec<[Log<I, A>; 2]>> for LogBatch<I, A> {
+  fn from(logs: SmallVec<[Log<I, A>; 2]>) -> Self {
     Self(logs)
   }
 }
 
-impl<I, A, D> FromIterator<Log<I, A, D>> for LogBatch<I, A, D> {
-  fn from_iter<T: IntoIterator<Item = Log<I, A, D>>>(iter: T) -> Self {
+impl<I, A> FromIterator<Log<I, A>> for LogBatch<I, A> {
+  fn from_iter<T: IntoIterator<Item = Log<I, A>>>(iter: T) -> Self {
     Self(iter.into_iter().collect())
   }
 }
 
-impl<I, A, D> IntoIterator for LogBatch<I, A, D> {
-  type Item = Log<I, A, D>;
-  type IntoIter = smallvec::IntoIter<[Log<I, A, D>; 2]>;
+impl<I, A> IntoIterator for LogBatch<I, A> {
+  type Item = Log<I, A>;
+  type IntoIter = smallvec::IntoIter<[Log<I, A>; 2]>;
 
   fn into_iter(self) -> Self::IntoIter {
     self.0.into_iter()
   }
 }
 
-impl<I, A, D> LogBatch<I, A, D> {
+impl<I, A> LogBatch<I, A> {
   /// Create a new [`LogBatch`].
   pub fn new() -> Self {
     Self(SmallVec::new())
@@ -544,7 +541,7 @@ impl<I, A, D> LogBatch<I, A, D> {
   /// ```
   /// # use ruraft_core::storage::LogBatch;
   ///
-  /// let v: LogBatch<u64, std::net::SocketAddr, Vec<u8>> = LogBatch::with_capacity(100);
+  /// let v: LogBatch<u64, std::net::SocketAddr> = LogBatch::with_capacity(100);
   ///
   /// assert!(v.is_empty());
   /// assert!(v.capacity() >= 100);
@@ -564,28 +561,27 @@ mod tests {
   use nodecraft::{NodeAddress, NodeId};
   use smol_str::SmolStr;
 
-  async fn test_log_transformable_in<I, A, D>(log: Log<I, A, D>)
+  async fn test_log_transformable_in<I, A>(log: Log<I, A>)
   where
     I: Id,
     A: Address,
-    D: Data + PartialEq + core::fmt::Debug,
   {
     let mut buf = vec![0; log.encoded_len()];
     log.encode(&mut buf).unwrap();
 
-    let (_, decoded) = Log::<I, A, D>::decode(&buf).unwrap();
+    let (_, decoded) = Log::<I, A>::decode(&buf).unwrap();
     assert_eq!(log, decoded);
 
     let mut buf = Vec::with_capacity(log.encoded_len());
     log.encode_to_writer(&mut buf).unwrap();
 
-    let (_, decoded) = Log::<I, A, D>::decode_from_reader(&mut std::io::Cursor::new(&buf)).unwrap();
+    let (_, decoded) = Log::<I, A>::decode_from_reader(&mut std::io::Cursor::new(&buf)).unwrap();
     assert_eq!(log, decoded);
 
     let mut buf = Vec::with_capacity(log.encoded_len());
     log.encode_to_async_writer(&mut buf).await.unwrap();
 
-    let (_, decoded) = Log::<I, A, D>::decode_from_async_reader(&mut buf.as_slice())
+    let (_, decoded) = Log::<I, A>::decode_from_async_reader(&mut buf.as_slice())
       .await
       .unwrap();
     assert_eq!(log, decoded);
@@ -593,8 +589,8 @@ mod tests {
 
   #[tokio::test]
   async fn test_log_transformable() {
-    let log: Log<NodeId, NodeAddress, Vec<u8>> = Log {
-      kind: LogKind::Data(Arc::new(vec![1, 2, 3])),
+    let log: Log<NodeId, NodeAddress> = Log {
+      kind: LogKind::Data(vec![1, 2, 3].into()),
       index: 1,
       term: 1,
       appended_at: None,
@@ -602,8 +598,8 @@ mod tests {
 
     test_log_transformable_in(log).await;
 
-    let log: Log<NodeId, NodeAddress, Vec<u8>> = Log {
-      kind: LogKind::Data(Arc::new((0..=u8::MAX).collect())),
+    let log: Log<NodeId, NodeAddress> = Log {
+      kind: LogKind::Data((0..=u8::MAX).collect::<Vec<_>>().into()),
       index: 1,
       term: 1,
       appended_at: Some(SystemTime::now()),
@@ -611,7 +607,7 @@ mod tests {
 
     test_log_transformable_in(log).await;
 
-    let log: Log<NodeId, NodeAddress, Vec<u8>> = Log {
+    let log: Log<NodeId, NodeAddress> = Log {
       kind: LogKind::Noop,
       index: 1,
       term: 1,
@@ -620,7 +616,7 @@ mod tests {
 
     test_log_transformable_in(log).await;
 
-    let log: Log<NodeId, NodeAddress, Vec<u8>> = Log {
+    let log: Log<NodeId, NodeAddress> = Log {
       kind: LogKind::Noop,
       index: 1,
       term: 1,
@@ -629,7 +625,7 @@ mod tests {
 
     test_log_transformable_in(log).await;
 
-    let log: Log<NodeId, NodeAddress, Vec<u8>> = Log {
+    let log: Log<NodeId, NodeAddress> = Log {
       kind: LogKind::Barrier,
       index: 1,
       term: 1,
@@ -638,7 +634,7 @@ mod tests {
 
     test_log_transformable_in(log).await;
 
-    let log: Log<NodeId, NodeAddress, Vec<u8>> = Log {
+    let log: Log<NodeId, NodeAddress> = Log {
       kind: LogKind::Barrier,
       index: 1,
       term: 1,
@@ -647,7 +643,7 @@ mod tests {
 
     test_log_transformable_in(log).await;
 
-    let log: Log<SmolStr, SocketAddr, Membership<SmolStr, SocketAddr>> = Log {
+    let log: Log<SmolStr, SocketAddr> = Log {
       kind: LogKind::Membership(sample_membership()),
       index: 1,
       term: 1,
@@ -655,7 +651,7 @@ mod tests {
     };
     test_log_transformable_in(log).await;
 
-    let log: Log<SmolStr, SocketAddr, Membership<SmolStr, SocketAddr>> = Log {
+    let log: Log<SmolStr, SocketAddr> = Log {
       kind: LogKind::Membership(sample_membership()),
       index: 1,
       term: 1,

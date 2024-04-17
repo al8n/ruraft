@@ -1,4 +1,4 @@
-use agnostic::tokio::TokioRuntime;
+use agnostic_lite::tokio::TokioRuntime;
 use ruraft_core::{tests::run as run_unit_test, unit_tests};
 
 fn run(fut: impl std::future::Future<Output = ()>) {

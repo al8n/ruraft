@@ -13,16 +13,15 @@ description = "A placeholder"
 default = []
 test = ["tracing-subscriber", "tempfile"]
 metrics = ["dep:metrics"]
-
 serde = ["dep:serde", "dep:serde_repr", "dep:humantime-serde", "ruraft-utils/serde", "dep:serde_millis", "smallvec/serde"]
 
 [dependencies]
 arc-swap = "1.6"
 auto_impl = "1"
-agnostic = { workspace = true }
+agnostic-lite = { workspace = true }
 async-lock = { workspace = true }
 async-channel = { workspace = true }
-async-broadcast = "0.6"
+async-broadcast = "0.7"
 atomic = "0.6"
 atomic-time = "0.1"
 bytes = { workspace = true, features = ["serde"] }
@@ -47,7 +46,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 viewit = { workspace = true }
 wg = { workspace = true }
-
 
 ruraft-utils = { path = "../utils", features = ["io"] }
 

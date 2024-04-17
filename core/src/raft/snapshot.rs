@@ -6,11 +6,11 @@ use std::{
   time::Duration,
 };
 
-use agnostic::Runtime;
+use agnostic_lite::RuntimeLite;
 use atomic::Atomic;
 use futures::{channel::oneshot, FutureExt};
 use nodecraft::resolver::AddressResolver;
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use crate::{
   error::{Error, RaftError},
@@ -36,16 +36,9 @@ where
     Address = <T::Resolver as AddressResolver>::Address,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  R: Runtime,
+  R: RuntimeLite,
 {
   pub(super) store: Arc<S>,
   pub(super) state: Arc<super::State>,
@@ -76,20 +69,11 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  R: Runtime,
+  R: RuntimeLite,
 {
   pub(super) fn spawn(self) {
     super::spawn_local::<R, _>(self.wg.add(1), async move {

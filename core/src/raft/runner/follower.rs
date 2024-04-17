@@ -1,4 +1,4 @@
-use std::{sync::atomic::Ordering, time::Duration};
+use std::time::Duration;
 
 use futures::StreamExt;
 
@@ -10,21 +10,12 @@ where
   F: FinateStateMachine<
     Id = T::Id,
     Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
     Runtime = R,
   >,
-  S: Storage<
-    Id = T::Id,
-    Address = <T::Resolver as AddressResolver>::Address,
-    Data = T::Data,
-    Runtime = R,
-  >,
+  S: Storage<Id = T::Id, Address = <T::Resolver as AddressResolver>::Address, Runtime = R>,
   T: Transport<Runtime = R>,
-
   SC: Sidecar<Runtime = R>,
-  R: Runtime,
-  <R::Sleep as std::future::Future>::Output: Send,
-  <R::Interval as futures::Stream>::Item: Send + 'static,
+  R: RuntimeLite,
 {
   pub(super) async fn run_follower(
     &mut self,

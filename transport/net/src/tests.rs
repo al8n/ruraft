@@ -6,12 +6,9 @@ use futures::StreamExt;
 use ruraft_core::{
   log_batch,
   storage::{Log, LogKind},
-  transport::{
-    tests::{__make_append_req, __make_append_resp},
-    Transport, *,
-  },
+  transport::tests::{__make_append_req, __make_append_resp},
 };
-use wg::AsyncWaitGroup;
+use wg::future::AsyncWaitGroup;
 
 use super::*;
 
@@ -207,6 +204,15 @@ impl<A: Address, R: Runtime> AddressResolver for TestAddressResolver<A, R> {
 
   type Runtime = R;
 
+  type Options = ();
+
+  async fn new(_options: Self::Options) -> Result<Self, Self::Error>
+  where
+    Self: Sized,
+  {
+    Ok(Self::new())
+  }
+
   async fn resolve(&self, address: &Self::Address) -> Result<Self::ResolvedAddress, Self::Error> {
     Ok(address.clone())
   }
@@ -215,10 +221,10 @@ impl<A: Address, R: Runtime> AddressResolver for TestAddressResolver<A, R> {
 /// Test [`NetTransport`]'s close_streams.
 pub async fn close_streams<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -228,11 +234,9 @@ pub async fn close_streams<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
+) {
   // Transport 1 is consumer
-  let trans1 = NetTransport::<I, A, D, S, W>::new(
+  let trans1 = NetTransport::<I, A, S, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -244,7 +248,7 @@ pub async fn close_streams<
   .await
   .expect("failed to create transport");
   let trans2 = Arc::new(
-    NetTransport::<I, A, D, S, W>::new(
+    NetTransport::<I, A, S, W, R>::new(
       header2,
       bind_addr2,
       resolver2,
@@ -284,7 +288,7 @@ pub async fn close_streams<
   let (err_tx, err_rx) = async_channel::bounded(100);
 
   // Listen for a request
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     let trans1_consumer = trans1.consumer();
     futures::pin_mut!(trans1_consumer);
 
@@ -296,7 +300,7 @@ pub async fn close_streams<
             panic!("unexpected respond fail");
           };
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -315,7 +319,7 @@ pub async fn close_streams<
       let expected_resp = resp.clone();
       let target = trans1_header.from().clone();
       let req = args.clone();
-      <A::Runtime as Runtime>::spawn_detach(async move {
+      <A::Runtime as RuntimeLite>::spawn_detach(async move {
         scopeguard::defer!(new_wg.done());
 
         match trans.append_entries(&target, req).await {
@@ -362,12 +366,9 @@ pub async fn close_streams<
 }
 
 /// Test [`NetTransport::new`] and [`NetTransport::shutdown`](Transport::shutdown) implementation.
-pub async fn start_and_shutdown<S: StreamLayer, R: Runtime>(s: S)
-where
-  <R::Sleep as Future>::Output: Send + 'static,
-{
+pub async fn start_and_shutdown<S: StreamLayer, R: Runtime>(s: S) {
   let addr = "127.0.0.1:8080".parse().unwrap();
-  let trans = NetTransport::<_, _, Vec<u8>, _, ruraft_wire::LpeWire<_, _, _>>::new(
+  let trans = NetTransport::<_, _, S, ruraft_wire::LpeWire<_, _>, R>::new(
     Header::new(
       ProtocolVersion::V1,
       smol_str::SmolStr::from("test-net-transport-new"),
@@ -387,10 +388,10 @@ where
 /// Test [`NetTransport::set_heartbeat_handler`](Transport::set_heartbeat_handler) implementation.
 pub async fn heartbeat_fastpath<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -400,11 +401,8 @@ pub async fn heartbeat_fastpath<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  D: core::fmt::Debug + PartialEq,
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -433,10 +431,10 @@ pub async fn heartbeat_fastpath<
 /// Test [`NetTransport::append_entries`](Transport::append_entries) implementation.
 pub async fn append_entries<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -446,10 +444,8 @@ pub async fn append_entries<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -474,10 +470,10 @@ pub async fn append_entries<
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline).
 pub async fn append_entries_pipeline<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -487,11 +483,8 @@ pub async fn append_entries_pipeline<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  D: core::fmt::Debug + PartialEq,
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -516,10 +509,10 @@ pub async fn append_entries_pipeline<
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport::close_streams`].
 pub async fn append_entries_pipeline_close_streams<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data + PartialEq + core::fmt::Debug,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -529,11 +522,9 @@ pub async fn append_entries_pipeline_close_streams<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
+) {
   // Transport 1 is consumer
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -542,7 +533,7 @@ pub async fn append_entries_pipeline_close_streams<
   )
   .await
   .unwrap();
-  let trans2 = NetTransport::<_, _, D, _, W>::new(
+  let trans2 = NetTransport::<_, _, _, W, R>::new(
     header2,
     bind_addr2,
     resolver2,
@@ -565,7 +556,7 @@ pub async fn append_entries_pipeline_close_streams<
   scopeguard::defer!(let _ = shutdown_tx.close(););
 
   // Listen for a request
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     futures::pin_mut!(trans1_consumer);
 
     loop {
@@ -599,7 +590,7 @@ pub async fn append_entries_pipeline_close_streams<
       // On the last one, close the streams on the transport one.
       if cancel_stream && i == 10 {
         trans1.close_streams().await;
-        <A::Runtime as Runtime>::sleep(Duration::from_millis(10)).await;
+        <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(10)).await;
       }
 
       if pipeline.append_entries(args.clone()).await.is_err() {
@@ -625,7 +616,7 @@ pub async fn append_entries_pipeline_close_streams<
             }
           }
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout when cancel streams is {}", cancel_stream);
         },
       }
@@ -644,10 +635,10 @@ pub async fn append_entries_pipeline_close_streams<
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport`]'s max rpc inflight special case.
 pub async fn append_entries_pipeline_max_rpc_inflight_default<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -658,9 +649,9 @@ pub async fn append_entries_pipeline_max_rpc_inflight_default<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
-  append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
+  append_entries_pipeline_max_rpc_inflight_runner::<I, A, S, W, R>(
     header1,
     bind_addr1,
     stream_layer1,
@@ -677,10 +668,10 @@ pub async fn append_entries_pipeline_max_rpc_inflight_default<
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport`]'s max rpc inflight special case.
 pub async fn append_entries_pipeline_max_rpc_inflight_0<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -691,9 +682,9 @@ pub async fn append_entries_pipeline_max_rpc_inflight_0<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
-  append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
+  append_entries_pipeline_max_rpc_inflight_runner::<I, A, S, W, R>(
     header1,
     bind_addr1,
     stream_layer1,
@@ -710,10 +701,10 @@ pub async fn append_entries_pipeline_max_rpc_inflight_0<
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport`]'s max rpc inflight special case.
 pub async fn append_entries_pipeline_max_rpc_inflight_one<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -724,9 +715,9 @@ pub async fn append_entries_pipeline_max_rpc_inflight_one<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
-  append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
+  append_entries_pipeline_max_rpc_inflight_runner::<I, A, S, W, R>(
     header1,
     bind_addr1,
     stream_layer1,
@@ -743,10 +734,10 @@ pub async fn append_entries_pipeline_max_rpc_inflight_one<
 /// Test [`NetTransport::append_entries_pipeline`](Transport::append_entries_pipeline) and [`NetTransport`]'s max rpc inflight special case.
 pub async fn append_entries_pipeline_max_rpc_inflight_some<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -757,9 +748,9 @@ pub async fn append_entries_pipeline_max_rpc_inflight_some<
   stream_layer2: S,
   resolver2: A,
 ) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
+  <<A::Runtime as RuntimeLite>::Sleep as Future>::Output: Send + 'static,
 {
-  append_entries_pipeline_max_rpc_inflight_runner::<I, A, D, S, W>(
+  append_entries_pipeline_max_rpc_inflight_runner::<I, A, S, W, R>(
     header1,
     bind_addr1,
     stream_layer1,
@@ -775,10 +766,10 @@ pub async fn append_entries_pipeline_max_rpc_inflight_some<
 
 async fn append_entries_pipeline_max_rpc_inflight_runner<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -789,9 +780,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   stream_layer2: S,
   resolver2: A,
   max: usize,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
+) {
   let config1 = NetTransportOptions::new()
     .with_max_pool(2)
     .with_max_inflight_requests(max)
@@ -799,7 +788,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
 
   // Transport 1 is consumer
   let trans1 = Arc::new(
-    NetTransport::<_, _, D, _, W>::new(header1, bind_addr1, resolver1, stream_layer1, config1)
+    NetTransport::<_, _, _, W, R>::new(header1, bind_addr1, resolver1, stream_layer1, config1)
       .await
       .expect("failed to create transport"),
   );
@@ -817,7 +806,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
 
   // Transport 1 is consumer
   let trans2 = Arc::new(
-    NetTransport::<_, _, D, _, W>::new(header2, bind_addr2, resolver2, stream_layer2, config2)
+    NetTransport::<_, _, _, W, R>::new(header2, bind_addr2, resolver2, stream_layer2, config2)
       .await
       .expect("failed to create transport"),
   );
@@ -832,9 +821,9 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
 
   // Kill the transports on the timeout to unblock. That means things that
   // shouldn't have blocked did block.
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     futures::select! {
-      _ = <A::Runtime as Runtime>::sleep(Duration::from_secs(5)).fuse() => {
+      _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_secs(5)).fuse() => {
       },
       _ = ctx_rx.recv().fuse() => {
       },
@@ -878,7 +867,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
   futures::pin_mut!(pc);
   // Verify the next send blocks without blocking test forever
   let (err_tx, err_rx) = async_channel::bounded(1);
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     if let Err(e) = pipeline.append_entries(args.clone()).await {
       err_tx.send(e).await.expect("failed to send error");
     }
@@ -890,7 +879,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
         panic!("unexpected error");
       }
     },
-    _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(50)).fuse() => {
+    _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(50)).fuse() => {
       // OK it's probably blocked or we got _really_ unlucky with scheduling!
     },
   }
@@ -911,7 +900,7 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
     _ = err_rx.recv().fuse() => {
       // Ok
     },
-    _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(50)).fuse() => {
+    _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(50)).fuse() => {
       panic!("last append didn't unblock");
     },
   }
@@ -920,10 +909,10 @@ async fn append_entries_pipeline_max_rpc_inflight_runner<
 /// Test [`NetTransport::vote`](Transport::vote) implementation.
 pub async fn vote<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -933,10 +922,8 @@ pub async fn vote<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -945,7 +932,7 @@ pub async fn vote<
   )
   .await
   .unwrap();
-  let trans2 = NetTransport::<_, _, D, _, W>::new(
+  let trans2 = NetTransport::<_, _, _, W, R>::new(
     header2,
     bind_addr2,
     resolver2,
@@ -961,10 +948,10 @@ pub async fn vote<
 /// Test [`NetTransport::timeout_now`](Transport::timeout_now) implementation.
 pub async fn timeout_now<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -974,10 +961,8 @@ pub async fn timeout_now<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -986,7 +971,7 @@ pub async fn timeout_now<
   )
   .await
   .unwrap();
-  let trans2 = NetTransport::<_, _, D, _, W>::new(
+  let trans2 = NetTransport::<_, _, _, W, R>::new(
     header2,
     bind_addr2,
     resolver2,
@@ -1002,10 +987,10 @@ pub async fn timeout_now<
 /// Test [`NetTransport::install_snapshot`](Transport::install_snapshot) implementation.
 pub async fn install_snapshot<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -1015,10 +1000,8 @@ pub async fn install_snapshot<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -1027,7 +1010,7 @@ pub async fn install_snapshot<
   )
   .await
   .unwrap();
-  let trans2 = NetTransport::<_, _, D, _, W>::new(
+  let trans2 = NetTransport::<_, _, _, W, R>::new(
     header2,
     bind_addr2,
     resolver2,
@@ -1043,10 +1026,10 @@ pub async fn install_snapshot<
 /// Test [`NetTransport`] pooled connection functionality.
 pub async fn pooled_conn<
   I: Id,
-  A: AddressResolver<ResolvedAddress = SocketAddr>,
-  D: Data,
+  A: AddressResolver<ResolvedAddress = SocketAddr, Runtime = R>,
   S: StreamLayer,
-  W: Wire<Id = I, Address = A::Address, Data = D>,
+  W: Wire<Id = I, Address = A::Address>,
+  R: Runtime,
 >(
   header1: Header<I, A::Address>,
   bind_addr1: SocketAddr,
@@ -1056,10 +1039,8 @@ pub async fn pooled_conn<
   bind_addr2: SocketAddr,
   stream_layer2: S,
   resolver2: A,
-) where
-  <<A::Runtime as Runtime>::Sleep as Future>::Output: Send + 'static,
-{
-  let trans1 = NetTransport::<_, _, D, _, W>::new(
+) {
+  let trans1 = NetTransport::<_, _, _, W, R>::new(
     header1,
     bind_addr1,
     resolver1,
@@ -1069,7 +1050,7 @@ pub async fn pooled_conn<
   .await
   .unwrap();
   let trans2 = Arc::new(
-    NetTransport::<_, _, D, _, W>::new(
+    NetTransport::<_, _, _, W, R>::new(
       header2,
       bind_addr2,
       resolver2,
@@ -1107,7 +1088,7 @@ pub async fn pooled_conn<
   let (err_tx, err_rx) = async_channel::bounded(100);
 
   // Listen for a request
-  <A::Runtime as Runtime>::spawn_detach(async move {
+  <A::Runtime as RuntimeLite>::spawn_detach(async move {
     let trans1_consumer = trans1.consumer();
     futures::pin_mut!(trans1_consumer);
 
@@ -1119,7 +1100,7 @@ pub async fn pooled_conn<
             panic!("unexpected respond fail");
           };
         },
-        _ = <A::Runtime as Runtime>::sleep(Duration::from_millis(1000)).fuse() => {
+        _ = <A::Runtime as RuntimeLite>::sleep(Duration::from_millis(1000)).fuse() => {
           panic!("timeout");
         },
       }
@@ -1135,7 +1116,7 @@ pub async fn pooled_conn<
     let expected_resp = resp.clone();
     let target = trans1_header.from().clone();
     let req = args.clone();
-    <A::Runtime as Runtime>::spawn_detach(async move {
+    <A::Runtime as RuntimeLite>::spawn_detach(async move {
       scopeguard::defer!(new_wg.done());
 
       match trans.append_entries(&target, req).await {
@@ -1279,7 +1260,7 @@ async fn test_network_transport_listenbackoff() {
   const TEST_TIME: Duration = Duration::from_secs(4);
 
   let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-  let trans: NetTransport<_, _, Vec<_>, _, ruraft_wire::LpeWire<_, _, Vec<u8>>> =
+  let trans: NetTransport<_, _, _, ruraft_wire::LpeWire<_, _>, agnostic::tokio::TokioRuntime> =
     NetTransport::new(
       Header::new(ProtocolVersion::V1, smol_str::SmolStr::from("test"), addr),
       addr,

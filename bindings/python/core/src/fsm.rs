@@ -265,7 +265,7 @@ where
   /// produce the same result on all peers in the cluster.
   async fn apply(
     &self,
-    log: CommittedLog<Self::Id, Self::Address, Self::Data>,
+    log: CommittedLog<Self::Id, Self::Address>,
   ) -> Result<Self::Response, Self::Error> {
     Python::with_gil(|py| {
       let log = crate::types::CommittedLog::from(log);
@@ -287,7 +287,7 @@ where
   /// method if that method was called on the same Raft node as the FSM.
   async fn apply_batch(
     &self,
-    logs: CommittedLogBatch<Self::Id, Self::Address, Self::Data>,
+    logs: CommittedLogBatch<Self::Id, Self::Address>,
   ) -> Result<ruraft_core::ApplyBatchResponse<Self::Response>, Self::Error> {
     Python::with_gil(|py| {
       let logs: SmallVec<[crate::types::CommittedLog; 4]> =

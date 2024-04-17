@@ -2,7 +2,6 @@ use std::{
   borrow::Cow,
   io,
   path::{Path, PathBuf},
-  sync::Arc,
 };
 
 use ::redb::{
@@ -11,7 +10,7 @@ use ::redb::{
 };
 use agnostic::Runtime;
 use ruraft_core::{
-  storage::{Log, LogStorage, LogTransformError, StableStorage},
+  storage::{Log, LogTransformError},
   transport::{Address, Id, Transformable},
   Node,
 };
@@ -26,7 +25,7 @@ const LOG_TABLE_DEFINITION: TableDefinition<'static, u64, Vec<u8>> =
   TableDefinition::new("__ruraft_redb_log__");
 
 /// Error kind.
-pub enum ErrorKind<I: Transformable, A: Transformable, D: Transformable> {
+pub enum ErrorKind<I: Transformable, A: Transformable> {
   /// [redb](::redb)'s [`Error`](::redb::Error).
   Db(DbError),
   /// [redb](::redb)'s [`DatabaseError`]
@@ -44,71 +43,65 @@ pub enum ErrorKind<I: Transformable, A: Transformable, D: Transformable> {
   /// Address transform error.
   Address(A::Error),
   /// Log transform error.
-  Log(LogTransformError<I, A, D>),
+  Log(LogTransformError<I, A>),
   /// Corrupted database.
   Corrupted(Cow<'static, str>),
 }
 
-impl<I, A, D> From<DatabaseError> for ErrorKind<I, A, D>
+impl<I, A> From<DatabaseError> for ErrorKind<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: DatabaseError) -> Self {
     Self::Database(value)
   }
 }
 
-impl<I, A, D> From<TransactionError> for ErrorKind<I, A, D>
+impl<I, A> From<TransactionError> for ErrorKind<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: TransactionError) -> Self {
     Self::Transaction(value)
   }
 }
 
-impl<I, A, D> From<DbError> for ErrorKind<I, A, D>
+impl<I, A> From<DbError> for ErrorKind<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: DbError) -> Self {
     Self::Db(value)
   }
 }
 
-impl<I, A, D> From<TableError> for ErrorKind<I, A, D>
+impl<I, A> From<TableError> for ErrorKind<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: TableError) -> Self {
     Self::Table(value)
   }
 }
 
-impl<I, A, D> From<StorageError> for ErrorKind<I, A, D>
+impl<I, A> From<StorageError> for ErrorKind<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: StorageError) -> Self {
     Self::Storage(value)
   }
 }
 
-impl<I, A, D> From<CommitError> for ErrorKind<I, A, D>
+impl<I, A> From<CommitError> for ErrorKind<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: CommitError) -> Self {
     Self::Commit(value)
@@ -116,50 +109,45 @@ where
 }
 
 /// Error type for [`Db`].
-pub struct Error<I, A, D>(Arc<ErrorKind<I, A, D>>)
+pub struct Error<I, A>(Arc<ErrorKind<I, A>>)
 where
   I: Transformable,
-  A: Transformable,
-  D: Transformable;
+  A: Transformable;
 
-impl<I, A, D> Clone for Error<I, A, D>
+impl<I, A> Clone for Error<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn clone(&self) -> Self {
     Self(self.0.clone())
   }
 }
 
-impl<I, A, D> From<ErrorKind<I, A, D>> for Error<I, A, D>
+impl<I, A> From<ErrorKind<I, A>> for Error<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
-  fn from(value: ErrorKind<I, A, D>) -> Self {
+  fn from(value: ErrorKind<I, A>) -> Self {
     Self(Arc::new(value))
   }
 }
 
-impl<I, A, D> From<io::Error> for Error<I, A, D>
+impl<I, A> From<io::Error> for Error<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   fn from(value: io::Error) -> Self {
     Self(Arc::new(ErrorKind::Db(DbError::Io(value))))
   }
 }
 
-impl<I, A, D> core::fmt::Debug for Error<I, A, D>
+impl<I, A> core::fmt::Debug for Error<I, A>
 where
   I: Id,
   A: Address,
-  D: Transformable,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self.0.as_ref() {
@@ -177,11 +165,10 @@ where
   }
 }
 
-impl<I, A, D> core::fmt::Display for Error<I, A, D>
+impl<I, A> core::fmt::Display for Error<I, A>
 where
   I: Id,
   A: Address,
-  D: Transformable,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self.0.as_ref() {
@@ -199,22 +186,20 @@ where
   }
 }
 
-impl<I, A, D> std::error::Error for Error<I, A, D>
+impl<I, A> std::error::Error for Error<I, A>
 where
   I: Id,
   A: Address,
-  D: Transformable,
 {
 }
 
-impl<I, A, D> Error<I, A, D>
+impl<I, A> Error<I, A>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   /// Returns the error kind.
-  pub fn kind(&self) -> &ErrorKind<I, A, D> {
+  pub fn kind(&self) -> &ErrorKind<I, A> {
     self.0.as_ref()
   }
 }
@@ -274,19 +259,18 @@ impl DbOptions {
 }
 
 /// [`StableStorage`] and [`LogStorage`] implementor backed by [`redb`](::redb).
-pub struct Db<I, A, D, R> {
+pub struct Db<I, A, R> {
   db: Database,
-  _marker: std::marker::PhantomData<(I, A, D, R)>,
+  _marker: std::marker::PhantomData<(I, A, R)>,
 }
 
-impl<I, A, D, R> Db<I, A, D, R>
+impl<I, A, R> Db<I, A, R>
 where
   I: Transformable,
   A: Transformable,
-  D: Transformable,
 {
   /// Creates a new [`Db`].
-  pub fn new(opts: DbOptions) -> Result<Self, Error<I, A, D>> {
+  pub fn new(opts: DbOptions) -> Result<Self, Error<I, A>> {
     let this = Builder::new()
       .set_cache_size(opts.cache_size)
       .set_repair_callback(opts.repair_callback)
@@ -308,18 +292,17 @@ where
   }
 }
 
-impl<I, A, D, R> Db<I, A, D, R>
+impl<I, A, R> Db<I, A, R>
 where
   I: Id,
   A: Address,
-  D: Transformable,
   R: Runtime,
 {
   fn store_many(
     &self,
     _num_logs: usize,
     mut logs: impl Iterator<Item = (u64, Vec<u8>)>,
-  ) -> Result<(), Error<I, A, D>> {
+  ) -> Result<(), Error<I, A>> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -369,14 +352,13 @@ where
   }
 }
 
-impl<I, A, D, R> StableStorage for Db<I, A, D, R>
+impl<I, A, R> StableStorage for Db<I, A, R>
 where
   I: Id,
   A: Address,
-  D: Transformable,
   R: Runtime,
 {
-  type Error = Error<I, A, D>;
+  type Error = Error<I, A>;
 
   type Runtime = R;
 
@@ -484,22 +466,19 @@ where
   }
 }
 
-impl<I, A, D, R> LogStorage for Db<I, A, D, R>
+impl<I, A, R> LogStorage for Db<I, A, R>
 where
   I: Id,
   A: Address,
-  D: Transformable,
   R: Runtime,
 {
-  type Error = Error<I, A, D>;
+  type Error = Error<I, A>;
 
   type Runtime = R;
 
   type Id = I;
 
   type Address = A;
-
-  type Data = D;
 
   async fn first_index(&self) -> Result<Option<u64>, Self::Error> {
     let r = self.db.begin_read().map_err(ErrorKind::from)?;
@@ -521,10 +500,7 @@ where
       .map_err(|e| ErrorKind::from(e).into())
   }
 
-  async fn get_log(
-    &self,
-    index: u64,
-  ) -> Result<Option<Log<Self::Id, Self::Address, Self::Data>>, Self::Error> {
+  async fn get_log(&self, index: u64) -> Result<Option<Log<Self::Id, Self::Address>>, Self::Error> {
     let r = self.db.begin_read().map_err(ErrorKind::from)?;
     let t = r
       .open_table(LOG_TABLE_DEFINITION)
@@ -540,20 +516,14 @@ where
       .transpose()
   }
 
-  async fn store_log(
-    &self,
-    log: &Log<Self::Id, Self::Address, Self::Data>,
-  ) -> Result<(), Self::Error> {
+  async fn store_log(&self, log: &Log<Self::Id, Self::Address>) -> Result<(), Self::Error> {
     let idx = log.index();
     let mut buf = vec![0; log.encoded_len()];
     log.encode(&mut buf).map_err(ErrorKind::Log)?;
     self.store_many(1, std::iter::once((idx, buf)))
   }
 
-  async fn store_logs(
-    &self,
-    logs: &[Log<Self::Id, Self::Address, Self::Data>],
-  ) -> Result<(), Self::Error> {
+  async fn store_logs(&self, logs: &[Log<Self::Id, Self::Address>]) -> Result<(), Self::Error> {
     let num_logs = logs.len();
     logs
       .iter()
@@ -598,11 +568,11 @@ pub mod test {
 
   struct TestDb<R: Runtime> {
     _dir: tempfile::TempDir,
-    db: Db<SmolStr, SocketAddr, Vec<u8>, R>,
+    db: Db<SmolStr, SocketAddr, R>,
   }
 
   impl<R: Runtime> Deref for TestDb<R> {
-    type Target = Db<SmolStr, SocketAddr, Vec<u8>, R>;
+    type Target = Db<SmolStr, SocketAddr, R>;
 
     fn deref(&self) -> &Self::Target {
       &self.db
